@@ -37,6 +37,11 @@ COPY --chown=bun:bun --from=deps /app/packages /app/packages
 COPY --chown=bun:bun apps/gateway/package.json ./package.json
 COPY --chown=bun:bun apps/gateway/src ./src
 
+# The runtime materializes extension modules into ./.extensions-cache (kept inside the package so the
+# modules' `#extensions/sdk.ts` import resolves). WORKDIR is created as root, so the non-root `bun`
+# user cannot write there by default — give it ownership of the workdir and pre-create the cache dir.
+RUN mkdir -p ./.extensions-cache && chown bun:bun . ./.extensions-cache
+
 USER bun
 EXPOSE 4000
 
