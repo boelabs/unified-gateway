@@ -191,7 +191,7 @@ test("extensions: stream event hooks transform chunks without buffering", async 
 	assert.equal(event.choices[0]!.delta.content, "patched");
 });
 
-test("extensions: duplicate definitions fail to load", async (t) => {
+test("extensions: a duplicate definition is skipped, not fatal", async (t) => {
 	await resetRuntime();
 	t.after(resetRuntime);
 	const { source, dir } = await moduleSource(
@@ -202,10 +202,10 @@ test("extensions: duplicate definitions fail to load", async (t) => {
 		[],
 	);
 
-	await assert.rejects(
-		extensionRuntime.loadFromSource(source, dir),
-		/Duplicate extension definition/,
-	);
+	await extensionRuntime.loadFromSource(source, dir);
+	const status = extensionRuntime.status();
+	assert.equal(status.definitions.length, 1);
+	assert.equal(status.healthy, true);
 });
 
 test("extensions: a malformed instance spec is rejected", async (t) => {
@@ -226,7 +226,7 @@ test("extensions: a malformed instance spec is rejected", async (t) => {
 	);
 });
 
-test("extensions: invalid module exports fail to load", async (t) => {
+test("extensions: a module with an invalid export is skipped, not fatal", async (t) => {
 	await resetRuntime();
 	t.after(resetRuntime);
 	const { source, dir } = await moduleSource(
@@ -234,13 +234,11 @@ test("extensions: invalid module exports fail to load", async (t) => {
 		[],
 	);
 
-	await assert.rejects(
-		extensionRuntime.loadFromSource(source, dir),
-		/must export a valid extension definition/,
-	);
+	await extensionRuntime.loadFromSource(source, dir);
+	assert.equal(extensionRuntime.status().definitions.length, 0);
 });
 
-test("extensions: critical instances with invalid config fail to load", async (t) => {
+test("extensions: a critical instance with invalid config is disabled and unhealthy, not fatal", async (t) => {
 	await resetRuntime();
 	t.after(resetRuntime);
 	const { source, dir } = await moduleSource(
@@ -270,10 +268,32 @@ test("extensions: critical instances with invalid config fail to load", async (t
 		],
 	);
 
-	await assert.rejects(
-		extensionRuntime.loadFromSource(source, dir),
-		/enabled must be true/,
-	);
+	// Must NOT throw: a misconfigured critical instance is disabled, not fatal.
+	await extensionRuntime.loadFromSource(source, dir);
+	const status = extensionRuntime.status();
+	assert.equal(status.instances[0]!.status, "runtime_disabled");
+	assert.equal(status.healthy, false);
+	assert.equal(status.status, "error");
+});
+
+test("extensions: a critical instance with a missing definition is disabled, not fatal", async (t) => {
+	await resetRuntime();
+	t.after(resetRuntime);
+	// The production incident: a critical instance row whose definition has no artifact yet. This must
+	// degrade (disabled + unhealthy), never crash the boot/reload.
+	const source: ExtensionInstanceSource = {
+		load: async () => ({
+			modules: [],
+			instances: [{ id: "orphan", definition: "missing", critical: true }],
+		}),
+	};
+
+	await extensionRuntime.loadFromSource(source, tmpdir());
+	const status = extensionRuntime.status();
+	assert.equal(status.instances[0]!.id, "orphan");
+	assert.equal(status.instances[0]!.status, "runtime_disabled");
+	assert.equal(status.healthy, false);
+	assert.equal(status.status, "error");
 });
 
 test("extensions: hook failures trip the circuit breaker", async (t) => {

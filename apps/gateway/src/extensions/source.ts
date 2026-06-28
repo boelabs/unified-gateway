@@ -5,6 +5,7 @@ import { listInstances } from "#db/repos/extensions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { log } from "#logging/log.ts";
 import { existsSync } from "node:fs";
 
 const EXTENSION_KEY_PATTERN = /^[a-z0-9]+$/;
@@ -109,20 +110,34 @@ export class DbExtensionInstanceSource implements ExtensionInstanceSource {
 			listInstances(),
 		]);
 
+		// A single bad artifact (integrity mismatch or a non-writable cache dir) is skipped, not fatal:
+		// the runtime then disables any instance that referenced it instead of failing to load at all.
 		const modules: Array<{ path: string }> = [];
 		for (const artifact of artifacts) {
-			const actual = sha256Hex(artifact.code);
-			if (actual !== artifact.contentHash) {
-				throw new Error(
-					`Extension artifact "${artifact.key}" v${artifact.version} failed integrity check`,
+			try {
+				const actual = sha256Hex(artifact.code);
+				if (actual !== artifact.contentHash) {
+					throw new Error(
+						`artifact "${artifact.key}" v${artifact.version} failed integrity check`,
+					);
+				}
+				const path = await materialize(
+					artifact.key,
+					artifact.contentHash,
+					artifact.code,
+				);
+				modules.push({ path });
+			} catch (err) {
+				log.error(
+					"extensions",
+					"skipped extension artifact that failed to load",
+					{
+						extensionKey: artifact.key,
+						version: artifact.version,
+						err,
+					},
 				);
 			}
-			const path = await materialize(
-				artifact.key,
-				artifact.contentHash,
-				artifact.code,
-			);
-			modules.push({ path });
 		}
 
 		return {

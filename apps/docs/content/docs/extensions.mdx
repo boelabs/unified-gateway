@@ -180,9 +180,12 @@ Instances are not pinned to a version; they always bind to the currently active 
 ## Failures
 
 Invalid module exports, a key mismatch, or oversized source are rejected at **upload** time with a
-`400` — they never reach the database or the boot path. At load time, an instance that references a
-definition with no active artifact, or a critical instance with invalid config, is reported in status
-(and fails startup if critical).
+`400` — they never reach the database. **Loading is never fatal:** a bad artifact (failed import or
+integrity check) is skipped, and an instance that references a missing definition or has invalid
+config is disabled and surfaced in status. A disabled **critical** instance makes `/health` report
+unhealthy and fails its matched requests closed with `extension_disabled`, but the gateway still boots
+and the Admin API stays reachable — so you can fix the problem (e.g. upload the missing definition) and
+the next reload re-activates it. The gateway never crash-loops over a misconfigured extension.
 
 At runtime, hook failures return a sanitized gateway error for that request. After
 `UNIFIED_GATEWAY_EXTENSION_MAX_FAILURES` consecutive failures, the instance is disabled for the current

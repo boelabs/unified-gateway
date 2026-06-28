@@ -52,8 +52,15 @@ startTelemetry();
 try {
 	await initializeExtensions();
 } catch (err) {
-	log.error("extensions", "failed to initialize extensions", { err });
-	process.exit(1);
+	// Never let an extension problem brick the gateway: misconfigured artifacts/instances are already
+	// disabled in-runtime (and surfaced via /health), so the only way here is a transient failure such
+	// as the database being unreachable at boot. Log and continue — the reload job retries on its
+	// interval and /health/ready stays degraded until it succeeds.
+	log.error(
+		"extensions",
+		"initial extension load failed; continuing, will retry on the reload interval",
+		{ err },
+	);
 }
 
 const app = new Hono<AppEnv>();

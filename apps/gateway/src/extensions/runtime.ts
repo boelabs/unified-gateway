@@ -417,6 +417,8 @@ class ExtensionRuntime {
 		);
 		const definitions = new Map<string, LoadedDefinition>();
 
+		// A bad module is skipped, never fatal: instances that reference its (now-missing) definition
+		// are disabled below. Loading must not crash the process over one broken artifact.
 		for (const [order, moduleSpec] of manifest.modules.entries()) {
 			const modulePath = resolve(baseDir, moduleSpec.path);
 			let namespace: Record<string, unknown>;
@@ -426,18 +428,32 @@ class ExtensionRuntime {
 					unknown
 				>;
 			} catch (err) {
-				throw new Error(
-					`Failed to load extension module "${moduleSpec.path}": ${schemaErrorMessage(err)}`,
+				log.error(
+					"extensions",
+					"skipped extension module that failed to import",
+					{
+						module: moduleSpec.path,
+						err,
+					},
 				);
+				continue;
 			}
 			const definition = resolveExport(namespace);
 			if (!isDefinition(definition)) {
-				throw new Error(
-					`Extension module "${moduleSpec.path}" must export a valid extension definition`,
+				log.error(
+					"extensions",
+					"skipped extension module with invalid export",
+					{ module: moduleSpec.path },
 				);
+				continue;
 			}
-			if (definitions.has(definition.key))
-				throw new Error(`Duplicate extension definition "${definition.key}"`);
+			if (definitions.has(definition.key)) {
+				log.error("extensions", "skipped duplicate extension definition", {
+					module: moduleSpec.path,
+					extensionKey: definition.key,
+				});
+				continue;
+			}
 			definitions.set(definition.key, {
 				definition,
 				modulePath,
@@ -467,8 +483,14 @@ class ExtensionRuntime {
 		const seen = new Set<string>();
 		const instances: LoadedInstance[] = [];
 		for (const [order, spec] of specs.entries()) {
-			if (seen.has(spec.id))
-				throw new Error(`Duplicate extension instance "${spec.id}"`);
+			// Duplicate ids can only come from a corrupt source (the DB enforces a PK); skip the dupe
+			// rather than abort the whole load.
+			if (seen.has(spec.id)) {
+				log.error("extensions", "skipped duplicate extension instance id", {
+					instanceId: spec.id,
+				});
+				continue;
+			}
 			seen.add(spec.id);
 
 			const loadedDefinition = definitions.get(spec.definition);
@@ -495,20 +517,32 @@ class ExtensionRuntime {
 
 			const error = this.validateInstance(base, loadedDefinition);
 			if (error) {
+				// Never fatal: a misconfigured instance is disabled and surfaced in status. A disabled
+				// CRITICAL instance makes status unhealthy and fails its matched requests closed
+				// (extension_disabled), but the gateway still boots so the admin API stays reachable to
+				// fix it (e.g. upload the missing definition), after which a reload re-activates it.
 				base.status = "runtime_disabled";
 				base.disabledReason = error.message;
 				base.disabledKind = "load";
 				base.lastError = errorView(error, "load");
-				if (critical) throw error;
-				log.warn(
-					"extensions",
-					"disabled invalid non-critical extension instance",
-					{
-						instanceId: base.id,
-						extensionKey: base.definitionKey,
-						err: error,
-					},
-				);
+				const fields = {
+					instanceId: base.id,
+					extensionKey: base.definitionKey,
+					critical,
+					err: error,
+				};
+				if (critical)
+					log.error(
+						"extensions",
+						"disabled invalid critical extension instance; gateway is unhealthy until fixed",
+						fields,
+					);
+				else
+					log.warn(
+						"extensions",
+						"disabled invalid non-critical extension instance",
+						fields,
+					);
 			}
 			instances.push(base);
 		}
@@ -569,6 +603,8 @@ class ExtensionRuntime {
 				});
 				loaded.setupDone = true;
 			} catch (err) {
+				// Setup failure disables the affected instances but never crashes the load: a critical
+				// one makes status unhealthy (and fails its requests closed) while the process stays up.
 				const critical = activeInstances.some((instance) => instance.critical);
 				for (const instance of activeInstances) {
 					instance.status = "runtime_disabled";
@@ -576,19 +612,19 @@ class ExtensionRuntime {
 					instance.disabledKind = "setup";
 					instance.lastError = errorView(err, "setup");
 				}
-				if (critical) {
-					throw new Error(
-						`Required extension "${loaded.definition.key}" setup failed: ${schemaErrorMessage(err)}`,
+				const fields = { extensionKey: loaded.definition.key, critical, err };
+				if (critical)
+					log.error(
+						"extensions",
+						"disabled critical extension after setup failure; gateway is unhealthy until fixed",
+						fields,
 					);
-				}
-				log.warn(
-					"extensions",
-					"disabled non-critical extension after setup failure",
-					{
-						extensionKey: loaded.definition.key,
-						err,
-					},
-				);
+				else
+					log.warn(
+						"extensions",
+						"disabled non-critical extension after setup failure",
+						fields,
+					);
 			}
 		}
 	}
