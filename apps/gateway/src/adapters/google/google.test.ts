@@ -1,0 +1,430 @@
+import type { CanonicalEmbeddingsRequest } from "#core/embeddings.ts";
+import type { CanonicalChatRequest } from "#core/canonical.ts";
+import type { AdapterContext } from "#adapters/types.ts";
+import { isUsageConsistent } from "#core/usage.ts";
+import { googleAdapter } from "./index.ts";
+import assert from "node:assert/strict";
+import { test } from "node:test";
+
+const ctx: AdapterContext = {
+	upstreamModel: "gemini-2.5-flash",
+	credentials: { apiKey: "AIza-test" },
+	meta: {
+		capabilities: {
+			tools: true,
+			vision: true,
+			reasoning: false,
+			structuredOutputs: true,
+		},
+	},
+	transport: "generate_content",
+	requestId: "t",
+};
+
+const geminiLevelCtx: AdapterContext = {
+	...ctx,
+	upstreamModel: "gemini-3.5-flash",
+	meta: {
+		capabilities: {
+			tools: true,
+			vision: true,
+			reasoning: true,
+			structuredOutputs: true,
+		},
+		reasoning: {
+			kind: "gemini_level",
+			levels: ["minimal", "low", "medium", "high"],
+			canDisable: false,
+		},
+	},
+};
+
+const geminiBudgetCtx: AdapterContext = {
+	...ctx,
+	meta: {
+		capabilities: {
+			tools: true,
+			vision: true,
+			reasoning: true,
+			structuredOutputs: true,
+		},
+		reasoning: {
+			kind: "gemini_budget",
+			levels: ["minimal", "low", "medium", "high"],
+			canDisable: true,
+			budgets: { minimal: 512, low: 1_024, medium: 4_096, high: 8_192 },
+		},
+	},
+};
+
+const embeddingsCtx: AdapterContext = {
+	upstreamModel: "gemini-embedding-001",
+	credentials: { apiKey: "AIza-test" },
+	meta: {
+		capabilities: {
+			tools: false,
+			vision: false,
+			reasoning: false,
+			structuredOutputs: false,
+		},
+		operations: {
+			"embedding.create": {
+				dimensions: 3072,
+				supportsDimensions: true,
+				minDimensions: 128,
+				maxDimensions: 3072,
+				encodingFormats: ["float"],
+				maxInputTokens: 2048,
+				supportsTokenInput: false,
+			},
+		},
+	},
+	transport: "embed_content",
+	requestId: "t",
+};
+
+const req: CanonicalChatRequest = {
+	callType: "chat",
+	model: "gemini",
+	messages: [
+		{ role: "system", content: "You are helpful." },
+		{ role: "user", content: "hello" },
+	],
+	stream: false,
+	temperature: 0.4,
+	maxTokens: 50,
+};
+
+const embeddingsReq: CanonicalEmbeddingsRequest = {
+	model: "emb",
+	input: "hello",
+	encodingFormat: "float",
+	dimensions: 768,
+	extraBody: {
+		embedContentConfig: { taskType: "SEMANTIC_SIMILARITY" },
+	},
+};
+
+test("google.buildRequest: generateContent URL, api key header, and Gemini body", () => {
+	const r = googleAdapter.chat!.buildRequest(req, ctx);
+	assert.equal(r.method, "POST");
+	assert.equal(
+		r.url,
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+	);
+	assert.equal(r.headers["x-goog-api-key"], "AIza-test");
+	const body = JSON.parse(r.body!);
+	assert.equal(body.systemInstruction.parts[0].text, "You are helpful.");
+	assert.equal(body.contents[0].role, "user");
+	assert.equal(body.contents[0].parts[0].text, "hello");
+	assert.equal(body.generationConfig.maxOutputTokens, 50);
+	assert.equal(body.generationConfig.temperature, 0.4);
+});
+
+test("google embeddings: single input uses embedContent and dimensions config", () => {
+	assert.equal(googleAdapter.supportedCallTypes.has("embeddings"), true);
+	const handler = googleAdapter.embeddings;
+	assert.ok(handler);
+	const r = handler.buildRequest(embeddingsReq, embeddingsCtx);
+	assert.equal(r.method, "POST");
+	assert.equal(
+		r.url,
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+	);
+	assert.equal(r.headers["x-goog-api-key"], "AIza-test");
+	const body = JSON.parse(r.body!);
+	assert.equal(body.model, "models/gemini-embedding-001");
+	assert.equal(body.content.parts[0].text, "hello");
+	assert.equal(body.embedContentConfig.outputDimensionality, 768);
+	assert.equal(body.embedContentConfig.taskType, "SEMANTIC_SIMILARITY");
+});
+
+test("google embeddings: batch uses batchEmbedContents and parses usage", () => {
+	const handler = googleAdapter.embeddings;
+	assert.ok(handler);
+	const r = handler.buildRequest(
+		{
+			model: embeddingsReq.model,
+			input: ["uno", "dos"],
+			encodingFormat: embeddingsReq.encodingFormat,
+			dimensions: 768,
+		},
+		embeddingsCtx,
+	);
+	assert.equal(
+		r.url,
+		"https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents",
+	);
+	const body = JSON.parse(r.body!);
+	assert.equal(body.requests.length, 2);
+	assert.equal(body.requests[0].model, "models/gemini-embedding-001");
+	assert.equal(body.requests[1].content.parts[0].text, "dos");
+	assert.equal(body.requests[0].embedContentConfig.outputDimensionality, 768);
+
+	const parsed = handler.parseResponse(
+		{
+			embeddings: [{ values: [0.1, 0.2] }, { values: [0.3, 0.4] }],
+			usageMetadata: { promptTokenCount: 6 },
+		},
+		embeddingsCtx,
+	);
+	assert.equal(parsed.model, "gemini-embedding-001");
+	assert.deepEqual(parsed.data[0]?.embedding, [0.1, 0.2]);
+	assert.deepEqual(parsed.data[1]?.embedding, [0.3, 0.4]);
+	assert.deepEqual(parsed.usage, { promptTokens: 6, totalTokens: 6 });
+});
+
+test("google.buildRequest: stream uses streamGenerateContent?alt=sse", () => {
+	const r = googleAdapter.chat!.buildRequest({ ...req, stream: true }, ctx);
+	assert.ok(r.url.endsWith(":streamGenerateContent?alt=sse"));
+});
+
+test("google.buildRequest: json_schema uses responseMimeType + responseJsonSchema (Gemini 3 and 2.5)", () => {
+	const schema = {
+		type: "object",
+		properties: { name: { type: "string" }, age: { type: "integer" } },
+		required: ["name", "age"],
+		additionalProperties: false,
+	};
+	// The `responseFormat` field does NOT exist in the generateContent API: both generations use
+	// responseMimeType + responseJsonSchema (which accepts JSON Schema with lowercase types).
+	for (const c of [geminiLevelCtx, ctx]) {
+		const body = JSON.parse(
+			googleAdapter.chat!.buildRequest(
+				{ ...req, responseFormat: { type: "json_schema", schema } },
+				c,
+			).body!,
+		);
+		assert.equal(body.generationConfig.responseMimeType, "application/json");
+		assert.deepEqual(body.generationConfig.responseJsonSchema, schema);
+		assert.equal(body.generationConfig.responseFormat, undefined);
+	}
+});
+
+test("google.buildRequest: json_object only sets responseMimeType (without schema)", () => {
+	const body = JSON.parse(
+		googleAdapter.chat!.buildRequest(
+			{ ...req, responseFormat: { type: "json_object" } },
+			ctx,
+		).body!,
+	);
+	assert.equal(body.generationConfig.responseMimeType, "application/json");
+	assert.equal(body.generationConfig.responseJsonSchema, undefined);
+});
+
+test("google.buildRequest: Gemini 3 uses thinkingLevel and merges extraBody", () => {
+	const r = googleAdapter.chat!.buildRequest(
+		{
+			...req,
+			reasoning: { effort: "xhigh" },
+			extraBody: { safetySettings: [] },
+		},
+		geminiLevelCtx,
+	);
+	const body = JSON.parse(r.body!);
+	assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "high");
+	assert.equal(body.generationConfig.thinkingConfig.includeThoughts, true);
+	assert.deepEqual(body.safetySettings, []);
+});
+
+test("google.buildRequest: omitted effort on reasoner uses lowest level + includeThoughts", () => {
+	// Without reasoning in the request: the model reasons at the minimum by default and we request thoughts.
+	const r = googleAdapter.chat!.buildRequest(req, geminiLevelCtx);
+	const body = JSON.parse(r.body!);
+	assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "minimal"); // minimum of ["minimal",...]
+	assert.equal(body.generationConfig.thinkingConfig.includeThoughts, true);
+});
+
+test("google.buildRequest: Gemini 2.5 uses thinkingBudget and none disables when possible", () => {
+	const r = googleAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "none" } },
+		geminiBudgetCtx,
+	);
+	const body = JSON.parse(r.body!);
+	assert.equal(body.generationConfig.thinkingConfig.thinkingBudget, 0);
+});
+
+test("google.buildRequest: summary none does not request includeThoughts", () => {
+	const r = googleAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "high", summary: "none" } },
+		geminiLevelCtx,
+	);
+	const body = JSON.parse(r.body!);
+	assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "high");
+	assert.equal(body.generationConfig.thinkingConfig.includeThoughts, undefined);
+});
+
+test("google.buildRequest: extraBody does not overwrite managed fields", () => {
+	assert.throws(
+		() =>
+			googleAdapter.chat!.buildRequest(
+				{ ...req, extraBody: { generationConfig: {} } },
+				geminiLevelCtx,
+			),
+		/extra_body.generationConfig/,
+	);
+});
+
+test("google.parseResponse: maps candidates/usageMetadata to canonical", () => {
+	const raw = {
+		candidates: [
+			{
+				content: { role: "model", parts: [{ text: "hello!" }] },
+				finishReason: "STOP",
+				index: 0,
+			},
+		],
+		usageMetadata: {
+			promptTokenCount: 5,
+			candidatesTokenCount: 2,
+			totalTokenCount: 7,
+		},
+		modelVersion: "gemini-2.5-flash",
+	};
+	const u = googleAdapter.chat!.parseResponse(raw, ctx);
+	assert.equal(u.choices[0]!.message.content, "hello!");
+	assert.equal(u.choices[0]!.finishReason, "stop");
+	assert.equal(u.usage.totalTokens, 7);
+	assert.equal(u.usage.promptTokens, 5);
+});
+
+test("google.parseResponse: functionCall -> tool_calls + finish tool_calls", () => {
+	const raw = {
+		candidates: [
+			{
+				content: {
+					role: "model",
+					parts: [
+						{
+							functionCall: { name: "get_weather", args: { city: "Caracas" } },
+						},
+					],
+				},
+				finishReason: "STOP",
+				index: 0,
+			},
+		],
+		usageMetadata: {
+			promptTokenCount: 3,
+			candidatesTokenCount: 4,
+			totalTokenCount: 7,
+		},
+	};
+	const u = googleAdapter.chat!.parseResponse(raw, ctx);
+	assert.equal(u.choices[0]!.finishReason, "tool_calls");
+	assert.equal(u.choices[0]!.message.toolCalls?.[0]?.name, "get_weather");
+	assert.equal(
+		u.choices[0]!.message.toolCalls?.[0]?.arguments,
+		'{"city":"Caracas"}',
+	);
+});
+
+test("google.usage: reasoning (thoughts) is added to completion; total matches", () => {
+	const raw = {
+		candidates: [
+			{ content: { parts: [{ text: "OK" }] }, finishReason: "STOP", index: 0 },
+		],
+		usageMetadata: {
+			promptTokenCount: 6,
+			candidatesTokenCount: 1,
+			thoughtsTokenCount: 68,
+			totalTokenCount: 75,
+		},
+	};
+	const u = googleAdapter.chat!.parseResponse(raw, ctx).usage;
+	assert.equal(u.completionTokens, 69); // 1 visible + 68 thoughts
+	assert.equal(u.reasoningTokens, 68);
+	assert.equal(u.totalTokens, 75);
+	assert.ok(isUsageConsistent(u), "total must be prompt + completion");
+});
+
+test("google.parseResponse: thought parts do NOT leak into content", () => {
+	const raw = {
+		candidates: [
+			{
+				content: {
+					role: "model",
+					parts: [
+						{ text: "thinking out loud...", thought: true },
+						{ text: "final answer" },
+					],
+				},
+				finishReason: "STOP",
+				index: 0,
+			},
+		],
+		usageMetadata: {
+			promptTokenCount: 5,
+			candidatesTokenCount: 2,
+			thoughtsTokenCount: 10,
+			totalTokenCount: 17,
+		},
+	};
+	const u = googleAdapter.chat!.parseResponse(raw, ctx);
+	assert.equal(u.choices[0]!.message.content, "final answer");
+	assert.equal(u.choices[0]!.message.reasoning, "thinking out loud...");
+});
+
+test("google.parseStream: thought parts emit reasoning, not content", async () => {
+	const sse =
+		`data: {"candidates":[{"content":{"parts":[{"text":"hmm","thought":true}],"role":"model"},"index":0}]}\n\n` +
+		`data: {"candidates":[{"content":{"parts":[{"text":"hello"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}\n\n`;
+	const out: string[] = [];
+	const reasoning: string[] = [];
+	for await (const c of googleAdapter.chat!.parseStream(
+		new Response(sse).body!,
+		ctx,
+	)) {
+		if (c.choices[0]?.delta.content) out.push(c.choices[0].delta.content);
+		if (c.choices[0]?.delta.reasoning)
+			reasoning.push(c.choices[0].delta.reasoning);
+	}
+	assert.equal(out.join(""), "hello"); // "hmm" (thought) excluded
+	assert.equal(reasoning.join(""), "hmm");
+});
+
+test("google.mapError: context overflow 400 -> context_window (without dedicated code)", () => {
+	const err = {
+		status: 400,
+		body: {
+			error: {
+				status: "INVALID_ARGUMENT",
+				message:
+					"The input token count (1200000) exceeds the maximum number of tokens allowed (1048576).",
+			},
+		},
+	};
+	const ge = googleAdapter.chat!.mapError(err, ctx);
+	assert.equal(ge.class, "context_window");
+});
+
+test("google.mapError: generic 400 stays bad_request", () => {
+	const err = {
+		status: 400,
+		body: { error: { message: "Invalid value for 'temperature'." } },
+	};
+	const ge = googleAdapter.chat!.mapError(err, ctx);
+	assert.equal(ge.class, "bad_request");
+});
+
+test("google.parseStream: deltas + usage final", async () => {
+	const sse =
+		`data: {"candidates":[{"content":{"parts":[{"text":"Hel"}],"role":"model"},"index":0}]}\n\n` +
+		`data: {"candidates":[{"content":{"parts":[{"text":"lo"}]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":3,"candidatesTokenCount":2,"totalTokenCount":5}}\n\n`;
+	const stream = new Response(sse).body!;
+	const out: string[] = [];
+	let usageTotal: number | undefined;
+	let firstHadRole = false;
+	let i = 0;
+	for await (const chunk of googleAdapter.chat!.parseStream(stream, ctx)) {
+		if (i === 0 && chunk.choices[0]?.delta.role === "assistant")
+			firstHadRole = true;
+		if (chunk.choices[0]?.delta.content)
+			out.push(chunk.choices[0].delta.content);
+		if (chunk.usage) usageTotal = chunk.usage.totalTokens;
+		i++;
+	}
+	assert.equal(out.join(""), "Hello");
+	assert.equal(firstHadRole, true);
+	assert.equal(usageTotal, 5);
+});

@@ -1,0 +1,238 @@
+{
+	"$schema": "../../../schemas/model-catalog.schema.json",
+	"schemaVersion": 1,
+	"provider": {
+		"id": "deepseek",
+		"adapterKey": "deepseek",
+		"name": "DeepSeek",
+		"docs": [
+			"https://api-docs.deepseek.com/quick_start/pricing",
+			"https://api-docs.deepseek.com/api/create-chat-completion",
+			"https://api-docs.deepseek.com/guides/thinking_mode"
+		]
+	},
+	"models": {
+		"deepseek-v4-flash": {
+			"name": "DeepSeek V4 Flash",
+			"family": "deepseek-v4",
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 393216,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						},
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						},
+						"effortField": "reasoning_effort"
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled", "disabled"],
+							"notes": "Thinking defaults to enabled upstream; the gateway emits disabled when public effort is none."
+						},
+						"reasoning_effort": {
+							"mode": "mapped",
+							"values": ["high", "max"],
+							"notes": "DeepSeek maps public xhigh to max."
+						},
+						"temperature": {
+							"mode": "ignored",
+							"notes": "Thinking mode does not use sampling parameters."
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 14,
+				"outputCentsPerMTokens": 28,
+				"cacheReadCentsPerMTokens": 0.28
+			},
+			"sources": [
+				"https://api-docs.deepseek.com/quick_start/pricing",
+				"https://api-docs.deepseek.com/guides/thinking_mode"
+			],
+			"lastVerifiedAt": "2026-06-24",
+			"metadata": {
+				"baseUrlOpenAI": "https://api.deepseek.com",
+				"baseUrlAnthropic": "https://api.deepseek.com/anthropic",
+				"concurrencyLimit": 2500,
+				"features": [
+					"json_output",
+					"tool_calls",
+					"chat_prefix_completion",
+					"fim_completion_non_thinking"
+				],
+				"thinkingDefault": "enabled"
+			}
+		},
+		"deepseek-v4-pro": {
+			"name": "DeepSeek V4 Pro",
+			"family": "deepseek-v4",
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 393216,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						},
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						},
+						"effortField": "reasoning_effort"
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled", "disabled"]
+						},
+						"reasoning_effort": {
+							"mode": "mapped",
+							"values": ["high", "max"]
+						},
+						"temperature": {
+							"mode": "ignored",
+							"notes": "Thinking mode does not use sampling parameters."
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 43.5,
+				"outputCentsPerMTokens": 87,
+				"cacheReadCentsPerMTokens": 0.3625
+			},
+			"sources": [
+				"https://api-docs.deepseek.com/quick_start/pricing",
+				"https://api-docs.deepseek.com/guides/thinking_mode"
+			],
+			"lastVerifiedAt": "2026-06-24",
+			"metadata": {
+				"baseUrlOpenAI": "https://api.deepseek.com",
+				"baseUrlAnthropic": "https://api.deepseek.com/anthropic",
+				"concurrencyLimit": 500,
+				"features": [
+					"json_output",
+					"tool_calls",
+					"chat_prefix_completion",
+					"fim_completion_non_thinking"
+				],
+				"thinkingDefault": "enabled"
+			}
+		},
+		"deepseek-chat": {
+			"name": "DeepSeek Chat",
+			"family": "deepseek-v4",
+			"deprecated": true,
+			"lifecycle": {
+				"status": "deprecated",
+				"deprecationDate": "2026-07-24"
+			},
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": false,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 393216,
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 14,
+				"outputCentsPerMTokens": 28,
+				"cacheReadCentsPerMTokens": 0.28
+			},
+			"sources": ["https://api-docs.deepseek.com/quick_start/pricing"],
+			"lastVerifiedAt": "2026-06-24",
+			"notes": "Deprecated compatibility alias for non-thinking mode of deepseek-v4-flash."
+		},
+		"deepseek-reasoner": {
+			"name": "DeepSeek Reasoner",
+			"family": "deepseek-v4",
+			"deprecated": true,
+			"lifecycle": {
+				"status": "deprecated",
+				"deprecationDate": "2026-07-24"
+			},
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 393216,
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"],
+						"canDisable": false
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 14,
+				"outputCentsPerMTokens": 28,
+				"cacheReadCentsPerMTokens": 0.28
+			},
+			"sources": [
+				"https://api-docs.deepseek.com/quick_start/pricing",
+				"https://api-docs.deepseek.com/guides/thinking_mode"
+			],
+			"lastVerifiedAt": "2026-06-24",
+			"notes": "Deprecated compatibility alias for thinking mode of deepseek-v4-flash."
+		}
+	}
+}

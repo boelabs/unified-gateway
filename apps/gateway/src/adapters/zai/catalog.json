@@ -1,0 +1,440 @@
+{
+	"$schema": "../../../schemas/model-catalog.schema.json",
+	"schemaVersion": 1,
+	"provider": {
+		"id": "zai",
+		"adapterKey": "zai",
+		"name": "Z.AI / ZAI AI",
+		"docs": [
+			"https://docs.z.ai/guides/llm/glm-5.2.md",
+			"https://docs.z.ai/guides/llm/glm-5.1.md",
+			"https://docs.z.ai/guides/llm/glm-5.md",
+			"https://docs.z.ai/guides/llm/glm-4.7.md",
+			"https://docs.z.ai/guides/llm/glm-4.6.md",
+			"https://docs.z.ai/guides/overview/concept-param.md",
+			"https://docs.z.ai/guides/overview/pricing"
+		]
+	},
+	"models": {
+		"glm-5.2": {
+			"name": "GLM-5.2",
+			"family": "glm-5",
+			"openWeights": true,
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["minimal", "low", "medium", "high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"minimal": "none",
+							"low": "high",
+							"medium": "high",
+							"xhigh": "max"
+						},
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						},
+						"effortField": "reasoning_effort"
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled", "disabled"]
+						},
+						"reasoning_effort": {
+							"mode": "mapped",
+							"values": [
+								"max",
+								"xhigh",
+								"high",
+								"medium",
+								"low",
+								"minimal",
+								"none"
+							],
+							"notes": "Z.AI maps low/medium to high, xhigh to max, and none/minimal skip thinking."
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 140,
+				"outputCentsPerMTokens": 440,
+				"cacheReadCentsPerMTokens": 26
+			},
+			"sources": [
+				"https://docs.z.ai/guides/llm/glm-5.2.md",
+				"https://docs.z.ai/guides/overview/concept-param.md"
+			],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-5.1": {
+			"name": "GLM-5.1",
+			"family": "glm-5",
+			"openWeights": true,
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 204800,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 140,
+				"outputCentsPerMTokens": 440,
+				"cacheReadCentsPerMTokens": 26
+			},
+			"sources": [
+				"https://docs.z.ai/guides/llm/glm-5.1.md",
+				"https://docs.z.ai/guides/overview/concept-param.md"
+			],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-5": {
+			"name": "GLM-5",
+			"family": "glm-5",
+			"openWeights": true,
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 204800,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 100,
+				"outputCentsPerMTokens": 320,
+				"cacheReadCentsPerMTokens": 20
+			},
+			"sources": [
+				"https://docs.z.ai/guides/llm/glm-5.md",
+				"https://docs.z.ai/guides/overview/concept-param.md"
+			],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-5-turbo": {
+			"name": "GLM-5 Turbo",
+			"family": "glm-5",
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 204800,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 120,
+				"outputCentsPerMTokens": 400,
+				"cacheReadCentsPerMTokens": 24
+			},
+			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-5v-turbo": {
+			"name": "GLM-5V Turbo",
+			"family": "glm-5v",
+			"modalities": {
+				"input": ["text", "image"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 65536,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 120,
+				"outputCentsPerMTokens": 400,
+				"cacheReadCentsPerMTokens": 24
+			},
+			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-4.7": {
+			"name": "GLM-4.7",
+			"family": "glm-4.7",
+			"openWeights": true,
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 204800,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 60,
+				"outputCentsPerMTokens": 220,
+				"cacheReadCentsPerMTokens": 11
+			},
+			"sources": [
+				"https://docs.z.ai/guides/llm/glm-4.7.md",
+				"https://docs.z.ai/guides/overview/concept-param.md"
+			],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-4.6": {
+			"name": "GLM-4.6",
+			"family": "glm-4.6",
+			"openWeights": true,
+			"modalities": {
+				"input": ["text"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 204800,
+					"maxOutputTokens": 131072,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 60,
+				"outputCentsPerMTokens": 220,
+				"cacheReadCentsPerMTokens": 11
+			},
+			"sources": [
+				"https://docs.z.ai/guides/llm/glm-4.6.md",
+				"https://docs.z.ai/guides/overview/concept-param.md"
+			],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-4.6v": {
+			"name": "GLM-4.6V",
+			"family": "glm-4.6v",
+			"modalities": {
+				"input": ["text", "image"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 65536,
+					"maxOutputTokens": 32768,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 30,
+				"outputCentsPerMTokens": 90,
+				"cacheReadCentsPerMTokens": 5
+			},
+			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-4.5": {
+			"name": "GLM-4.5",
+			"family": "glm-4.5",
+			"openWeights": true,
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 131072,
+					"maxOutputTokens": 98304,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 60,
+				"outputCentsPerMTokens": 220,
+				"cacheReadCentsPerMTokens": 11
+			},
+			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"glm-4.5-air": {
+			"name": "GLM-4.5 Air",
+			"family": "glm-4.5",
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 131072,
+					"maxOutputTokens": 98304,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"]
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 20,
+				"outputCentsPerMTokens": 110,
+				"cacheReadCentsPerMTokens": 3
+			},
+			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
+			"lastVerifiedAt": "2026-06-24"
+		}
+	}
+}

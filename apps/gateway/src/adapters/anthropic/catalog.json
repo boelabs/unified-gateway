@@ -1,0 +1,201 @@
+{
+	"$schema": "../../../schemas/model-catalog.schema.json",
+	"schemaVersion": 1,
+	"provider": {
+		"id": "anthropic",
+		"adapterKey": "anthropic",
+		"name": "Anthropic",
+		"docs": [
+			"https://platform.claude.com/docs/en/about-claude/models/overview",
+			"https://platform.claude.com/docs/en/about-claude/pricing"
+		]
+	},
+	"models": {
+		"claude-opus-4-8": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["low", "medium", "high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 500,
+				"outputCentsPerMTokens": 2500,
+				"cacheReadCentsPerMTokens": 50,
+				"cacheWriteCentsPerMTokens": 625
+			}
+		},
+		"claude-opus-4-7": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["low", "medium", "high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 500,
+				"outputCentsPerMTokens": 2500,
+				"cacheReadCentsPerMTokens": 50,
+				"cacheWriteCentsPerMTokens": 625
+			}
+		},
+		"claude-opus-4-6": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["low", "medium", "high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 500,
+				"outputCentsPerMTokens": 2500,
+				"cacheReadCentsPerMTokens": 50,
+				"cacheWriteCentsPerMTokens": 625
+			}
+		},
+		"claude-sonnet-4-6": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["low", "medium", "high", "xhigh"],
+						"canDisable": true,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 300,
+				"outputCentsPerMTokens": 1500,
+				"cacheReadCentsPerMTokens": 30,
+				"cacheWriteCentsPerMTokens": 375
+			}
+		},
+		"claude-fable-5": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["low", "medium", "high", "xhigh"],
+						"canDisable": false,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 1000,
+				"outputCentsPerMTokens": 5000,
+				"cacheReadCentsPerMTokens": 100,
+				"cacheWriteCentsPerMTokens": 1250
+			}
+		},
+		"claude-mythos-5": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["low", "medium", "high", "xhigh"],
+						"canDisable": false,
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 1000,
+				"outputCentsPerMTokens": 5000,
+				"cacheReadCentsPerMTokens": 100,
+				"cacheWriteCentsPerMTokens": 1250
+			}
+		},
+		"claude-sonnet-4-5": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_budget",
+						"canDisable": true,
+						"levels": ["low", "medium", "high", "xhigh"],
+						"budgets": {
+							"low": 2048,
+							"medium": 8192,
+							"high": 16000,
+							"xhigh": 32000
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 300,
+				"outputCentsPerMTokens": 1500,
+				"cacheReadCentsPerMTokens": 30,
+				"cacheWriteCentsPerMTokens": 375
+			},
+			"deprecated": true
+		}
+	}
+}

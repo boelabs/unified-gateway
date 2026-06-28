@@ -1,0 +1,36 @@
+---
+title: "API reference"
+description: "REST API surface and OpenAPI import notes."
+---
+
+The OpenAPI document is the source of truth for the public and admin HTTP API:
+
+- `apps/gateway/openapi.yaml` — OpenAPI 3.1 specification. Importable into Bruno, Postman,
+  Insomnia, and similar tools.
+
+## Authentication
+
+- **Inference** (`/v1/*`): master key or virtual key, via `Authorization: Bearer <key>`
+  (alternatives: the `x-api-key` header, or `?api_key=<key>` for EventSource).
+- **Admin** (`/admin/*`): requires the **master key** (`MASTER_KEY` from `.env`).
+
+## Importing into Bruno
+
+Use **Import Collection → OpenAPI V3** and select `apps/gateway/openapi.yaml`.
+
+After import, set the server variable:
+
+- `baseUrl` — e.g. `http://localhost:4000`
+
+Set the bearer token in Bruno's auth UI:
+
+- **Inference** requests may use the master key or a virtual key.
+- **Admin** requests require the master key.
+
+## Typical flow to serve a model
+
+1. `POST /admin/deployments` — create a deployment: `publicModel` + `provider` + `upstreamModel` + the inline API key.
+2. `POST /admin/keys` — issue a virtual key with `allowedModels`.
+3. Call an inference endpoint with the public model name in the `model` field.
+
+Optional: `Admin → Deployments - Resolve` validates the profile/operations/transports without saving.

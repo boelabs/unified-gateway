@@ -1,0 +1,66 @@
+import type { TextCapabilities, ReasoningSpec } from "#core/reasoning.ts";
+import type { EmbeddingProfile } from "#core/embeddings.ts";
+import type { TranscriptionProfile } from "#core/audio.ts";
+import type { OperationId } from "#operations/registry.ts";
+import type { ImageModelProfile } from "#core/images.ts";
+
+interface TextGenerateProfile {
+	// Client contract.
+	capabilities?: Partial<TextCapabilities>;
+	maxInputTokens?: number;
+	maxOutputTokens?: number;
+	modalities?: {
+		input?: Array<
+			| "text"
+			| "image"
+			| "audio"
+			| "video"
+			| "pdf"
+			| "file"
+			| "embedding"
+			| "moderation"
+		>;
+		output?: Array<
+			| "text"
+			| "image"
+			| "audio"
+			| "video"
+			| "pdf"
+			| "file"
+			| "embedding"
+			| "moderation"
+		>;
+	};
+	contracts?: Array<
+		| "chat.completions"
+		| "responses"
+		| "messages"
+		| "images.generations"
+		| "images.edits"
+		| "audio.transcriptions"
+	>;
+	parameters?: Record<
+		string,
+		| boolean
+		| {
+				mode?: "supported" | "unsupported" | "ignored" | "range" | "mapped";
+				min?: number;
+				max?: number;
+				values?: Array<string | number | boolean>;
+				upstreamField?: string;
+				notes?: string;
+		  }
+	>;
+	// ── Gateway behavior: how the reasoning control is translated to the provider ──
+	reasoning?: ReasoningSpec;
+}
+
+export interface OperationProfiles {
+	"text.generate"?: TextGenerateProfile;
+	"image.generate"?: ImageModelProfile;
+	"image.edit"?: ImageModelProfile;
+	"audio.transcribe"?: TranscriptionProfile;
+	"embedding.create"?: EmbeddingProfile;
+}
+
+export type TransportOverrides = Partial<Record<OperationId, string>>;

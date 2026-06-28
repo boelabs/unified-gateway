@@ -1,0 +1,14 @@
+/**
+ * Internal categories used by the router to select an adapter handler.
+ * They are not part of the admin API and do not replace `Operation`: several public endpoints can
+ * share the same CallType and the same canonical representation.
+ */
+const CALL_TYPES = [
+	"chat",
+	"images.generations",
+	"images.edits",
+	"audio.transcriptions",
+	"embeddings",
+] as const;
+
+export type CallType = (typeof CALL_TYPES)[number];

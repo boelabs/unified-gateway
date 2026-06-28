@@ -1,0 +1,349 @@
+import { ADAPTER_KEY_PATTERN, ADAPTER_KEY_RULE } from "#adapters/key.ts";
+import { getAdapter, listAdapters } from "#adapters/registry.ts";
+import type { RuntimeModelMetadata } from "#db/schema.ts";
+import type { CatalogEntry } from "#catalog/types.ts";
+import { GatewayError } from "#core/errors.ts";
+import type { AppEnv } from "#auth/types.ts";
+import { ok } from "#http/respond.ts";
+import { Hono } from "hono";
+import * as z from "zod/v4";
+
+import {
+	type PreviewDeploymentInput,
+	type CreateDeploymentInput,
+	type UpdateDeploymentInput,
+	previewDeployment,
+	createDeployment,
+	updateDeployment,
+} from "#deployments/service.ts";
+
+import {
+	listDeploymentsPage,
+	type DeploymentRow,
+	getDeploymentById,
+	deleteDeployment,
+} from "#db/repos/deployments.ts";
+
+import {
+	customCatalogEntrySchema,
+	transportOverridesSchema,
+	pricingSchema,
+} from "#profiles/schema.ts";
+
+import {
+	resolvePresetCredentials,
+	getProviderPreset,
+	PROVIDER_PRESETS,
+} from "#providers/presets.ts";
+
+import {
+	type OperationDefinition,
+	callTypeForOperation,
+	OPERATIONS,
+} from "#operations/registry.ts";
+
+async function parseJson<T>(
+	c: import("hono").Context,
+	schema: z.ZodType<T>,
+): Promise<T> {
+	const json = await c.req.json().catch(() => undefined);
+	if (json === undefined)
+		throw new GatewayError({
+			class: "bad_request",
+			message: "Invalid or missing JSON body",
+		});
+	const parsed = schema.safeParse(json);
+	if (!parsed.success) {
+		const first = parsed.error.issues[0];
+		throw new GatewayError({
+			class: "bad_request",
+			message: parsed.error.issues
+				.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
+				.join("; "),
+			param: first ? first.path.join(".") : null,
+		});
+	}
+	return parsed.data;
+}
+
+const adapterKeySchema = z
+	.string()
+	.min(1)
+	.max(80)
+	.regex(ADAPTER_KEY_PATTERN, ADAPTER_KEY_RULE);
+
+/** Strips the encrypted credentials before returning a deployment. */
+function deploymentView(row: DeploymentRow) {
+	return {
+		id: row.id,
+		publicModel: row.publicModel,
+		adapterKey: row.adapterKey,
+		upstreamModel: row.upstreamModel,
+		custom: row.catalogEntry != null,
+		catalogEntry: row.catalogEntry,
+		pricing: row.pricing,
+		transportOverrides: row.transportOverrides,
+		enabled: row.enabled,
+		weight: row.weight,
+		tpmLimit: row.tpmLimit,
+		rpmLimit: row.rpmLimit,
+		createdAt: row.createdAt,
+		updatedAt: row.updatedAt,
+	};
+}
+
+const createDeploymentSchema = z
+	.object({
+		publicModel: z.string().min(1).max(200),
+		provider: z.string().min(1).max(80).optional(),
+		adapterKey: adapterKeySchema.optional(),
+		upstreamModel: z.string().min(1).max(300),
+		credentials: z.record(z.string(), z.unknown()),
+		catalogEntry: customCatalogEntrySchema.optional(),
+		pricing: pricingSchema.optional(),
+		transportOverrides: transportOverridesSchema.optional(),
+		enabled: z.boolean().optional(),
+		weight: z.int().min(0).optional(),
+		tpmLimit: z.int().nullable().optional(),
+		rpmLimit: z.int().nullable().optional(),
+	})
+	.strict();
+
+const resolveDeploymentSchema = z
+	.object({
+		publicModel: z.string().min(1).max(200),
+		provider: z.string().min(1).max(80).optional(),
+		adapterKey: adapterKeySchema.optional(),
+		upstreamModel: z.string().min(1).max(300),
+		catalogEntry: customCatalogEntrySchema.optional(),
+		pricing: pricingSchema.optional(),
+		transportOverrides: transportOverridesSchema.optional(),
+		// Accepted (and ignored) so the same body as POST /deployments can be reused.
+		credentials: z.record(z.string(), z.unknown()).optional(),
+	})
+	.strict();
+
+const updateDeploymentSchema = z
+	.object({
+		publicModel: z.string().min(1).max(200).optional(),
+		upstreamModel: z.string().min(1).max(300).optional(),
+		credentials: z.record(z.string(), z.unknown()).optional(),
+		catalogEntry: customCatalogEntrySchema.nullable().optional(),
+		pricing: pricingSchema.nullable().optional(),
+		transportOverrides: transportOverridesSchema.optional(),
+		enabled: z.boolean().optional(),
+		weight: z.int().min(0).optional(),
+		tpmLimit: z.int().nullable().optional(),
+		rpmLimit: z.int().nullable().optional(),
+	})
+	.strict();
+
+/** Resolves the adapter from a provider preset or an explicit adapterKey. */
+function resolveAdapterKey(
+	provider: string | undefined,
+	adapterKey: string | undefined,
+): string {
+	const preset = provider ? getProviderPreset(provider) : undefined;
+	const resolved = adapterKey ?? preset?.adapterKey;
+	if (!resolved) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: "Provide a known `provider` or an explicit `adapterKey`",
+			param: "provider",
+		});
+	}
+	if (preset && adapterKey && adapterKey !== preset.adapterKey) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Provider "${provider}" requires adapter "${preset.adapterKey}"`,
+			param: "adapterKey",
+		});
+	}
+	if (!getAdapter(resolved)) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Adapter "${resolved}" is not registered`,
+			param: "adapterKey",
+		});
+	}
+	return resolved;
+}
+
+/** Merges the preset's default transports with the operator's overrides. */
+function mergeTransportOverrides(
+	provider: string | undefined,
+	requested: Record<string, string> | undefined,
+) {
+	const preset = provider ? getProviderPreset(provider) : undefined;
+	return { ...(preset?.defaultTransportOverrides ?? {}), ...(requested ?? {}) };
+}
+
+export const platformAdminApp = new Hono<AppEnv>();
+
+function publicOperationView(operation: OperationDefinition) {
+	return {
+		id: operation.id,
+		family: operation.family,
+		label: operation.label,
+		callType: operation.callType,
+		publicEndpoints: [...operation.publicEndpoints],
+	};
+}
+
+platformAdminApp.get("/operations", (c) =>
+	ok(c, {
+		operations: OPERATIONS.map(publicOperationView),
+		adapters: listAdapters().map((adapter) => ({
+			id: adapter.key,
+			supportedCallTypes: [...adapter.supportedCallTypes].sort(),
+			operations: OPERATIONS.flatMap((operation) => {
+				const callType = callTypeForOperation(operation.id);
+				if (!callType || !adapter.supportedCallTypes.has(callType)) return [];
+				const transports = adapter.transports?.[callType];
+				return [
+					{
+						...publicOperationView(operation),
+						callType,
+						transports: transports?.supported ?? [],
+						defaultTransport: transports?.default ?? null,
+					},
+				];
+			}),
+		})),
+	}),
+);
+
+platformAdminApp.get("/provider-presets", (c) => ok(c, PROVIDER_PRESETS));
+
+/* ----------------------------------------------------------- deployments */
+
+platformAdminApp.post("/deployments/resolve", async (c) => {
+	const input = await parseJson(c, resolveDeploymentSchema);
+	const adapterKey = resolveAdapterKey(input.provider, input.adapterKey);
+	const previewInput: PreviewDeploymentInput = {
+		publicModel: input.publicModel,
+		adapterKey,
+		upstreamModel: input.upstreamModel,
+		transportOverrides: mergeTransportOverrides(
+			input.provider,
+			input.transportOverrides,
+		),
+		...(input.catalogEntry !== undefined
+			? { catalogEntry: input.catalogEntry as CatalogEntry }
+			: {}),
+		...(input.pricing !== undefined
+			? { pricing: input.pricing as RuntimeModelMetadata["pricing"] }
+			: {}),
+	};
+	return ok(c, await previewDeployment(previewInput));
+});
+
+platformAdminApp.get("/deployments", async (c) => {
+	const limit = Math.min(Math.max(Number(c.req.query("limit") ?? 50), 1), 200);
+	const offset = Math.max(Number(c.req.query("offset") ?? 0), 0);
+	const result = await listDeploymentsPage({ limit, offset });
+	return c.json({
+		data: result.rows.map(deploymentView),
+		pagination: {
+			limit,
+			offset,
+			total: result.total,
+			nextOffset: offset + limit < result.total ? offset + limit : null,
+		},
+	});
+});
+
+platformAdminApp.post("/deployments", async (c) => {
+	const input = await parseJson(c, createDeploymentSchema);
+	const adapterKey = resolveAdapterKey(input.provider, input.adapterKey);
+	const preset = input.provider ? getProviderPreset(input.provider) : undefined;
+	const credentials = preset
+		? resolvePresetCredentials(preset, input.credentials)
+		: input.credentials;
+	for (const key of preset?.requiredCredentialKeys ?? []) {
+		if (typeof credentials[key] !== "string" || credentials[key] === "") {
+			throw new GatewayError({
+				class: "bad_request",
+				message: `Credential "${key}" is required`,
+				param: `credentials.${key}`,
+			});
+		}
+	}
+	const createInput: CreateDeploymentInput = {
+		publicModel: input.publicModel,
+		adapterKey,
+		upstreamModel: input.upstreamModel,
+		credentials,
+		transportOverrides: mergeTransportOverrides(
+			input.provider,
+			input.transportOverrides,
+		),
+		...(input.catalogEntry !== undefined
+			? { catalogEntry: input.catalogEntry as CatalogEntry }
+			: {}),
+		...(input.pricing !== undefined
+			? { pricing: input.pricing as RuntimeModelMetadata["pricing"] }
+			: {}),
+		...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+		...(input.weight !== undefined ? { weight: input.weight } : {}),
+		...(input.tpmLimit !== undefined ? { tpmLimit: input.tpmLimit } : {}),
+		...(input.rpmLimit !== undefined ? { rpmLimit: input.rpmLimit } : {}),
+	};
+	const result = await createDeployment(createInput);
+	return ok(
+		c,
+		{ ...deploymentView(result.row), resolved: result.preview },
+		201,
+	);
+});
+
+platformAdminApp.get("/deployments/:id", async (c) => {
+	const row = await getDeploymentById(c.req.param("id"));
+	if (!row)
+		throw new GatewayError({
+			class: "not_found",
+			message: "Deployment not found",
+		});
+	return ok(c, deploymentView(row));
+});
+
+platformAdminApp.patch("/deployments/:id", async (c) => {
+	const input = await parseJson(c, updateDeploymentSchema);
+	const patch: UpdateDeploymentInput = {
+		...(input.publicModel !== undefined
+			? { publicModel: input.publicModel }
+			: {}),
+		...(input.upstreamModel !== undefined
+			? { upstreamModel: input.upstreamModel }
+			: {}),
+		...(input.credentials !== undefined
+			? { credentials: input.credentials }
+			: {}),
+		...(input.catalogEntry !== undefined
+			? { catalogEntry: input.catalogEntry as CatalogEntry | null }
+			: {}),
+		...(input.pricing !== undefined
+			? { pricing: input.pricing as RuntimeModelMetadata["pricing"] | null }
+			: {}),
+		...(input.transportOverrides !== undefined
+			? { transportOverrides: input.transportOverrides }
+			: {}),
+		...(input.enabled !== undefined ? { enabled: input.enabled } : {}),
+		...(input.weight !== undefined ? { weight: input.weight } : {}),
+		...(input.tpmLimit !== undefined ? { tpmLimit: input.tpmLimit } : {}),
+		...(input.rpmLimit !== undefined ? { rpmLimit: input.rpmLimit } : {}),
+	};
+	const result = await updateDeployment(c.req.param("id"), patch);
+	return ok(c, { ...deploymentView(result.row), resolved: result.preview });
+});
+
+platformAdminApp.delete("/deployments/:id", async (c) => {
+	const row = await getDeploymentById(c.req.param("id"));
+	if (!row)
+		throw new GatewayError({
+			class: "not_found",
+			message: "Deployment not found",
+		});
+	await deleteDeployment(row.id);
+	return c.body(null, 204);
+});

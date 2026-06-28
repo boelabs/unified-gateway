@@ -1,0 +1,314 @@
+{
+	"$schema": "../../../schemas/model-catalog.schema.json",
+	"schemaVersion": 1,
+	"provider": {
+		"id": "moonshot",
+		"adapterKey": "moonshot",
+		"name": "Moonshot AI / Kimi",
+		"docs": [
+			"https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart.md",
+			"https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart.md",
+			"https://platform.kimi.ai/docs/api/chat.md",
+			"https://platform.kimi.ai/docs/pricing/chat-k26.md",
+			"https://platform.kimi.ai/docs/pricing/chat-k27-code.md",
+			"https://platform.kimi.ai/docs/pricing/chat.md"
+		]
+	},
+	"models": {
+		"kimi-k2.7-code": {
+			"name": "Kimi K2.7 Code",
+			"family": "kimi-k2.7-code",
+			"modalities": {
+				"input": ["text", "image", "video"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 262144,
+					"maxOutputTokens": 32768,
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"],
+						"canDisable": false
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled"],
+							"notes": "Kimi K2.7 Code is always thinking; disabling thinking returns an error."
+						},
+						"temperature": {
+							"mode": "mapped",
+							"values": [1],
+							"notes": "Fixed at 1.0; other values return an error."
+						},
+						"top_p": {
+							"mode": "mapped",
+							"values": [0.95]
+						},
+						"tool_choice": {
+							"mode": "supported",
+							"values": ["auto", "none"],
+							"notes": "Thinking mode only supports auto or none."
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 95,
+				"outputCentsPerMTokens": 400,
+				"cacheReadCentsPerMTokens": 19
+			},
+			"sources": [
+				"https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart.md",
+				"https://platform.kimi.ai/docs/api/chat.md",
+				"https://platform.kimi.ai/docs/pricing/chat-k27-code.md"
+			],
+			"lastVerifiedAt": "2026-06-24",
+			"metadata": {
+				"supportedImageFormats": ["png", "jpeg", "webp", "gif"],
+				"supportedVideoFormats": [
+					"mp4",
+					"mpeg",
+					"mov",
+					"avi",
+					"x-flv",
+					"mpg",
+					"webm",
+					"wmv",
+					"3gpp"
+				],
+				"recommendedMaxImageResolution": "4096x2160",
+				"recommendedMaxVideoResolution": "1920x1080",
+				"maxRequestBodyBytes": 100000000,
+				"preservedThinking": "always"
+			}
+		},
+		"kimi-k2.7-code-highspeed": {
+			"name": "Kimi K2.7 Code HighSpeed",
+			"family": "kimi-k2.7-code",
+			"modalities": {
+				"input": ["text", "image", "video"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 262144,
+					"maxOutputTokens": 32768,
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"],
+						"canDisable": false
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled"],
+							"notes": "HighSpeed uses the same model/parameters as Kimi K2.7 Code and cannot disable thinking."
+						},
+						"temperature": {
+							"mode": "mapped",
+							"values": [1]
+						},
+						"top_p": {
+							"mode": "mapped",
+							"values": [0.95]
+						},
+						"tool_choice": {
+							"mode": "supported",
+							"values": ["auto", "none"]
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 190,
+				"outputCentsPerMTokens": 800,
+				"cacheReadCentsPerMTokens": 38
+			},
+			"sources": [
+				"https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart.md",
+				"https://platform.kimi.ai/docs/api/chat.md",
+				"https://platform.kimi.ai/docs/pricing/chat-k27-code.md"
+			],
+			"lastVerifiedAt": "2026-06-24",
+			"metadata": {
+				"supportedImageFormats": ["png", "jpeg", "webp", "gif"],
+				"supportedVideoFormats": [
+					"mp4",
+					"mpeg",
+					"mov",
+					"avi",
+					"x-flv",
+					"mpg",
+					"webm",
+					"wmv",
+					"3gpp"
+				],
+				"recommendedMaxImageResolution": "4096x2160",
+				"recommendedMaxVideoResolution": "1920x1080",
+				"maxRequestBodyBytes": 100000000,
+				"preservedThinking": "always"
+			}
+		},
+		"kimi-k2.6": {
+			"name": "Kimi K2.6",
+			"family": "kimi-k2.6",
+			"modalities": {
+				"input": ["text", "image", "video"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 262144,
+					"maxOutputTokens": 32768,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled", "disabled"]
+						},
+						"temperature": {
+							"mode": "mapped",
+							"values": [1, 0.6],
+							"notes": "Thinking mode uses fixed 1.0; non-thinking mode uses fixed 0.6."
+						},
+						"top_p": {
+							"mode": "mapped",
+							"values": [0.95]
+						},
+						"tool_choice": {
+							"mode": "supported",
+							"values": ["auto", "none"],
+							"notes": "With thinking enabled, tool_choice is limited to auto or none."
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 95,
+				"outputCentsPerMTokens": 400,
+				"cacheReadCentsPerMTokens": 16
+			},
+			"sources": [
+				"https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart.md",
+				"https://platform.kimi.ai/docs/api/chat.md",
+				"https://platform.kimi.ai/docs/pricing/chat-k26.md"
+			],
+			"lastVerifiedAt": "2026-06-24",
+			"metadata": {
+				"supportedImageFormats": ["png", "jpeg", "webp", "gif"],
+				"supportedVideoFormats": [
+					"mp4",
+					"mpeg",
+					"mov",
+					"avi",
+					"x-flv",
+					"mpg",
+					"webm",
+					"wmv",
+					"3gpp"
+				],
+				"recommendedMaxImageResolution": "4096x2160",
+				"recommendedMaxVideoResolution": "1920x1080",
+				"maxRequestBodyBytes": 100000000,
+				"preservedThinking": "optional"
+			}
+		},
+		"kimi-k2.5": {
+			"name": "Kimi K2.5",
+			"family": "kimi-k2.5",
+			"modalities": {
+				"input": ["text", "image", "video"],
+				"output": ["text"]
+			},
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 262144,
+					"maxOutputTokens": 32768,
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["high"],
+						"canDisable": true,
+						"bodyField": {
+							"param": "thinking",
+							"onValue": { "type": "enabled" },
+							"offValue": { "type": "disabled" }
+						}
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"thinking": {
+							"mode": "supported",
+							"upstreamField": "thinking",
+							"values": ["enabled", "disabled"]
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 60,
+				"outputCentsPerMTokens": 300,
+				"cacheReadCentsPerMTokens": 10
+			},
+			"sources": [
+				"https://platform.kimi.ai/docs/api/chat.md",
+				"https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart.md"
+			],
+			"lastVerifiedAt": "2026-06-24"
+		},
+		"kimi-latest": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": false,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 131072,
+					"maxOutputTokens": 16384
+				}
+			}
+		}
+	}
+}

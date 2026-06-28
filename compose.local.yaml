@@ -1,0 +1,21 @@
+# Explicit local/host override. Bindings use loopback so databases and application
+# ports are not exposed on every host interface.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  gateway:
+    environment:
+      MASTER_KEY: ${MASTER_KEY:-dev-master-key-change-me}
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+    ports:
+      - "127.0.0.1:4000:4000"
+
+  docs:
+    ports:
+      - "127.0.0.1:3000:3000"

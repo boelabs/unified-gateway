@@ -1,0 +1,83 @@
+---
+title: "Errors"
+description: "Error shape, status codes, and a troubleshooting table."
+---
+
+Unified Gateway returns errors in the **exact shape of the endpoint you called**. OpenAI-style endpoints
+(`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`,
+`/v1/audio/transcriptions`) return the OpenAI error body; `/v1/messages` returns the Anthropic one. Your
+existing client's error handling works unchanged.
+
+OpenAI shape:
+
+```json
+{
+  "error": {
+    "message": "The request is invalid.",
+    "type": "invalid_request_error",
+    "param": null,
+    "code": "unsupported_parameter"
+  }
+}
+```
+
+Anthropic shape (`/v1/messages`):
+
+```json
+{ "type": "error", "error": { "type": "invalid_request_error", "message": "The request is invalid." } }
+```
+
+> Because the gateway is a router, the **public message is intentionally generic** — the same public
+> model can resolve to different deployments that each fail differently, and the public error must be
+> stable and must not leak a provider's wording. The full provider detail is preserved in
+> `request_logs`, correlated by the `x-request-id` on every response. When you need the real cause,
+> look up the log by request id.
+
+## Status codes by class
+
+Every error maps to one internal class, which fixes its HTTP status and OpenAI `type`:
+
+| Class | HTTP | OpenAI `type` | Retryable | Typical default `code` |
+|---|---|---|---|---|
+| `bad_request` | 400 | `invalid_request_error` | no | — |
+| `context_window` | 400 | `invalid_request_error` | no | `context_length_exceeded` |
+| `content_policy` | 400 | `invalid_request_error` | no | `content_policy_violation` |
+| `auth` | 401 | `authentication_error` | no | — |
+| `permission` | 403 | `invalid_request_error` | no | `model_not_allowed` |
+| `not_found` | 404 | `invalid_request_error` | no | `model_not_found` |
+| `rate_limit` | 429 | `rate_limit_error` | yes | `rate_limit_exceeded` |
+| `server` | 502 | `server_error` | yes | — |
+| `timeout` | 504 | `server_error` | yes | `timeout` |
+
+A 503 with `Retry-After` and code `service_unavailable` is returned separately when a **dependency**
+(Postgres/Redis) is down — see below.
+
+## Troubleshooting
+
+| `code` | Status | What it means | How to fix |
+|---|---|---|---|
+| `model_not_found` | 404 | The public model has no enabled deployment for the requested operation. | Create a deployment for that `publicModel`, enable it, or check the operation (e.g. an image model can't serve chat). |
+| `model_not_allowed` | 403 | The virtual key's `allowedModels` does not include this model. | Add the model to the key's scope, or use a key that already has it. See [Virtual keys](/docs/virtual-keys). |
+| `unsupported_parameter` | 400 | A parameter is outside the model's operation profile (e.g. an image size/format it doesn't support). | Remove or adjust the parameter to a value the profile allows. See [Creating deployments](/docs/creating-deployments). |
+| `unsupported_model_capability` | 400 | The request used a capability the model doesn't declare (tools, vision, reasoning, structured outputs). | Use a model whose catalog entry declares the capability, or drop the feature. |
+| `context_length_exceeded` | 400 | Input exceeds the model's context window. | Shorten the prompt or route to a larger-context model. Configure a `context_window` [fallback](/docs/fallbacks) to do this automatically. |
+| `content_policy_violation` | 400 | The provider blocked the request on content policy. | Adjust the content, or set a `content_policy` [fallback](/docs/fallbacks) to another model. |
+| `rate_limit_exceeded` | 429 | The virtual key's RPM/TPM limit, or the upstream's, was exceeded. | Back off using the `x-ratelimit-*` headers, raise the key's limits, or add deployments to the pool. |
+| `deployments_in_cooldown` | 429 | Every deployment in the pool is temporarily in cooldown after recent failures. | Wait the suggested seconds, add capacity, or configure a `general` [fallback](/docs/fallbacks). |
+| `no_deployments_available` | varies | The pool (and any chain) was exhausted without a usable deployment. | Check provider keys and health; inspect the failed `attempts` in `request_logs`. |
+| `extension_disabled` | 503 | A **critical** [runtime extension](/docs/extensions) tripped its failure breaker. | Fix the extension config and `POST /admin/extensions/{id}/reset`, or restart. Non-critical extensions are skipped, not fatal. |
+| `service_unavailable` | 503 | Postgres or Redis is unreachable; the request returns `Retry-After` instead of an opaque 500. | Transient — clients should honor `Retry-After` and retry. If persistent, check the dependency. |
+
+## Dependency outages
+
+When Postgres or Redis is down, in-flight inference requests return `503` with a `Retry-After` header
+(not a `500`), so well-behaved clients back off and retry. The readiness probe (`/health/ready`)
+returns `503` too, so a load balancer pulls the instance out until it recovers — without restarting
+it. See [Operations → Health](/docs/operations) for how to wire the probes.
+
+## Always log the request id
+
+Every response carries `x-request-id` (and echoes an inbound one if you send it). It is the join key
+between what the client saw and the full, untruncated provider detail in `request_logs`. When a user
+reports an error, capture that id first — it turns a generic public message into the exact upstream
+cause.

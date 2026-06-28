@@ -1,0 +1,33 @@
+{
+	"name": "@boelabs/docs",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "Unified Gateway documentation site (Next.js, Fumadocs, MDX).",
+	"scripts": {
+		"dev": "next dev",
+		"build": "next build",
+		"preview": "next start",
+		"typecheck": "fumadocs-mdx && next typegen && tsc --noEmit"
+	},
+	"dependencies": {
+		"@tailwindcss/postcss": "4.3.1",
+		"fumadocs-core": "16.10.6",
+		"fumadocs-mdx": "15.0.13",
+		"fumadocs-ui": "16.10.6",
+		"lucide-react": "1.21.0",
+		"next": "16.2.9",
+		"postcss": "8.5.15",
+		"react": "19.2.7",
+		"react-dom": "19.2.7",
+		"sharp": "0.35.2",
+		"tailwindcss": "4.3.1"
+	},
+	"devDependencies": {
+		"@types/mdx": "2.0.14",
+		"@types/node": "26.0.1",
+		"@types/react": "19.2.17",
+		"@types/react-dom": "19.2.3",
+		"typescript": "6.0.3"
+	}
+}

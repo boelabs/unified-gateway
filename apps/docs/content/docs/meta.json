@@ -1,0 +1,32 @@
+{
+	"title": "Unified Gateway",
+	"pages": [
+		"index",
+		"quickstart",
+		"concepts",
+		"---Setup---",
+		"setup",
+		"---Deploy---",
+		"deployment",
+		"deploy-local",
+		"deploy-coolify",
+		"deploy-portainer",
+		"deploy-dokploy",
+		"deploy-docker-linux",
+		"---Operate---",
+		"operations",
+		"creating-deployments",
+		"virtual-keys",
+		"fallbacks",
+		"caching",
+		"---Extend---",
+		"extensions",
+		"model-catalog",
+		"---Reference---",
+		"api",
+		"errors",
+		"known-errors",
+		"testing",
+		"glossary"
+	]
+}

@@ -1,0 +1,115 @@
+---
+title: "Glossary"
+description: "Definitions of the core Unified Gateway concepts."
+---
+
+This vocabulary is part of the project's contract. It must be used consistently across TypeScript,
+SQL, OpenAPI, documentation, logs, and admin tooling.
+
+## Public Endpoint
+
+The route a client calls, with the exact contract of that API. Examples:
+`/v1/chat/completions`, `/v1/responses`, `/v1/messages`, and `/v1/images/generations`.
+A public endpoint does not determine the protocol used against the provider.
+
+## Operation
+
+The semantic product a model offers: `text.generate`, `image.generate`, `image.edit`,
+`audio.transcribe`, `embedding.create`, etc. It is the stable vocabulary of the catalog and the admin
+API. The presence of an operation in `catalogEntry.operations` declares support.
+
+## Public Model
+
+The name the client sends in `model`, for example `general` or `image-default`. All deployments with
+the same `publicModel` automatically form its pool. There is no separate table or entity for that
+pool: the router derives it from `model_deployments.public_model`.
+
+Do not use **Model Group**. The correct concept is **Public Model**; when referring to its deployments
+collectively you may say **deployment pool**.
+
+## Deployment
+
+An executable route to a provider. A `model_deployments` row holds `publicModel`, adapter,
+`upstreamModel`, encrypted credentials, `transportOverrides`, status, weight, and limits. Retries and
+cooldowns belong to the individual deployment.
+
+## Upstream Model
+
+The exact identifier the adapter sends to the provider. It may differ from `publicModel`, and several
+upstream models or providers may serve the same Public Model.
+
+## Provider Preset
+
+A creation shortcut that resolves a `provider` to an adapter, required credentials, credential
+defaults, and `defaultTransportOverrides`. It lives in `src/providers/presets.ts`; it does not execute
+requests on its own.
+
+## Adapter
+
+Code that implements canonical handlers and knows how to translate them to one or more upstream
+transports. It declares `supportedCallTypes`, `transports`, and the available handlers. The provider's
+catalog lives next to the adapter; if it is missing, that provider is not registered.
+
+## Transport
+
+The protocol an adapter uses against the provider: `chat_completions`, `responses`,
+`generate_content`, `messages`, `images`, `audio_transcriptions`, `embeddings`, or `embed_content`.
+The type is `UpstreamTransport`, in `src/core/transport.ts`, and the execution context uses
+`ctx.transport`.
+
+`embeddings` is the OpenAI-compatible `/embeddings` transport; `embed_content` is Google Gemini's
+native transport for `:embedContent` and `:batchEmbedContents`.
+
+`transportOverrides` lets you replace the adapter's default transport per operation. Do not use the
+former names **wire** or **bindings**.
+
+## Catalog Entry
+
+A declarative 1:1 description of an upstream model: operations, profiles, reasoning, limits,
+modalities, lifecycle, and pricing. A known model uses its adapter's `catalog.json`. A custom model
+must send a complete `catalogEntry` when creating its deployment.
+
+## Operation Profile
+
+The configuration of a specific operation within `catalogEntry.operations`. For example, an image
+profile declares formats and sizes; a transcription profile declares response formats.
+
+## Capabilities
+
+The reserved name for the concrete feature flags of `text.generate`: `tools`, `vision`, `reasoning`,
+and `structuredOutputs`. It does not mean "list of operations" nor "adapter handler".
+
+## CallType
+
+The internal category that connects executable operations with the router and the handlers.
+It is not an admin contract nor a product name. New code should start from `Operation`; the runtime can
+derive its `CallType` via `operations/registry.ts`.
+
+## Canonical
+
+The provider-agnostic internal representation in `src/core/canonical.ts`, `images.ts`, `audio.ts`, and
+`embeddings.ts`. Public contracts are converted to canonical types; adapters convert between those
+types and their Transport. Do not use **Unified**.
+
+## Fallback Policy
+
+An ordered chain of Public Models identified by `(primaryModel, reason)`. `reason` is `general`,
+`context_window`, or `content_policy`; it is not an operation. Each target represents its deployment
+pool and receives the same per-deployment retry budget as the primary.
+
+Do not use the former field **kind** for fallbacks. `kind` is still valid in domains where it does
+discriminate a variant, such as reasoning controls or canonical events.
+
+## Virtual Key
+
+A client credential with its own limits and budget. `allowedModels` holds the permitted Public Models;
+`[]` means access to all of them.
+
+## Flow
+
+```text
+Client -> Public Endpoint -> Canonical request
+       -> Public Model -> deployment pool -> Deployment
+       -> Transport -> provider -> Canonical response
+       -> Public Endpoint contract -> client
+```
