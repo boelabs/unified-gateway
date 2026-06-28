@@ -6,10 +6,9 @@
 #
 #   docker build -f apps/docs/Dockerfile -t unified-docs .
 #
-# Dependencies are installed with Bun and the site is compiled with `next build` (Bun), but it is
-# SERVED with the standard `next start` server on Node 24 — Next.js's production server is Node-based
-# (unlike the gateway, which runs on Bun). The docs build makes no outbound TLS calls (no next/font
-# downloads), so Bun is safe for the build step here.
+# Dependencies are installed with Bun, but the site is compiled AND served with Node 24: `next build`
+# is run under Node (running it under Bun segfaults — Next.js targets the Node runtime), and the
+# production server is the standard Node-based `next start` (unlike the gateway, which runs on Bun).
 
 # ---- deps: full install (the build needs devDependencies) ----
 FROM oven/bun:1.3.14 AS deps
@@ -20,8 +19,8 @@ COPY apps/gateway/package.json ./apps/gateway/package.json
 COPY packages/tsconfig/package.json ./packages/tsconfig/package.json
 RUN bun install --frozen-lockfile --filter @boelabs/docs
 
-# ---- build: next build ----
-FROM oven/bun:1.3.14 AS build
+# ---- build: next build (Node — running it under Bun crashes) ----
+FROM node:24-bookworm-slim AS build
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1
@@ -30,7 +29,9 @@ COPY packages ./packages
 COPY apps/docs ./apps/docs
 COPY --from=deps /app/node_modules /app/node_modules
 COPY --from=deps /app/apps/docs/node_modules ./apps/docs/node_modules
-RUN cd apps/docs && bun run build
+# Invoke the Next.js binary directly with Node (the build image has no Bun); the `build` script is
+# just `next build`, and the MDX generation runs via the next config plugin.
+RUN cd apps/docs && node ./node_modules/next/dist/bin/next build
 
 # ---- runtime: Node 24, `next start` ----
 FROM node:24-bookworm-slim AS runtime
