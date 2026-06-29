@@ -34,8 +34,7 @@
 					"maxOutputTokens": 32768,
 					"reasoning": {
 						"kind": "fixed",
-						"levels": ["high"],
-						"canDisable": false
+						"levels": ["high"]
 					},
 					"contracts": ["chat.completions"],
 					"parameters": {
@@ -111,8 +110,7 @@
 					"maxOutputTokens": 32768,
 					"reasoning": {
 						"kind": "fixed",
-						"levels": ["high"],
-						"canDisable": false
+						"levels": ["high"]
 					},
 					"contracts": ["chat.completions"],
 					"parameters": {
@@ -186,12 +184,15 @@
 					"maxOutputTokens": 32768,
 					"reasoning": {
 						"kind": "openai_body",
-						"levels": ["high"],
-						"canDisable": true,
+						"levels": ["none", "high"],
 						"bodyField": {
 							"param": "thinking",
-							"onValue": { "type": "enabled" },
-							"offValue": { "type": "disabled" }
+							"onValue": {
+								"type": "enabled"
+							},
+							"offValue": {
+								"type": "disabled"
+							}
 						}
 					},
 					"contracts": ["chat.completions"],
@@ -267,12 +268,15 @@
 					"maxOutputTokens": 32768,
 					"reasoning": {
 						"kind": "openai_body",
-						"levels": ["high"],
-						"canDisable": true,
+						"levels": ["none", "high"],
 						"bodyField": {
 							"param": "thinking",
-							"onValue": { "type": "enabled" },
-							"offValue": { "type": "disabled" }
+							"onValue": {
+								"type": "enabled"
+							},
+							"offValue": {
+								"type": "disabled"
+							}
 						}
 					},
 					"contracts": ["chat.completions"],

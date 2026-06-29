@@ -55,43 +55,20 @@ export function assertTextRequestSupported(
 		});
 	}
 
+	// Reasoning policy is "clamp, don't reject": the only hard error is asking a NON-reasoner to actually
+	// reason. Everything else is honored by snapping downstream (core/reasoning.snapEffort) to the levels
+	// the model supports — an out-of-range effort moves into range, and "none" turns reasoning off when
+	// the model has an off switch ("none" ∈ levels) or snaps to its floor (e.g. Gemini flash -> minimal)
+	// when it does not. "none" on a non-reasoner is an allowed no-op (there is nothing to disable). This
+	// keeps the gateway agnostic and forward-compatible: a new model just declares its `levels`.
 	const requestedEffort = req.reasoning?.effort;
-	if (requestedEffort !== undefined) {
-		// The model supports reasoning if it declares the feature flag and carries an effective spec.
-		const spec = meta.capabilities.reasoning ? meta.reasoning : undefined;
-
-		if (requestedEffort === "none") {
-			// Disabling reasoning is only valid if the model allows it. On a mandatory reasoner
-			// (canDisable=false, e.g. gemini-3.1-pro-preview) "none" is an invalid parameter for THIS
-			// model: it is rejected explicitly instead of silently coercing it to the lowest level. It is
-			// agnostic: it depends only on spec.canDisable, not the concrete model/upstream. On a non-reasoner
-			// "none" is an allowed no-op (there is nothing to disable).
-			if (spec && !spec.canDisable) {
-				throw new GatewayError({
-					class: "bad_request",
-					message:
-						'The selected model is a reasoning model and does not support disabling reasoning (effort "none")',
-					code: "unsupported_model_capability",
-					param: "reasoning.effort",
-				});
-			}
-		} else if (!spec) {
-			throw new GatewayError({
-				class: "bad_request",
-				message: "The selected model does not support reasoning controls",
-				code: "unsupported_model_capability",
-				param: "reasoning",
-			});
-		} else if (
-			spec.kind === "fixed" &&
-			!spec.levels.includes(requestedEffort)
-		) {
-			throw new GatewayError({
-				class: "bad_request",
-				message: `The selected model has fixed reasoning and only supports effort "${spec.levels[0] ?? "high"}"`,
-				code: "unsupported_model_capability",
-				param: "reasoning.effort",
-			});
-		}
+	const reasons = meta.capabilities.reasoning ? meta.reasoning : undefined;
+	if (requestedEffort !== undefined && requestedEffort !== "none" && !reasons) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: "The selected model does not support reasoning controls",
+			code: "unsupported_model_capability",
+			param: "reasoning",
+		});
 	}
 }

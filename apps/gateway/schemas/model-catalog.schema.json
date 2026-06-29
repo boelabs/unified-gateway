@@ -184,7 +184,7 @@
 		"reasoningSpec": {
 			"type": "object",
 			"additionalProperties": false,
-			"required": ["kind", "levels", "canDisable"],
+			"required": ["kind", "levels"],
 			"properties": {
 				"kind": {
 					"enum": [
@@ -204,7 +204,6 @@
 					"minItems": 1,
 					"uniqueItems": true
 				},
-				"canDisable": { "type": "boolean" },
 				"budgets": {
 					"type": "object",
 					"additionalProperties": false,

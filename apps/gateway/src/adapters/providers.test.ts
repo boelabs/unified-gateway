@@ -5,7 +5,6 @@ import type { Adapter, AdapterContext } from "./types.ts";
 import { deepseekAdapter } from "./deepseek/index.ts";
 import { moonshotAdapter } from "./moonshot/index.ts";
 import { minimaxAdapter } from "./minimax/index.ts";
-import { GatewayError } from "#core/errors.ts";
 import { zaiAdapter } from "./zai/index.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -92,7 +91,7 @@ test("catalog: DeepSeek-V4 includes official pricing and native thinking/effort"
 		"DeepSeek V4 Flash y Pro comparten efforts",
 	);
 
-	// canDisable=true: omitting effort -> the gateway explicitly disables thinking.
+	// "none" ∈ levels: omitting effort -> the gateway explicitly disables thinking.
 	const r = deepseekAdapter.chat!.buildRequest(
 		req,
 		ctx("deepseek-v4-flash", "deepseek", { apiKey: "k" }),
@@ -131,7 +130,7 @@ test("catalog: Kimi K2.6/K2.7 model native thinking", () => {
 	assert.equal(k26.maxOutputTokens, 32768);
 	assert.equal(k26.reasoning?.kind, "openai_body");
 	assert.equal(k27.reasoning?.kind, "fixed");
-	assert.equal(k27.reasoning?.canDisable, false);
+	assert.equal(k27.reasoning?.levels.includes("none"), false);
 
 	const off = moonshotAdapter.chat!.buildRequest(
 		req,
@@ -157,20 +156,13 @@ test("deprecated DeepSeek aliases preserve compatibility modes", () => {
 	);
 	assert.equal(JSON.parse(r.body!).reasoning_effort, undefined);
 
-	assert.doesNotThrow(() =>
-		assertTextRequestSupported(
-			{ ...req, reasoning: { effort: "high" } },
-			reasoner,
-		),
-	);
-	assert.throws(
-		() =>
-			assertTextRequestSupported(
-				{ ...req, reasoning: { effort: "none" } },
-				reasoner,
-			),
-		(err) => GatewayError.is(err) && err.param === "reasoning.effort",
-	);
+	// Clamp-don't-reject: a fixed reasoner accepts any effort (including "none"); it always reasons and
+	// emits no upstream control regardless.
+	for (const effort of ["high", "none", "low"] as const) {
+		assert.doesNotThrow(() =>
+			assertTextRequestSupported({ ...req, reasoning: { effort } }, reasoner),
+		);
+	}
 });
 
 test("new providers: context overflow 400 -> context_window (by message)", () => {

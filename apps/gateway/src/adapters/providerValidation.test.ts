@@ -26,7 +26,7 @@ function entryWithKind(kind: ReasoningSpec["kind"]): CatalogEntry {
 					reasoning: true,
 					structuredOutputs: false,
 				},
-				reasoning: { kind, levels: ["low", "high"], canDisable: true },
+				reasoning: { kind, levels: ["none", "low", "high"] },
 			},
 		},
 	};

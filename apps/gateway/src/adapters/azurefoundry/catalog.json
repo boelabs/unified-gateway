@@ -35,8 +35,7 @@
 					},
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["high", "xhigh"],
-						"canDisable": true,
+						"levels": ["none", "high", "xhigh"],
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -57,8 +56,7 @@
 					},
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["high", "xhigh"],
-						"canDisable": true,
+						"levels": ["none", "high", "xhigh"],
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -203,8 +201,7 @@
 					},
 					"reasoning": {
 						"kind": "fixed",
-						"levels": ["high"],
-						"canDisable": false
+						"levels": ["high"]
 					},
 					"maxInputTokens": 262144,
 					"maxOutputTokens": 262144
@@ -222,8 +219,7 @@
 					},
 					"reasoning": {
 						"kind": "fixed",
-						"levels": ["high"],
-						"canDisable": false
+						"levels": ["high"]
 					},
 					"maxInputTokens": 262144,
 					"maxOutputTokens": 262144

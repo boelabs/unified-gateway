@@ -167,7 +167,6 @@ function validateReasoning(value: unknown, path: string): void {
 		if (!(EFFORT_ORDER as readonly string[]).includes(level))
 			fail(`${path}.levels`, `unknown effort "${level}"`);
 	}
-	assertBoolean(value.canDisable, `${path}.canDisable`);
 	if (value.budgets !== undefined) {
 		if (!isRecord(value.budgets)) fail(`${path}.budgets`, "must be an object");
 		for (const [level, tokens] of Object.entries(value.budgets)) {

@@ -31,8 +31,7 @@ const reasoningCtx: AdapterContext = {
 		},
 		reasoning: {
 			kind: "openai_effort",
-			levels: ["low", "medium", "high"],
-			canDisable: true,
+			levels: ["none", "low", "medium", "high"],
 		},
 	},
 };
@@ -146,7 +145,7 @@ test("openai.buildRequest: canonical format is emitted as /responses text.format
 });
 
 test("openai.buildRequest: omitted effort on model that can skip reasoning -> effort none (without summary)", () => {
-	// reasoningCtx has canDisable=true: the gateway default is NOT to reason.
+	// reasoningCtx has "none" ∈ levels: the gateway default is NOT to reason.
 	const r = openaiAdapter.chat!.buildRequest(baseReq, reasoningCtx);
 	assert.deepEqual(JSON.parse(r.body!).reasoning, { effort: "none" });
 });
@@ -164,7 +163,6 @@ test("openai.buildRequest: omitted effort on MANDATORY reasoner -> lowest level 
 			reasoning: {
 				kind: "openai_effort",
 				levels: ["low", "medium", "high"],
-				canDisable: false,
 			},
 		},
 	};
@@ -197,8 +195,7 @@ test("openai.buildRequest: translates canonical effort to upstream vocabulary", 
 			...reasoningCtx.meta,
 			reasoning: {
 				kind: "openai_effort",
-				levels: ["high", "xhigh"],
-				canDisable: true,
+				levels: ["none", "high", "xhigh"],
 				upstreamEffortMap: { xhigh: "max" },
 			},
 		},

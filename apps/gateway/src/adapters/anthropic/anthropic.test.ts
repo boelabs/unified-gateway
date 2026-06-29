@@ -33,8 +33,7 @@ const adaptiveCtx: AdapterContext = {
 		},
 		reasoning: {
 			kind: "anthropic_adaptive",
-			levels: ["low", "medium", "high", "xhigh"],
-			canDisable: true,
+			levels: ["none", "low", "medium", "high", "xhigh"],
 			upstreamEffortMap: { xhigh: "max" },
 		},
 	},
@@ -52,8 +51,7 @@ const budgetCtx: AdapterContext = {
 		},
 		reasoning: {
 			kind: "anthropic_budget",
-			levels: ["low", "medium", "high"],
-			canDisable: true,
+			levels: ["none", "low", "medium", "high"],
 			budgets: { low: 2048, medium: 8192, high: 16000 },
 		},
 	},
@@ -193,7 +191,7 @@ test("anthropic.buildRequest: json_object uses an open object schema", () => {
 });
 
 test("anthropic.buildRequest: omitted effort on model that can skip reasoning -> no thinking", () => {
-	// adaptiveCtx has canDisable=true: the gateway default is NOT to reason (thinking is not emitted).
+	// adaptiveCtx has "none" ∈ levels: the gateway default is NOT to reason (thinking is not emitted).
 	const built = anthropicAdapter.chat!.buildRequest(req, adaptiveCtx);
 	const body = JSON.parse(built.body!);
 	assert.equal(body.thinking, undefined);
@@ -208,7 +206,6 @@ test("anthropic.buildRequest: omitted effort on MANDATORY reasoner -> lowest lev
 			reasoning: {
 				kind: "anthropic_adaptive",
 				levels: ["low", "medium", "high", "xhigh"],
-				canDisable: false,
 			},
 		},
 	};

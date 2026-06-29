@@ -34,7 +34,6 @@ const geminiLevelCtx: AdapterContext = {
 		reasoning: {
 			kind: "gemini_level",
 			levels: ["minimal", "low", "medium", "high"],
-			canDisable: false,
 		},
 	},
 };
@@ -50,8 +49,7 @@ const geminiBudgetCtx: AdapterContext = {
 		},
 		reasoning: {
 			kind: "gemini_budget",
-			levels: ["minimal", "low", "medium", "high"],
-			canDisable: true,
+			levels: ["none", "minimal", "low", "medium", "high"],
 			budgets: { minimal: 512, low: 1_024, medium: 4_096, high: 8_192 },
 		},
 	},

@@ -22,8 +22,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true,
+						"levels": ["none", "low", "medium", "high", "xhigh"],
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -48,8 +47,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true,
+						"levels": ["none", "low", "medium", "high", "xhigh"],
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -74,8 +72,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true,
+						"levels": ["none", "low", "medium", "high", "xhigh"],
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -100,8 +97,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true,
+						"levels": ["none", "low", "medium", "high", "xhigh"],
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -127,7 +123,6 @@
 					"reasoning": {
 						"kind": "anthropic_adaptive",
 						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": false,
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -153,7 +148,6 @@
 					"reasoning": {
 						"kind": "anthropic_adaptive",
 						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": false,
 						"upstreamEffortMap": {
 							"xhigh": "max"
 						}
@@ -178,8 +172,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_budget",
-						"canDisable": true,
-						"levels": ["low", "medium", "high", "xhigh"],
+						"levels": ["none", "low", "medium", "high", "xhigh"],
 						"budgets": {
 							"low": 2048,
 							"medium": 8192,

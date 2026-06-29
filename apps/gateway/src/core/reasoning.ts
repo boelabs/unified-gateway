@@ -113,13 +113,15 @@ interface BodyFieldReasoningConfig {
 }
 
 /**
- * How a model controls reasoning. `levels` = the effort levels it accepts (any order; sorted when
- * snapping). `budgets` only for the *_budget kinds (tokens per level). `canDisable` indicates whether
- * reasoning can be turned off entirely.
+ * How a model controls reasoning. `levels` = the effort levels it accepts, as points on the canonical
+ * ladder `none < minimal < low < medium < high < xhigh` (any order; sorted when snapping). Whether the
+ * model can be turned OFF is encoded directly in the ladder: `"none" ∈ levels` means a literal off
+ * switch exists; if `"none"` is absent the model always reasons and a request for "none" snaps up to
+ * its lowest level (its "floor"). `budgets` only for the *_budget kinds (tokens per level).
  *
  * Convention for binary controls:
- *  - on/off toggle: `levels: ["high"]`, `canDisable: true` -> public API `none | high`.
- *  - fixed reasoner: `kind: "fixed"`, `levels: ["high"]`, `canDisable: false` -> only `high`.
+ *  - on/off toggle: `levels: ["none", "high"]` -> public API `none | high`.
+ *  - fixed reasoner: `kind: "fixed"`, `levels: ["high"]` -> always reasons, only `high`.
  * `fixed` never emits an upstream parameter: it describes a behavior, not a provider control.
  *
  * `upstreamEffortMap` separates our contract from the native vocabulary. Its keys are ALWAYS the
@@ -130,7 +132,6 @@ interface BodyFieldReasoningConfig {
 export interface ReasoningSpec {
 	kind: ReasoningControlKind;
 	levels: ReasoningEffort[];
-	canDisable: boolean;
 	budgets?: Partial<Record<ReasoningEffort, number>>;
 	upstreamEffortMap?: Partial<Record<ReasoningEffort, string>>;
 	/** Only for `kind: "openai_body"`: top-level field that enables/disables thinking. */
@@ -150,11 +151,16 @@ export function toUpstreamReasoningEffort(
 }
 
 /**
- * Adjusts the requested effort to what the model supports:
- *  - "none" -> "none" if `canDisable`; otherwise the lowest supported level.
- *  - rest -> the highest supported level that does not exceed the request (ceiling/floor by index).
- * Returns a level guaranteed ∈ `levels`, or "none". Handles non-contiguous support
- * (e.g. low/high/xhigh, without medium) by choosing the nearest one downward.
+ * Snaps the requested effort to the nearest level the model supports. Two rules, with "none" (OFF)
+ * treated as special because it is a state, not a degree of reasoning:
+ *  - request "none": returns "none" if the model has an off switch (`"none" ∈ levels`); otherwise the
+ *    model always reasons, so it snaps UP to the lowest available level (its "floor").
+ *  - request of a real effort (minimal..xhigh): chosen among the POSITIVE levels only — the highest one
+ *    that does not exceed the request, or the floor if the request is below all of them. A positive
+ *    request NEVER rounds DOWN into "none": asking for some reasoning never turns it off.
+ * This makes `levels` the single source of truth for "can this model disable reasoning, and what does
+ * it fall back to" — no separate flag. Returns a level guaranteed ∈ `levels`. Handles non-contiguous
+ * support (e.g. low/high/xhigh, without medium) by choosing the nearest one downward.
  */
 export function snapEffort(
 	requested: ReasoningEffort,
@@ -163,13 +169,17 @@ export function snapEffort(
 	const sorted = [...spec.levels].sort(
 		(a, b) => effortIndex(a) - effortIndex(b),
 	);
-	if (requested === "none")
-		return spec.canDisable ? "none" : (sorted[0] ?? "low");
-	if (sorted.length === 0) return spec.canDisable ? "none" : requested;
+	if (sorted.length === 0) return requested;
+	// Explicit OFF, honored only if the model actually exposes it (lowest rung is "none").
+	if (requested === "none" && sorted[0] === "none") return "none";
+
+	// Positive request (or "none" on a mandatory reasoner): pick among the reasoning levels, never "none".
+	const positives = sorted.filter((lvl) => lvl !== "none");
+	if (positives.length === 0) return "none"; // degenerate: the model only declares "none"
 
 	const reqIdx = effortIndex(requested);
-	let chosen = sorted[0]!; // default floor if the request is below all of them
-	for (const lvl of sorted) {
+	let chosen = positives[0]!; // floor if the request is below all of them
+	for (const lvl of positives) {
 		if (effortIndex(lvl) <= reqIdx) chosen = lvl;
 		else break;
 	}
@@ -193,8 +203,8 @@ export interface ResolvedReasoning {
  * Resolves the effective reasoning of a request for a model with a given spec. PROVIDER-AGNOSTIC: it
  * only depends on the spec. Gateway policy when the client OMITS the effort: it is treated as if the
  * MINIMUM was requested, i.e. `snapEffort("none", spec)`:
- *  - Model that can skip reasoning (`canDisable`) -> "none" (does not reason by default).
- *  - Model that ALWAYS reasons (`!canDisable`) -> its lowest level (low/minimal), with thoughts.
+ *  - Model with a literal off (`"none" ∈ levels`) -> "none" (does not reason by default).
+ *  - Model that ALWAYS reasons (`"none" ∉ levels`) -> its lowest level (minimal/low), with thoughts.
  * No opaque upstream default is inherited. An explicit effort is snapped to what is supported.
  */
 export function resolveReasoning(
@@ -241,6 +251,33 @@ export function resolveBodyFieldReasoning(
 	const value = on ? (cfg.onValue ?? true) : cfg.offValue;
 	if (value === undefined) return undefined;
 	return { param: cfg.param, value };
+}
+
+/** Request-log observability: what the client asked for vs what actually ran after snapping. */
+export interface ReasoningLogInfo {
+	/** Effort the client explicitly requested. */
+	requested: ReasoningEffort;
+	/** Effort actually applied after snapping to the model's levels. */
+	effective: ReasoningEffort;
+	/** True when the request was adjusted (out of range, or "none" on a mandatory reasoner). */
+	clamped: boolean;
+}
+
+/**
+ * Builds the reasoning entry for the request log. Because the gateway clamps instead of rejecting, the
+ * effective effort can differ from what the client asked for (e.g. "none" -> "minimal" on a Gemini
+ * flash, or "xhigh" -> "high"); surfacing both makes that adjustment observable (no surprise costs).
+ * Returns undefined when the client did not request an effort or the model does not reason, so the log
+ * stays quiet unless there is something to report.
+ */
+export function reasoningLogInfo(
+	reasoning: CanonicalReasoning | undefined,
+	spec: ReasoningSpec | undefined,
+): ReasoningLogInfo | undefined {
+	const requested = reasoning?.effort;
+	if (requested === undefined || !spec) return undefined;
+	const effective = snapEffort(requested, spec);
+	return { requested, effective, clamped: requested !== effective };
 }
 
 /** Conservative bucketing for contracts that express thinking as a token budget. */

@@ -7,32 +7,32 @@ import {
 	resolveChatTemplateFlag,
 	effortFromBudgetTokens,
 	type ReasoningSpec,
+	reasoningLogInfo,
 	resolveReasoning,
 	summaryForEffort,
 	summaryVisible,
 	snapEffort,
 } from "./reasoning.ts";
 
-test("snapEffort: none is respected only if the model can disable reasoning", () => {
-	const canDisable: ReasoningSpec = {
+test("snapEffort: none is honored only if the model exposes an off switch (none in levels)", () => {
+	const withOff: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["low", "medium", "high"],
-		canDisable: true,
+		levels: ["none", "low", "medium", "high"],
 	};
-	const cannotDisable: ReasoningSpec = {
+	const alwaysReasons: ReasoningSpec = {
 		kind: "gemini_level",
 		levels: ["low", "medium", "high"],
-		canDisable: false,
 	};
-	assert.equal(snapEffort("none", canDisable), "none");
-	assert.equal(snapEffort("none", cannotDisable), "low");
+	assert.equal(snapEffort("none", withOff), "none");
+	assert.equal(snapEffort("none", alwaysReasons), "low"); // snaps up to the floor
+	// A positive request never rounds DOWN into off, even when off exists.
+	assert.equal(snapEffort("minimal", withOff), "low");
 });
 
 test("snapEffort: lowers to the nearest supported level", () => {
 	const spec: ReasoningSpec = {
 		kind: "anthropic_adaptive",
-		levels: ["low", "medium", "high"],
-		canDisable: true,
+		levels: ["none", "low", "medium", "high"],
 	};
 	assert.equal(snapEffort("xhigh", spec), "high");
 	assert.equal(snapEffort("minimal", spec), "low");
@@ -41,13 +41,44 @@ test("snapEffort: lowers to the nearest supported level", () => {
 test("snapEffort: a binary toggle normalizes exclusively to none/high", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["high"],
-		canDisable: true,
+		levels: ["none", "high"],
 	};
 	assert.equal(snapEffort("none", spec), "none");
 	for (const effort of ["minimal", "low", "medium", "high", "xhigh"] as const) {
 		assert.equal(snapEffort(effort, spec), "high");
 	}
+});
+
+test("reasoningLogInfo: reports requested vs effective and flags clamping", () => {
+	const flashLite: ReasoningSpec = {
+		kind: "gemini_level",
+		levels: ["minimal", "low", "medium", "high"],
+	};
+	const withOff: ReasoningSpec = {
+		kind: "openai_effort",
+		levels: ["none", "low", "medium", "high"],
+	};
+	// "none" clamps up to the floor on a mandatory reasoner.
+	assert.deepEqual(reasoningLogInfo({ effort: "none" }, flashLite), {
+		requested: "none",
+		effective: "minimal",
+		clamped: true,
+	});
+	// Honored as-is when the model has an off switch.
+	assert.deepEqual(reasoningLogInfo({ effort: "none" }, withOff), {
+		requested: "none",
+		effective: "none",
+		clamped: false,
+	});
+	// Out-of-range request clamps down.
+	assert.deepEqual(reasoningLogInfo({ effort: "xhigh" }, flashLite), {
+		requested: "xhigh",
+		effective: "high",
+		clamped: true,
+	});
+	// Quiet when nothing to report.
+	assert.equal(reasoningLogInfo(undefined, flashLite), undefined);
+	assert.equal(reasoningLogInfo({ effort: "high" }, undefined), undefined);
 });
 
 test("effortFromBudgetTokens: buckets legacy budgets", () => {
@@ -60,8 +91,7 @@ test("effortFromBudgetTokens: buckets legacy budgets", () => {
 test("toUpstreamReasoningEffort: separates our xhigh from native max", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["high", "xhigh"],
-		canDisable: true,
+		levels: ["none", "high", "xhigh"],
 		upstreamEffortMap: { xhigh: "max" },
 	};
 	assert.equal(toUpstreamReasoningEffort("high", spec), "high");
@@ -71,8 +101,7 @@ test("toUpstreamReasoningEffort: separates our xhigh from native max", () => {
 test("resolveChatTemplateFlag: binary on/off toggle against the spec", () => {
 	const spec: ReasoningSpec = {
 		kind: "chat_template_flag",
-		levels: ["high"],
-		canDisable: true,
+		levels: ["none", "high"],
 		chatTemplateFlag: { param: "thinking" },
 	};
 	// omitted effort on a model that can disable -> off -> no offValue -> no output.
@@ -91,8 +120,7 @@ test("resolveChatTemplateFlag: binary on/off toggle against the spec", () => {
 test("resolveChatTemplateFlag: respects custom onValue/offValue and parameter name", () => {
 	const spec: ReasoningSpec = {
 		kind: "chat_template_flag",
-		levels: ["high"],
-		canDisable: true,
+		levels: ["none", "high"],
 		chatTemplateFlag: {
 			param: "enable_thinking",
 			onValue: "on",
@@ -112,8 +140,7 @@ test("resolveChatTemplateFlag: respects custom onValue/offValue and parameter na
 test("resolveChatTemplateFlag: undefined for other kinds", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["high"],
-		canDisable: true,
+		levels: ["none", "high"],
 	};
 	assert.equal(resolveChatTemplateFlag({ effort: "high" }, spec), undefined);
 });
@@ -121,8 +148,7 @@ test("resolveChatTemplateFlag: undefined for other kinds", () => {
 test("resolveBodyFieldReasoning: emits top-level JSON values for OpenAI-compatible", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_body",
-		levels: ["high"],
-		canDisable: true,
+		levels: ["none", "high"],
 		bodyField: {
 			param: "thinking",
 			onValue: { type: "enabled" },
@@ -146,11 +172,10 @@ test("summaryForEffort: enabled effort implies auto unless opt-out none", () => 
 });
 
 test("resolveReasoning: omitted effort on MANDATORY reasoner -> lowest level + auto summary", () => {
-	// canDisable=false -> cannot avoid reasoning: default = minimum level, with thoughts.
+	// "none" ∉ levels -> cannot avoid reasoning: default = minimum level, with thoughts.
 	const spec: ReasoningSpec = {
 		kind: "gemini_level",
 		levels: ["low", "medium", "high"],
-		canDisable: false,
 	};
 	const resolved = resolveReasoning(undefined, spec);
 	assert.equal(resolved.effort, "low");
@@ -159,11 +184,10 @@ test("resolveReasoning: omitted effort on MANDATORY reasoner -> lowest level + a
 });
 
 test("resolveReasoning: omitted effort on model that CAN skip reasoning -> none (does not reason)", () => {
-	// canDisable=true -> the default is no reasoning (none), without thoughts.
+	// "none" ∈ levels -> the default is no reasoning (none), without thoughts.
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["low", "medium", "high"],
-		canDisable: true,
+		levels: ["none", "low", "medium", "high"],
 	};
 	const resolved = resolveReasoning(undefined, spec);
 	assert.equal(resolved.effort, "none");
@@ -174,8 +198,7 @@ test("resolveReasoning: omitted effort on model that CAN skip reasoning -> none 
 test("resolveReasoning: explicit effort is snapped and respects summary opt-out", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["low", "medium", "high"],
-		canDisable: true,
+		levels: ["none", "low", "medium", "high"],
 	};
 	const high = resolveReasoning({ effort: "xhigh" }, spec);
 	assert.equal(high.effort, "high"); // snapped to the supported ceiling
@@ -195,8 +218,7 @@ test("resolveReasoning: explicit effort is snapped and respects summary opt-out"
 test("resolveReasoning: effort none on model that can disable -> no summary", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["low", "medium", "high"],
-		canDisable: true,
+		levels: ["none", "low", "medium", "high"],
 	};
 	const resolved = resolveReasoning({ effort: "none" }, spec);
 	assert.equal(resolved.effort, "none");

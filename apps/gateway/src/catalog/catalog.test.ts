@@ -99,8 +99,7 @@ test("Azure OpenAI and Azure Foundry keep their own catalogs", () => {
 		?.operations["text.generate"];
 	assert.deepEqual(deepseekV4?.reasoning, {
 		kind: "openai_effort",
-		levels: ["high", "xhigh"],
-		canDisable: true,
+		levels: ["none", "high", "xhigh"],
 		upstreamEffortMap: { xhigh: "max" },
 	});
 	assert.deepEqual(
@@ -116,7 +115,6 @@ test("Azure OpenAI and Azure Foundry keep their own catalogs", () => {
 		{
 			kind: "fixed",
 			levels: ["high"],
-			canDisable: false,
 		},
 	);
 	assert.ok(getCatalogEntry("azurefoundry", "grok-4.3"));
@@ -161,12 +159,14 @@ test("resolved model metadata exposes limits and reasoning defaults from catalog
 	assert.equal(openai.maxOutputTokens, 128_000);
 	assert.equal(openai.reasoning?.kind, "openai_effort");
 	assert.deepEqual(openai.reasoning?.levels, [
+		"none",
 		"low",
 		"medium",
 		"high",
 		"xhigh",
 	]);
-	assert.equal(openai.reasoning?.canDisable, true);
+	// "none" ∈ levels is the new shape for "can disable reasoning".
+	assert.equal(openai.reasoning?.levels.includes("none"), true);
 	assert.equal(openai.capabilities.structuredOutputs, true);
 
 	const gemini = resolveModelMetadata(
@@ -176,7 +176,8 @@ test("resolved model metadata exposes limits and reasoning defaults from catalog
 	assert.equal(gemini.maxInputTokens, 1_048_576);
 	assert.equal(gemini.maxOutputTokens, 65_536);
 	assert.equal(gemini.reasoning?.kind, "gemini_level");
-	assert.equal(gemini.reasoning?.canDisable, false);
+	// gemini-3.1-pro-preview is a mandatory reasoner: no off switch ("none" ∉ levels).
+	assert.equal(gemini.reasoning?.levels.includes("none"), false);
 	assert.equal(gemini.capabilities.structuredOutputs, true);
 
 	const geminiEmbedding = resolveModelMetadata(

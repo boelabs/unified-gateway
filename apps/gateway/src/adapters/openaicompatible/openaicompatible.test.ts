@@ -42,8 +42,7 @@ function reasoningCtx(creds: Record<string, unknown>): AdapterContext {
 			},
 			reasoning: {
 				kind: "openai_effort",
-				levels: ["minimal", "low", "medium", "high"],
-				canDisable: true,
+				levels: ["none", "minimal", "low", "medium", "high"],
 			},
 		},
 	};
@@ -130,8 +129,7 @@ function chatTemplateFlagCtx(creds: Record<string, unknown>): AdapterContext {
 			},
 			reasoning: {
 				kind: "chat_template_flag",
-				levels: ["high"],
-				canDisable: true,
+				levels: ["none", "high"],
 				chatTemplateFlag: { param: "thinking" },
 			},
 		},
@@ -152,8 +150,7 @@ function openAIBodyReasoningCtx(
 			},
 			reasoning: {
 				kind: "openai_body",
-				levels: ["high", "xhigh"],
-				canDisable: true,
+				levels: ["none", "high", "xhigh"],
 				upstreamEffortMap: { xhigh: "max" },
 				bodyField: {
 					param: "thinking",

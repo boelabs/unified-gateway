@@ -422,8 +422,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true
+						"levels": ["none", "low", "medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -454,8 +453,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["medium", "high", "xhigh"],
-						"canDisable": false
+						"levels": ["medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -477,8 +475,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true
+						"levels": ["none", "low", "medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -501,8 +498,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["medium", "high", "xhigh"],
-						"canDisable": false
+						"levels": ["medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -524,8 +520,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true
+						"levels": ["none", "low", "medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -548,8 +543,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true
+						"levels": ["none", "low", "medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -572,8 +566,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": false
+						"levels": ["low", "medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -596,8 +589,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"canDisable": true
+						"levels": ["none", "low", "medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -620,8 +612,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["medium", "high", "xhigh"],
-						"canDisable": false
+						"levels": ["medium", "high", "xhigh"]
 					}
 				}
 			},
@@ -643,8 +634,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high"],
-						"canDisable": true
+						"levels": ["none", "low", "medium", "high"]
 					}
 				}
 			},
@@ -667,8 +657,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["minimal", "low", "medium", "high"],
-						"canDisable": false
+						"levels": ["minimal", "low", "medium", "high"]
 					}
 				}
 			},
@@ -691,8 +680,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["minimal", "low", "medium", "high"],
-						"canDisable": false
+						"levels": ["minimal", "low", "medium", "high"]
 					}
 				}
 			},
@@ -715,8 +703,7 @@
 					"maxOutputTokens": 128000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["minimal", "low", "medium", "high"],
-						"canDisable": false
+						"levels": ["minimal", "low", "medium", "high"]
 					}
 				}
 			},
@@ -739,8 +726,7 @@
 					"maxOutputTokens": 272000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["high"],
-						"canDisable": false
+						"levels": ["high"]
 					}
 				}
 			},
@@ -762,8 +748,7 @@
 					"maxOutputTokens": 100000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high"],
-						"canDisable": false
+						"levels": ["low", "medium", "high"]
 					}
 				}
 			},
@@ -785,8 +770,7 @@
 					"maxOutputTokens": 100000,
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["low", "medium", "high"],
-						"canDisable": false
+						"levels": ["low", "medium", "high"]
 					}
 				}
 			},

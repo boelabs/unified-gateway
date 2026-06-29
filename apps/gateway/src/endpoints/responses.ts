@@ -1,6 +1,7 @@
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { executeChat } from "#gateway/executor.ts";
+import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { log as appLog } from "#logging/log.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -186,6 +187,11 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			upstreamModel: routing.candidate.upstreamModel,
 		};
 		const metadata = candidateMetadata(routing.candidate);
+		const reasoning = reasoningLogInfo(
+			canonical.reasoning,
+			meta.capabilities.reasoning ? meta.reasoning : undefined,
+		);
+		if (reasoning) metadata.reasoning = reasoning;
 
 		if (routing.value.kind === "json") {
 			// no-stream: the response arrives complete -> the "first token" is the whole response.

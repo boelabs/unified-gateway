@@ -106,8 +106,7 @@ test("azurefoundry: uses modern Chat Completions and max_completion_tokens", () 
 test("azurefoundry: DeepSeek V4 translates none/high/xhigh to none/high/max", () => {
 	const reasoning = {
 		kind: "openai_effort" as const,
-		levels: ["high", "xhigh"] as ("high" | "xhigh")[],
-		canDisable: true,
+		levels: ["none", "high", "xhigh"] as ("high" | "xhigh")[],
 		upstreamEffortMap: { xhigh: "max" },
 	};
 
@@ -140,7 +139,6 @@ test("azurefoundry: Kimi is a fixed high reasoner without inventing an upstream 
 	const fixedReasoning = {
 		kind: "fixed" as const,
 		levels: ["high"] as "high"[],
-		canDisable: false,
 	};
 	const ctx: AdapterContext = {
 		...context("chat_completions", "Kimi-K2.6"),

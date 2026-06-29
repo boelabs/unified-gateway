@@ -344,8 +344,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_level",
-						"levels": ["low", "medium", "high"],
-						"canDisable": false
+						"levels": ["low", "medium", "high"]
 					}
 				}
 			},
@@ -376,8 +375,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_level",
-						"levels": ["low", "medium", "high"],
-						"canDisable": false
+						"levels": ["low", "medium", "high"]
 					}
 				}
 			},
@@ -408,8 +406,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_level",
-						"levels": ["minimal", "low", "medium", "high"],
-						"canDisable": false
+						"levels": ["minimal", "low", "medium", "high"]
 					}
 				}
 			},
@@ -432,8 +429,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_level",
-						"levels": ["minimal", "low", "medium", "high"],
-						"canDisable": false
+						"levels": ["minimal", "low", "medium", "high"]
 					}
 				}
 			},
@@ -456,8 +452,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_level",
-						"levels": ["minimal", "low", "medium", "high"],
-						"canDisable": false
+						"levels": ["minimal", "low", "medium", "high"]
 					}
 				}
 			},
@@ -480,7 +475,6 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_budget",
-						"canDisable": false,
 						"levels": ["minimal", "low", "medium", "high", "xhigh"],
 						"budgets": {
 							"minimal": 128,
@@ -519,8 +513,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_budget",
-						"canDisable": true,
-						"levels": ["minimal", "low", "medium", "high", "xhigh"],
+						"levels": ["none", "minimal", "low", "medium", "high", "xhigh"],
 						"budgets": {
 							"minimal": 512,
 							"low": 1024,
@@ -550,8 +543,7 @@
 					"maxOutputTokens": 65536,
 					"reasoning": {
 						"kind": "gemini_budget",
-						"canDisable": true,
-						"levels": ["minimal", "low", "medium", "high", "xhigh"],
+						"levels": ["none", "minimal", "low", "medium", "high", "xhigh"],
 						"budgets": {
 							"minimal": 512,
 							"low": 1024,

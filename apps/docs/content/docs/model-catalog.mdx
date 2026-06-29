@@ -53,8 +53,7 @@ rules the admin API enforces.
           "maxOutputTokens": 128000,
           "reasoning": {
             "kind": "openai_effort",
-            "levels": ["low", "medium", "high", "xhigh"],
-            "canDisable": true
+            "levels": ["none", "low", "medium", "high", "xhigh"]
           }
         }
       },
@@ -81,6 +80,14 @@ rules the admin API enforces.
   `supportsTokenInput`. The presence of `embedding.create` enables `/v1/embeddings`.
 - `pricing` uses the gateway's internal unit: USD cents per 1M tokens.
 - `reasoning.kind` must be compatible with `adapter.reasoningKinds`; it is validated at startup.
+- `reasoning.levels` are points on the canonical ladder `none < minimal < low < medium < high < xhigh`.
+  Including `"none"` declares a **literal off switch** (the model can skip reasoning); omitting it means
+  the model **always reasons** and a `none` request snaps up to the lowest declared level (its floor).
+  There is no separate `canDisable` flag — the ladder is the single source of truth.
+- Requests are **clamped, never rejected** for being out of range: an effort above/below the declared
+  levels snaps into range (e.g. `xhigh` → `high`, `minimal` → the floor). A positive effort never
+  rounds down into `none`. The only hard error is requesting reasoning on a non-reasoner. This keeps
+  the catalog forward-compatible: a new model only declares its `levels`.
 - `openai_effort` emits `reasoning_effort`; `openai_body` emits a provider-specific top-level field
   such as `thinking: {"type":"enabled"}` and, where applicable, an `effortField` like `reasoning_effort`.
 - Optional metadata such as `name`, `family`, `lifecycle`, `modalities`, `sources`, and

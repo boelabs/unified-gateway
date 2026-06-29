@@ -206,13 +206,16 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
 A custom model can declare **how** it controls reasoning with a `reasoning` block inside
 `catalogEntry.operations.text.generate`. For it to be valid, `capabilities.reasoning` **must** be
 `true`; if it is `false`, the gateway rejects a `reasoning` block. The client still uses the canonical
-knob (`reasoning.effort`); the gateway snaps it to `levels` and translates it to the upstream.
+knob (`reasoning.effort`); the gateway snaps it to `levels` and translates it to the upstream. Requests
+are **clamped, never rejected**: an out-of-range effort snaps into range, and `none` is honored when the
+model has an off switch or snaps to the floor when it does not. When the requested effort is adjusted,
+the request log records both values under `metadata.reasoning` (`requested`, `effective`, `clamped`) so
+the clamping is observable.
 
 | Field | Description |
 |---|---|
 | `kind` | `openai_effort` (emits `reasoning_effort`), `openai_body` (emits a provider-specific top-level field), or `chat_template_flag` (vLLM-style toggle in `chat_template_kwargs`). |
-| `levels` | The effort levels the model accepts (`["low","medium","high"]`, or `["high"]` for a binary toggle). |
-| `canDisable` | Whether reasoning can be turned off (`none`). |
+| `levels` | The effort levels the model accepts, as points on the ladder `none < minimal < low < medium < high < xhigh`. Include `"none"` to declare a literal off switch; omit it for a model that **always reasons** (a `none` request then snaps to the lowest level). E.g. `["none","low","medium","high"]`, or `["none","high"]` for a binary toggle. There is no separate `canDisable` flag. |
 | `upstreamEffortMap` | `openai_effort` only: translates the canonical effort to the native `reasoning_effort` label. Keys = canonical efforts; they must be in `levels`. |
 | `bodyField`, `effortField` | `openai_body` only: `bodyField` defines the on/off top-level field; optional `effortField` defines where to write the scalar effort. |
 | `chatTemplateFlag` | `chat_template_flag` only: `{ param, onValue?, offValue? }`. See below. |
@@ -221,7 +224,7 @@ knob (`reasoning.effort`); the gateway snaps it to `levels` and translates it to
 `reasoning_effort` but with its own vocabulary (e.g. `xhigh → "max"`):
 
 ```jsonc
-"reasoning": { "kind": "openai_effort", "levels": ["low","high","xhigh"], "canDisable": true, "upstreamEffortMap": { "xhigh": "max" } }
+"reasoning": { "kind": "openai_effort", "levels": ["none","low","high","xhigh"], "upstreamEffortMap": { "xhigh": "max" } }
 ```
 
 **b) vLLM-style toggle** (`chat_template_flag`): thinking is enabled with a flag inside
@@ -243,8 +246,7 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
         "maxOutputTokens": 65536,
         "reasoning": {
           "kind": "chat_template_flag",
-          "levels": ["high"],
-          "canDisable": true,
+          "levels": ["none", "high"],
           "chatTemplateFlag": { "param": "thinking", "offValue": false }
         }
       }

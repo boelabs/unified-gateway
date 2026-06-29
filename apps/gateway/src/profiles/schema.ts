@@ -101,8 +101,9 @@ const reasoningSchema = z
 			"chat_template_flag",
 			"fixed",
 		]),
+		// Levels the model accepts, as points on the canonical ladder. Including "none" means the model
+		// has a literal off switch; omitting it means it always reasons (a "none" request snaps to the floor).
 		levels: z.array(z.enum(EFFORT_ORDER)).min(1),
-		canDisable: z.boolean(),
 		budgets: z
 			.partialRecord(z.enum(EFFORT_ORDER), z.number().int().nonnegative())
 			.optional(),
@@ -147,6 +148,13 @@ const reasoningSchema = z
 				code: "custom",
 				path: ["chatTemplateFlag"],
 				message: 'only allowed when kind is "chat_template_flag"',
+			});
+		}
+		if (value.kind === "fixed" && levels.has("none")) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["levels"],
+				message: 'a "fixed" reasoner always reasons and cannot include "none"',
 			});
 		}
 		if (value.kind === "openai_body" && value.bodyField === undefined) {

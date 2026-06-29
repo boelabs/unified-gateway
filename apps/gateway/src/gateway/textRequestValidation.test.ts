@@ -100,6 +100,8 @@ test("capabilities: rejects real effort without reasoning support, but allows no
 	);
 });
 
+// Mandatory reasoner: no off switch ("none" ∉ levels). "none" is still accepted and clamped to the
+// floor downstream; it is never rejected.
 const mandatoryReasoner: ResolvedModelMetadata = {
 	capabilities: {
 		tools: true,
@@ -110,10 +112,10 @@ const mandatoryReasoner: ResolvedModelMetadata = {
 	reasoning: {
 		kind: "gemini_level",
 		levels: ["low", "medium", "high"],
-		canDisable: false,
 	},
 };
 
+// Reasoner with a literal off switch ("none" ∈ levels).
 const optionalReasoner: ResolvedModelMetadata = {
 	capabilities: {
 		tools: true,
@@ -123,8 +125,7 @@ const optionalReasoner: ResolvedModelMetadata = {
 	},
 	reasoning: {
 		kind: "openai_effort",
-		levels: ["low", "medium", "high"],
-		canDisable: true,
+		levels: ["none", "low", "medium", "high"],
 	},
 };
 
@@ -135,20 +136,18 @@ const fixedReasoner: ResolvedModelMetadata = {
 		reasoning: true,
 		structuredOutputs: false,
 	},
-	reasoning: { kind: "fixed", levels: ["high"], canDisable: false },
+	reasoning: { kind: "fixed", levels: ["high"] },
 };
 
-test("capabilities: effort none on a mandatory reasoner (canDisable=false) is invalid", () => {
-	assert.throws(
-		() =>
-			assertTextRequestSupported(
-				{ ...baseReq, reasoning: { effort: "none" } },
-				mandatoryReasoner,
-			),
-		(err) =>
-			GatewayError.is(err) &&
-			err.param === "reasoning.effort" &&
-			err.class === "bad_request",
+// Clamp-don't-reject policy: the validation layer only rejects a real effort on a NON-reasoner.
+// Every effort (including "none" and out-of-range values) is accepted on any reasoner and snapped
+// downstream by snapEffort, so a new model just needs to declare its `levels`.
+test("capabilities: effort none on a mandatory reasoner is allowed (clamped to floor)", () => {
+	assert.doesNotThrow(() =>
+		assertTextRequestSupported(
+			{ ...baseReq, reasoning: { effort: "none" } },
+			mandatoryReasoner,
+		),
 	);
 });
 
@@ -161,30 +160,12 @@ test("capabilities: effort none is allowed if the model can disable reasoning", 
 	);
 });
 
-test("capabilities: a mandatory reasoner accepts real effort", () => {
-	assert.doesNotThrow(() =>
-		assertTextRequestSupported(
-			{ ...baseReq, reasoning: { effort: "medium" } },
-			mandatoryReasoner,
-		),
-	);
-});
-
-test("capabilities: a fixed reasoner only accepts high", () => {
-	assert.doesNotThrow(() =>
-		assertTextRequestSupported(
-			{ ...baseReq, reasoning: { effort: "high" } },
-			fixedReasoner,
-		),
-	);
-	for (const effort of ["none", "low", "medium", "xhigh"] as const) {
-		assert.throws(
-			() =>
-				assertTextRequestSupported(
-					{ ...baseReq, reasoning: { effort } },
-					fixedReasoner,
-				),
-			(err) => GatewayError.is(err) && err.param === "reasoning.effort",
-		);
+test("capabilities: a reasoner accepts any in/out-of-range effort (clamped, never rejected)", () => {
+	for (const meta of [mandatoryReasoner, optionalReasoner, fixedReasoner]) {
+		for (const effort of ["none", "minimal", "low", "high", "xhigh"] as const) {
+			assert.doesNotThrow(() =>
+				assertTextRequestSupported({ ...baseReq, reasoning: { effort } }, meta),
+			);
+		}
 	}
 });
