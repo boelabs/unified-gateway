@@ -210,6 +210,40 @@ test("google.buildRequest: json_object only sets responseMimeType (without schem
 	assert.equal(body.generationConfig.responseJsonSchema, undefined);
 });
 
+test("google.buildRequest: tool parameters are translated to Gemini's schema subset", () => {
+	const body = JSON.parse(
+		googleAdapter.chat!.buildRequest(
+			{
+				...req,
+				tools: [
+					{
+						name: "get_weather",
+						description: "Look up the weather",
+						parameters: {
+							$schema: "http://json-schema.org/draft-07/schema#",
+							type: "object",
+							additionalProperties: false,
+							properties: { city: { type: "string" } },
+							required: ["city"],
+						},
+					},
+				],
+			},
+			ctx,
+		).body!,
+	);
+	const decl = body.tools[0].functionDeclarations[0];
+	assert.equal(decl.name, "get_weather");
+	// The fields Gemini rejects are gone; the valid shape is preserved.
+	assert.equal(decl.parameters.$schema, undefined);
+	assert.equal(decl.parameters.additionalProperties, undefined);
+	assert.deepEqual(decl.parameters, {
+		type: "object",
+		properties: { city: { type: "string" } },
+		required: ["city"],
+	});
+});
+
 test("google.buildRequest: Gemini 3 uses thinkingLevel and merges extraBody", () => {
 	const r = googleAdapter.chat!.buildRequest(
 		{

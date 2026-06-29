@@ -7,6 +7,7 @@ import { resolveAdapterReasoning } from "#adapters/reasoning.ts";
 import type { ReasoningControlKind } from "#core/reasoning.ts";
 import { imageProfileFor } from "#catalog/types.ts";
 import { GatewayError } from "#core/errors.ts";
+import { toGeminiSchema } from "./schema.ts";
 import { readFile } from "node:fs/promises";
 import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
@@ -252,7 +253,9 @@ function buildGeminiBody(
 					...(t.description !== undefined
 						? { description: t.description }
 						: {}),
-					...(t.parameters !== undefined ? { parameters: t.parameters } : {}),
+					...(t.parameters !== undefined
+						? { parameters: toGeminiSchema(t.parameters) }
+						: {}),
 				})),
 			},
 		];
