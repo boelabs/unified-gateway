@@ -256,7 +256,19 @@ test("google.buildRequest: Gemini 3 uses thinkingLevel and merges extraBody", ()
 	const body = JSON.parse(r.body!);
 	assert.equal(body.generationConfig.thinkingConfig.thinkingLevel, "high");
 	assert.equal(body.generationConfig.thinkingConfig.includeThoughts, true);
+	// extra_body.safetySettings overrides the gateway default (shallow extra_body merge wins).
 	assert.deepEqual(body.safetySettings, []);
+});
+
+test("google.buildRequest: safety filters default to OFF for every category", () => {
+	const body = JSON.parse(googleAdapter.chat!.buildRequest(req, ctx).body!);
+	assert.deepEqual(body.safetySettings, [
+		{ category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
+		{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
+		{ category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
+		{ category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
+		{ category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "OFF" },
+	]);
 });
 
 test("google.buildRequest: omitted effort on reasoner uses lowest level + includeThoughts", () => {
