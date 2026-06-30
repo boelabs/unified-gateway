@@ -29,6 +29,8 @@ Authorization: Bearer $MASTER_KEY
 | `catalogEntry` | custom only | Inline catalog entry for a model **not** present in the catalog. Uses the same shape as `catalog.json`; for catalog models it **must be omitted**. |
 | `pricing` | no | `{ inputCentsPerMTokens?, outputCentsPerMTokens?, cacheReadCentsPerMTokens? }`. |
 | `transportOverrides` | no | Per-operation transport (override; the preset already ships defaults). |
+| `label` | no | Human identifier to tell deployments of the same `publicModel` apart (e.g. which API key). Snapshotted into each request log so you can see *which* deployment served a request. `null` clears it. |
+| `metadata` | no | Free-form operator annotations (`team`, `environment`, key alias, rotation date, notes…). A JSON object up to 16 KiB; stored and returned verbatim. |
 | `enabled`, `weight`, `tpmLimit`, `rpmLimit` | no | Deployment state and limits. |
 
 ### Provider presets
@@ -65,12 +67,16 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
   "publicModel": "gpt-5.4",
   "provider": "openai",
   "upstreamModel": "gpt-5.4",
-  "credentials": { "apiKey": "sk-..." }
+  "credentials": { "apiKey": "sk-..." },
+  "label": "OpenAI — billing team key",
+  "metadata": { "team": "billing", "environment": "prod" }
 }'
 ```
 
 The client then calls `POST /v1/chat/completions` (or `/v1/responses`, `/v1/messages`) with
-`"model": "gpt-5.4"`.
+`"model": "gpt-5.4"`. The optional `label` and `metadata` just help you identify the deployment;
+the `label` also appears in each request log (`metadata.deploymentLabel`, and per attempt under
+`attempts[].label`) so you can see which key served — or failed — a request.
 
 ### 2) Image — catalog model
 
