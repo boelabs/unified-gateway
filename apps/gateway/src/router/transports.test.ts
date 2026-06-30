@@ -11,6 +11,8 @@ function candidate(): DeploymentCandidate {
 			adapterKey: "fake",
 			upstreamModel: "image",
 			credentials: { v: 1, iv: "", tag: "", ct: "" },
+			label: null,
+			metadata: {},
 			catalogEntry: null,
 			pricing: null,
 			transportOverrides: {},

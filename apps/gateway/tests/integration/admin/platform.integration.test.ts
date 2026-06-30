@@ -148,6 +148,63 @@ test("admin platform: catalog model with inline api key (without catalogEntry) w
 	}
 });
 
+test("admin platform: deployment label and metadata round-trip through create, get, and patch", {
+	skip,
+}, async () => {
+	const input = {
+		publicModel: `labeled-${randomUUID()}`,
+		provider: "openai",
+		upstreamModel: "gpt-image-2",
+		credentials: { apiKey: "secret-key" },
+		label: "OpenAI - billing team key",
+		metadata: { team: "billing", environment: "prod", keyAlias: "X" },
+	};
+	let deploymentId: string | undefined;
+	try {
+		const createResponse = await platformTestApp.request("/deployments", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(input),
+		});
+		assert.equal(createResponse.status, 201);
+		const created = (await createResponse.json()) as {
+			data: { id: string; label: string; metadata: Record<string, unknown> };
+		};
+		deploymentId = created.data.id;
+		assert.equal(created.data.label, input.label);
+		assert.deepEqual(created.data.metadata, input.metadata);
+
+		const getResponse = await platformTestApp.request(
+			`/deployments/${deploymentId}`,
+		);
+		const fetched = (await getResponse.json()) as {
+			data: { label: string; metadata: Record<string, unknown> };
+		};
+		assert.equal(fetched.data.label, input.label);
+		assert.deepEqual(fetched.data.metadata, input.metadata);
+
+		const patchResponse = await platformTestApp.request(
+			`/deployments/${deploymentId}`,
+			{
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ label: "OpenAI - renamed", metadata: {} }),
+			},
+		);
+		assert.equal(patchResponse.status, 200);
+		const patched = (await patchResponse.json()) as {
+			data: { label: string; metadata: Record<string, unknown> };
+		};
+		assert.equal(patched.data.label, "OpenAI - renamed");
+		assert.deepEqual(patched.data.metadata, {});
+	} finally {
+		if (deploymentId)
+			await platformTestApp.request(`/deployments/${deploymentId}`, {
+				method: "DELETE",
+			});
+	}
+});
+
 test("admin platform: custom model requires catalogEntry; with it, creation succeeds", {
 	skip,
 }, async () => {

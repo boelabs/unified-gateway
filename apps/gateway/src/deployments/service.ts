@@ -36,6 +36,8 @@ export interface PreviewDeploymentInput {
 export interface CreateDeploymentInput extends PreviewDeploymentInput {
 	/** Plaintext credentials; the repo encrypts them. */
 	credentials: Record<string, unknown>;
+	label?: string | null;
+	metadata?: Record<string, unknown>;
 	enabled?: boolean;
 	weight?: number;
 	tpmLimit?: number | null;
@@ -46,6 +48,8 @@ export interface UpdateDeploymentInput {
 	publicModel?: string;
 	upstreamModel?: string;
 	credentials?: Record<string, unknown>;
+	label?: string | null;
+	metadata?: Record<string, unknown>;
 	catalogEntry?: CatalogEntry | null;
 	pricing?: RuntimeModelMetadata["pricing"] | null;
 	transportOverrides?: TransportOverrides;
@@ -243,6 +247,8 @@ export async function createDeployment(
 		adapterKey: input.adapterKey,
 		upstreamModel: input.upstreamModel,
 		credentials: input.credentials,
+		label: input.label ?? null,
+		metadata: input.metadata ?? {},
 		catalogEntry:
 			preview.source === "custom" ? (input.catalogEntry ?? null) : null,
 		pricing: input.pricing ?? null,
@@ -302,6 +308,8 @@ export async function updateDeployment(
 			...(patch.credentials !== undefined
 				? { credentials: patch.credentials }
 				: {}),
+			...(patch.label !== undefined ? { label: patch.label } : {}),
+			...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
 		});
 	} catch (error) {
 		if (error instanceof PublicModelReferencedError) {
