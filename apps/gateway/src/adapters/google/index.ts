@@ -66,6 +66,16 @@ const DEFAULT_GEMINI_BUDGETS = {
 	high: 8_192,
 	xhigh: 24_576,
 } as const;
+// Safety filters default to fully OFF from the gateway side. A client can still override them
+// per-request via `extra_body.safetySettings` (not a managed key, so the shallow extra_body merge
+// wins). `OFF` disables the filter entirely (unlike `BLOCK_NONE`, which still scores but never blocks).
+const DEFAULT_SAFETY_SETTINGS = [
+	{ category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
+	{ category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
+	{ category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
+	{ category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
+	{ category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "OFF" },
+] as const;
 
 function creds(ctx: AdapterContext): GoogleCreds & { apiKey: string } {
 	return requireApiKeyCreds<GoogleCreds>(ctx.credentials, "Google adapter");
@@ -272,6 +282,7 @@ function buildGeminiBody(
 		body.toolConfig = { functionCallingConfig: fc };
 	}
 
+	body.safetySettings = DEFAULT_SAFETY_SETTINGS.map((s) => ({ ...s }));
 	return mergeExtraBody(body, req.extraBody, GEMINI_BODY_MANAGED_KEYS);
 }
 
