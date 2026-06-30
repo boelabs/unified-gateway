@@ -1,4 +1,4 @@
-import { and, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 import { responseStates } from "#db/schema.ts";
 import { log } from "#logging/log.ts";
 import { env } from "#config/env.ts";
@@ -111,6 +111,45 @@ export async function getResponseStateForScope(
 		)
 		.limit(1);
 	return row;
+}
+
+/**
+ * Find a single stored response *item* by its id, within the key's scope. Faithful to OpenAI: an
+ * `item_reference` may point to ANY stored item (when store=true), not only items chained via
+ * `previous_response_id`. Searches both the stored output and the (already-expanded) request input.
+ *
+ * Rows are narrowed by the indexed `virtual_key_id` + `expires_at`; the jsonb containment recheck
+ * then runs over that (typically small) set. If a single key accumulates a very large number of
+ * stored states, add an expression GIN index over the item ids.
+ */
+export async function findResponseItemByIdForScope(
+	itemId: string,
+	virtualKeyId: string | null,
+	now = new Date(),
+): Promise<Record<string, unknown> | undefined> {
+	const scope =
+		virtualKeyId === null
+			? isNull(responseStates.virtualKeyId)
+			: eq(responseStates.virtualKeyId, virtualKeyId);
+	const needle = JSON.stringify([{ id: itemId }]);
+	const [row] = await db
+		.select({
+			output: responseStates.output,
+			requestInput: responseStates.requestInput,
+		})
+		.from(responseStates)
+		.where(
+			and(
+				scope,
+				gt(responseStates.expiresAt, now),
+				sql`(${responseStates.output} @> ${needle}::jsonb OR ${responseStates.requestInput} @> ${needle}::jsonb)`,
+			),
+		)
+		.limit(1);
+	if (!row) return undefined;
+	return [...row.output, ...row.requestInput].find(
+		(it) => (it as { id?: unknown }).id === itemId,
+	);
 }
 
 /** Deletes a state within the key's scope. Returns true if it existed and was deleted. */

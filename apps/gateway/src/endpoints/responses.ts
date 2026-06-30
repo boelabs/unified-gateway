@@ -1,7 +1,7 @@
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
-import { executeChat } from "#gateway/executor.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
+import { executeChat } from "#gateway/executor.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { log as appLog } from "#logging/log.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -13,16 +13,6 @@ import type { Auth } from "#auth/types.ts";
 import { route } from "#router/index.ts";
 import { env } from "#config/env.ts";
 import type { Context } from "hono";
-
-import {
-	canonicalChunksToResponsesEvents,
-	resolveResponseInputReferences,
-	canonicalToResponsesResponse,
-	responsesRequestToCanonical,
-	normalizeResponseInput,
-	type ResponseInputItem,
-	type RenderOptions,
-} from "#contracts/openai/responsesRender.ts";
 
 import {
 	applyCanonicalResponseExtensions,
@@ -38,6 +28,17 @@ import {
 } from "./runtime/pipeline.ts";
 
 import {
+	canonicalChunksToResponsesEvents,
+	canonicalToResponsesResponse,
+	responsesRequestToCanonical,
+	normalizeResponseInput,
+	type ResponseInputItem,
+	expandInputReferences,
+	type RenderOptions,
+} from "#contracts/openai/responsesRender.ts";
+
+import {
+	findResponseItemByIdForScope,
 	deleteResponseStateForScope,
 	getResponseStateForScope,
 	storeResponseState,
@@ -98,9 +99,10 @@ async function prepareResponsesRequest(
 		previousItems = [...previous.requestInput, ...previous.output];
 	}
 
-	const currentInput = resolveResponseInputReferences(
+	const currentInput = await expandInputReferences(
 		normalizeResponseInput(req.input),
 		previousItems,
+		(id) => findResponseItemByIdForScope(id, virtualKeyId),
 	);
 	const effectiveInput = [
 		...previousItems.map((item) => structuredClone(item)),
