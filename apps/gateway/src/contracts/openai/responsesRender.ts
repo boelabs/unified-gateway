@@ -173,7 +173,7 @@ export function resolveResponseInputReferences(
 				throw new GatewayError({
 					class: "bad_request",
 					message: `item_reference target not found: ${id}`,
-					publicMessage: "The referenced response item was not found.",
+					publicMessage: `Item with id '${id}' not found.`,
 					code: "item_reference_not_found",
 					param: "input",
 				});
@@ -188,6 +188,38 @@ export function resolveResponseInputReferences(
 		if (id) byId.set(id, item);
 	}
 	return resolved;
+}
+
+/**
+ * Resolve `item_reference`s in the input, faithful to OpenAI: a reference may point to ANY stored
+ * item (when store=true), not only items brought in via `previous_response_id`. `seedReferenceItems`
+ * are the already-known items (e.g. from `previous_response_id`); any referenced id not among them is
+ * looked up via `lookup` (the state store). Unresolved references still raise `item_reference_not_found`.
+ */
+export async function expandInputReferences(
+	input: ResponseInputItem[],
+	seedReferenceItems: ResponseInputItem[],
+	lookup: (id: string) => Promise<ResponseInputItem | undefined>,
+): Promise<ResponseInputItem[]> {
+	const referenceItems = [...seedReferenceItems];
+	const known = new Set<string>();
+	for (const item of referenceItems) {
+		const id = itemId(item);
+		if (id) known.add(id);
+	}
+
+	const missing = new Set<string>();
+	for (const raw of input) {
+		if (raw.type !== "item_reference") continue;
+		const id = typeof raw.id === "string" ? raw.id : "";
+		if (id && !known.has(id)) missing.add(id);
+	}
+
+	for (const id of missing) {
+		const found = await lookup(id);
+		if (found) referenceItems.push(found);
+	}
+	return resolveResponseInputReferences(input, referenceItems);
 }
 
 /** Translates an OpenResponses request to the canonical chat request. */

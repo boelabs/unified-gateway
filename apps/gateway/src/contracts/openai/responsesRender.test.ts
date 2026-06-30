@@ -8,6 +8,7 @@ import {
 	canonicalToResponsesResponse,
 	responsesRequestToCanonical,
 	normalizeResponseInput,
+	expandInputReferences,
 	type RenderOptions,
 } from "./responsesRender.ts";
 
@@ -231,6 +232,71 @@ test("request state: item_reference expands from previous items", () => {
 	]);
 	const out = resolveResponseInputReferences(input, previous);
 	assert.deepEqual(out, previous);
+});
+
+test("expandInputReferences: resolves a reference from the store when not in the seed", async () => {
+	const stored = {
+		type: "message",
+		id: "msg_42",
+		role: "assistant",
+		content: [{ type: "output_text", text: "earlier reply" }],
+	};
+	const lookups: string[] = [];
+	const input = normalizeResponseInput([
+		{ role: "user", content: [{ type: "input_text", text: "Propón un tema" }] },
+		{ type: "item_reference", id: "msg_42" },
+		{ role: "user", content: [{ type: "input_text", text: "ah" }] },
+	]);
+	const out = await expandInputReferences(input, [], async (id) => {
+		lookups.push(id);
+		return id === "msg_42" ? stored : undefined;
+	});
+	assert.deepEqual(lookups, ["msg_42"]);
+	assert.deepEqual(out[1], stored);
+	assert.equal(out.length, 3);
+});
+
+test("expandInputReferences: does not hit the store when the seed already has the item", async () => {
+	const seed = [
+		{
+			type: "message",
+			id: "msg_1",
+			role: "assistant",
+			content: [{ type: "output_text", text: "done" }],
+		},
+	];
+	const input = normalizeResponseInput([
+		{ type: "item_reference", id: "msg_1" },
+	]);
+	let lookupCalls = 0;
+	const out = await expandInputReferences(input, seed, async () => {
+		lookupCalls += 1;
+		return undefined;
+	});
+	assert.equal(lookupCalls, 0);
+	assert.deepEqual(out, seed);
+});
+
+test("expandInputReferences: unresolved reference raises an OpenAI-faithful error", async () => {
+	const input = normalizeResponseInput([
+		{ type: "item_reference", id: "msg_missing" },
+	]);
+	await assert.rejects(
+		() => expandInputReferences(input, [], async () => undefined),
+		(err: unknown) => {
+			const e = err as {
+				publicMessage?: string;
+				code?: string;
+				param?: string;
+				class?: string;
+			};
+			assert.equal(e.code, "item_reference_not_found");
+			assert.equal(e.param, "input");
+			assert.equal(e.class, "bad_request");
+			assert.equal(e.publicMessage, "Item with id 'msg_missing' not found.");
+			return true;
+		},
+	);
 });
 
 const renderOpts = (): RenderOptions => ({
