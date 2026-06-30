@@ -40,6 +40,8 @@ export type ExecuteFn<T> = (
 /** Record for one router attempt against a deployment (for logs/observability). */
 interface AttemptRecord {
 	deploymentId: string;
+	/** Operator label of the attempted deployment, snapshotted for failover-readable logs. */
+	label?: string;
 	adapterKey: string;
 	transport: string;
 	ms: number;
@@ -210,6 +212,7 @@ export async function route<T>(
 				const ms = Date.now() - startedAt;
 				attemptLog.push({
 					deploymentId: chosen.row.id,
+					...(chosen.row.label != null ? { label: chosen.row.label } : {}),
 					adapterKey: chosen.adapter.key,
 					transport,
 					ms,
@@ -236,6 +239,7 @@ export async function route<T>(
 					await onAttemptCancel(chosen.row.id);
 					attemptLog.push({
 						deploymentId: chosen.row.id,
+						...(chosen.row.label != null ? { label: chosen.row.label } : {}),
 						adapterKey: chosen.adapter.key,
 						transport,
 						ms: Date.now() - startedAt,
@@ -278,6 +282,7 @@ export async function route<T>(
 				lastError = ge;
 				attemptLog.push({
 					deploymentId: chosen.row.id,
+					...(chosen.row.label != null ? { label: chosen.row.label } : {}),
 					adapterKey: chosen.adapter.key,
 					transport,
 					ms: Date.now() - startedAt,

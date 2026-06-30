@@ -240,3 +240,51 @@ test("router: mixed primary causes use the general chain", {
 		await cleanupDeployments(deployments);
 	}
 });
+
+test("router: attempt log carries the deployment label, omitting it when unset", {
+	skip,
+}, async () => {
+	const labeledModel = modelName("labeled");
+	const plainModel = modelName("plain");
+	const labeled = await createDeployment({
+		publicModel: labeledModel,
+		adapterKey: "openaicompatible",
+		upstreamModel: `text-${randomUUID()}`,
+		credentials: { apiKey: "test", baseUrl: "https://example.test/v1" },
+		label: "primary - billing key",
+		catalogEntry: {
+			operations: {
+				"text.generate": {
+					capabilities: {
+						tools: true,
+						vision: false,
+						reasoning: false,
+						structuredOutputs: true,
+					},
+				},
+			},
+		},
+	});
+	const plain = await deployment(plainModel);
+	try {
+		const route1 = await route(
+			labeledModel,
+			"chat",
+			{ clientSignal: new AbortController().signal, requestId: randomUUID() },
+			async (candidate) => candidate.row.id,
+		);
+		assert.equal(route1.attemptLog[0]?.label, "primary - billing key");
+		await route1.finish(null);
+
+		const route2 = await route(
+			plainModel,
+			"chat",
+			{ clientSignal: new AbortController().signal, requestId: randomUUID() },
+			async (candidate) => candidate.row.id,
+		);
+		assert.equal(route2.attemptLog[0]?.label, undefined);
+		await route2.finish(null);
+	} finally {
+		await cleanupDeployments([labeled, plain]);
+	}
+});
