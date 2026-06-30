@@ -113,6 +113,13 @@ export const modelDeployments = pgTable(
 		adapterKey: text("adapter_key").notNull(),
 		/** Exact upstream ID sent to the provider. */
 		upstreamModel: text("upstream_model").notNull(),
+		/** Operator-facing human label to tell deployments of the same pool apart (e.g. which API key). */
+		label: text("label"),
+		/** Free-form operator annotations (team, environment, key alias, rotation date, notes...). */
+		metadata: jsonb("metadata")
+			.$type<Record<string, unknown>>()
+			.notNull()
+			.default({}),
 		/** Encrypted credentials (AES-256-GCM) as an envelope { v, iv, tag, ct }. */
 		credentials: jsonb("credentials").$type<EncEnvelope>().notNull(),
 		/** Inline CatalogEntry for custom models. NULL = the model is in the built-in catalog. */

@@ -15,6 +15,13 @@
       "when": 1782674057409,
       "tag": "0001_deep_archangel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782792995372,
+      "tag": "0002_fluffy_demogoblin",
+      "breakpoints": true
     }
   ]
 }

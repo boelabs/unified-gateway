@@ -72,6 +72,17 @@ const adapterKeySchema = z
 	.max(80)
 	.regex(ADAPTER_KEY_PATTERN, ADAPTER_KEY_RULE);
 
+/** Operator-facing label for a deployment. `null` clears it on update. */
+const labelSchema = z.string().min(1).max(200).nullable();
+
+// Free-form operator annotations: a JSON object capped at 16 KiB. It is stored as jsonb and echoed
+// back verbatim (never merged into a live object), so prototype-polluting keys are not a concern here.
+const metadataSchema = z
+	.record(z.string(), z.unknown())
+	.refine((m) => Buffer.byteLength(JSON.stringify(m), "utf8") <= 16_384, {
+		message: "metadata exceeds the 16 KiB limit",
+	});
+
 /** Strips the encrypted credentials before returning a deployment. */
 function deploymentView(row: DeploymentRow) {
 	return {
@@ -79,6 +90,8 @@ function deploymentView(row: DeploymentRow) {
 		publicModel: row.publicModel,
 		adapterKey: row.adapterKey,
 		upstreamModel: row.upstreamModel,
+		label: row.label,
+		metadata: row.metadata,
 		custom: row.catalogEntry != null,
 		catalogEntry: row.catalogEntry,
 		pricing: row.pricing,
@@ -99,6 +112,8 @@ const createDeploymentSchema = z
 		adapterKey: adapterKeySchema.optional(),
 		upstreamModel: z.string().min(1).max(300),
 		credentials: z.record(z.string(), z.unknown()),
+		label: labelSchema.optional(),
+		metadata: metadataSchema.optional(),
 		catalogEntry: customCatalogEntrySchema.optional(),
 		pricing: pricingSchema.optional(),
 		transportOverrides: transportOverridesSchema.optional(),
@@ -120,6 +135,8 @@ const resolveDeploymentSchema = z
 		transportOverrides: transportOverridesSchema.optional(),
 		// Accepted (and ignored) so the same body as POST /deployments can be reused.
 		credentials: z.record(z.string(), z.unknown()).optional(),
+		label: labelSchema.optional(),
+		metadata: metadataSchema.optional(),
 	})
 	.strict();
 
@@ -128,6 +145,8 @@ const updateDeploymentSchema = z
 		publicModel: z.string().min(1).max(200).optional(),
 		upstreamModel: z.string().min(1).max(300).optional(),
 		credentials: z.record(z.string(), z.unknown()).optional(),
+		label: labelSchema.optional(),
+		metadata: metadataSchema.optional(),
 		catalogEntry: customCatalogEntrySchema.nullable().optional(),
 		pricing: pricingSchema.nullable().optional(),
 		transportOverrides: transportOverridesSchema.optional(),
@@ -278,6 +297,8 @@ platformAdminApp.post("/deployments", async (c) => {
 			input.provider,
 			input.transportOverrides,
 		),
+		...(input.label !== undefined ? { label: input.label } : {}),
+		...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		...(input.catalogEntry !== undefined
 			? { catalogEntry: input.catalogEntry as CatalogEntry }
 			: {}),
@@ -319,6 +340,8 @@ platformAdminApp.patch("/deployments/:id", async (c) => {
 		...(input.credentials !== undefined
 			? { credentials: input.credentials }
 			: {}),
+		...(input.label !== undefined ? { label: input.label } : {}),
+		...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		...(input.catalogEntry !== undefined
 			? { catalogEntry: input.catalogEntry as CatalogEntry | null }
 			: {}),
