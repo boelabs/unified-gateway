@@ -86,6 +86,31 @@
 				"cacheWriteCentsPerMTokens": 625
 			}
 		},
+		"claude-sonnet-5": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["none", "low", "medium", "high", "xhigh"],
+						"upstreamEffortMap": {
+							"xhigh": "max"
+						}
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 200,
+				"outputCentsPerMTokens": 1000,
+				"cacheReadCentsPerMTokens": 20,
+				"cacheWriteCentsPerMTokens": 250
+			}
+		},
 		"claude-sonnet-4-6": {
 			"operations": {
 				"text.generate": {
