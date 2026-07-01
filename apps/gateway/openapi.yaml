@@ -1,574 +1,686 @@
+# GENERATED FILE - do not edit by hand.
+# Source: src/openapi/*.ts. Regenerate with `bun run openapi:generate`.
 openapi: 3.1.0
 info:
   title: Unified Gateway API
   version: 1.0.0
-  description: >
-    Provider-agnostic AI gateway with exact OpenAI/OpenResponses public contracts.
-    Importable in Postman, Insomnia, Bruno, and similar tools.
+  description: |-
+    Provider-agnostic AI gateway with exact OpenAI/OpenResponses public contracts. Importable in Postman, Insomnia, Bruno, and similar tools.
 
-    AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or ?api_key=<key>
-    query parameter (for browser EventSource clients). The master key is required for /admin/*.
+    AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or ?api_key=<key> query parameter (for browser EventSource clients). The master key is required for /admin/*.
 
     RESPONSE CONVENTIONS:
     - Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/embeddings, /v1/models): exact OpenAI/OpenResponses contracts.
-    - Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], "pagination": {...} };
-      delete: 204 with no body; error: { "error": {...} }.
+    - Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], "pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.
 
-    RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). Virtual-key inference
-    responses can also include x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.
+    RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). Virtual-key inference responses can also include x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.
 servers:
   - url: "{baseUrl}"
     variables:
       baseUrl:
         default: http://localhost:4000
-
 security:
   - bearerAuth: []
-
 tags:
   - name: Inference
   - name: Admin
   - name: Health
-
 paths:
   /health/live:
     get:
-      tags: [Health]
+      tags:
+        - Health
       summary: Liveness (process only, no dependencies)
-      description: >
-        Always 200 while the process is responsive. Does NOT check Postgres/Redis, so a dependency
-        outage never triggers a restart. Wire this to the orchestrator's liveness probe.
+      description: Always 200 while the process is responsive. Does NOT check Postgres/Redis, so a dependency outage never triggers a restart. Wire this to the orchestrator's liveness probe.
       security: []
       responses:
-        "200": { description: Process is alive }
-
+        "200":
+          description: Process is alive
   /health/ready:
     get:
-      tags: [Health]
+      tags:
+        - Health
       summary: Readiness (DB + Redis + extensions)
-      description: >
-        200 when Postgres, Redis and the extension runtime are healthy; otherwise 503 with a
-        Retry-After header. Wire this to the readiness probe so a dependency outage pulls the instance
-        from the load balancer without restarting it.
+      description: 200 when Postgres, Redis and the extension runtime are healthy; otherwise 503 with a Retry-After header. Wire this to the readiness probe so a dependency outage pulls the instance from the load balancer without restarting it.
       security: []
       responses:
-        "200": { description: Ready to serve traffic }
-        "503": { description: Not ready (a dependency is down) }
-
+        "200":
+          description: Ready to serve traffic
+        "503":
+          description: Not ready (a dependency is down)
   /health:
     get:
-      tags: [Health]
+      tags:
+        - Health
       summary: Readiness alias (backward compatible)
       description: Alias of /health/ready, kept for backward compatibility.
       security: []
       responses:
-        "200": { description: OK }
-        "503": { description: Degraded }
-
+        "200":
+          description: OK
+        "503":
+          description: Degraded
   /v1/chat/completions:
     post:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Chat Completions (exact OpenAI contract, stream + no-stream)
       parameters:
-        - { $ref: "#/components/parameters/CacheHeader" }
-        - { $ref: "#/components/parameters/CacheTtlHeader" }
+        - &a2
+          $ref: "#/components/parameters/CacheHeader"
+        - &a3
+          $ref: "#/components/parameters/CacheTtlHeader"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ChatCompletionRequest" }
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
             examples:
               simple:
                 value:
                   model: gemini
-                  messages: [{ role: user, content: "Hello, how are you?" }]
+                  messages:
+                    - role: user
+                      content: Hello, how are you?
               streaming:
                 value:
                   model: gemini
                   stream: true
-                  stream_options: { include_usage: true }
-                  messages: [{ role: user, content: "Count from 1 to 5" }]
-              structuredOutput:
-                value:
-                  model: gemini
-                  messages: [{ role: user, content: "Extract: Ana is 32 years old and lives in Caracas." }]
-                  response_format:
-                    type: json_schema
-                    json_schema:
-                      name: person
-                      strict: true
-                      schema:
-                        type: object
-                        properties:
-                          name: { type: string }
-                          age: { type: integer }
-                          city: { type: string }
-                        required: [name, age, city]
-                        additionalProperties: false
+                  stream_options:
+                    include_usage: true
+                  messages:
+                    - role: user
+                      content: Count from 1 to 5
       responses:
-        "200": { description: chat.completion (or SSE stream of chat.completion.chunk) }
-        "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
-        "403": { $ref: "#/components/responses/Error" }
-        "429": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: chat.completion (or SSE stream of chat.completion.chunk)
+        "400": &a1
+          $ref: "#/components/responses/Error"
+        "401": *a1
+        "403": *a1
+        "429": *a1
   /v1/responses:
     post:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Responses (OpenResponses, provider-agnostic, stream + no-stream)
       parameters:
-        - { $ref: "#/components/parameters/CacheHeader" }
-        - { $ref: "#/components/parameters/CacheTtlHeader" }
+        - *a2
+        - *a3
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ResponsesRequest" }
+            schema:
+              $ref: "#/components/schemas/ResponsesRequest"
             examples:
               simple:
-                value: { model: gemini, input: "Say hello in 3 words", instructions: "Be concise." }
-              streaming:
-                value: { model: gemini, stream: true, input: "Count from 1 to 5" }
-              structuredOutput:
                 value:
                   model: gemini
-                  input: "Extract: Ana is 32 years old and lives in Caracas."
-                  text:
-                    format:
-                      type: json_schema
-                      name: person
-                      strict: true
-                      schema:
-                        type: object
-                        properties:
-                          name: { type: string }
-                          age: { type: integer }
-                          city: { type: string }
-                        required: [name, age, city]
-                        additionalProperties: false
+                  input: Say hello in 3 words
+                  instructions: Be concise.
+              streaming:
+                value:
+                  model: gemini
+                  stream: true
+                  input: Count from 1 to 5
       responses:
-        "200": { description: response (or SSE stream of response.* events) }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: response (or SSE stream of response.* events)
+        "400": *a1
   /v1/responses/{id}:
     get:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Retrieve a stored response (server-side store)
-      description: >
-        Returns the stored canonical `response` object when store=true. Scope is per key: a virtual key
-        only sees its own responses; the master key sees responses created with the master key.
-      parameters: [{ $ref: "#/components/parameters/ResponseIdPath" }]
+      description: "Returns the stored canonical `response` object when store=true. Scope is per key: a virtual key only sees its own responses; the master key sees responses created with the master key."
+      parameters:
+        - $ref: "#/components/parameters/ResponseIdPath"
       responses:
-        "200": { description: "response object (OpenResponses contract)" }
-        "404": { $ref: "#/components/responses/Error" }
+        "200":
+          description: response object (OpenResponses contract)
+        "404": *a1
     delete:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Delete a stored response
-      parameters: [{ $ref: "#/components/parameters/ResponseIdPath" }]
+      parameters:
+        - $ref: "#/components/parameters/ResponseIdPath"
       responses:
-        "200": { description: "{ id, object: 'response.deleted', deleted: true }" }
-        "404": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ id, object: 'response.deleted', deleted: true }"
+        "404": *a1
   /v1/responses/{id}/input_items:
     get:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: List input items for a stored response
-      parameters: [{ $ref: "#/components/parameters/ResponseIdPath" }]
+      parameters:
+        - $ref: "#/components/parameters/ResponseIdPath"
       responses:
-        "200": { description: "{ object: 'list', data: [...], first_id, last_id, has_more }" }
-        "404": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ object: 'list', data: [...], first_id, last_id, has_more }"
+        "404": *a1
   /v1/messages:
     post:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Anthropic Messages API (provider-agnostic, stream + no-stream)
-      description: >
-        Exact Anthropic Messages contract, serviceable by any provider through the canonical hub.
-        Errors and SSE events are rendered in Anthropic format.
+      description: Exact Anthropic Messages contract, serviceable by any provider through the canonical hub. Errors and SSE events are rendered in Anthropic format.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/MessagesRequest" }
+            schema:
+              $ref: "#/components/schemas/MessagesRequest"
             examples:
               simple:
                 value:
                   model: claude
                   max_tokens: 1024
-                  system: "Be concise."
-                  messages: [{ role: user, content: "Hello" }]
+                  system: Be concise.
+                  messages:
+                    - role: user
+                      content: Hello
               streaming:
                 value:
                   model: claude
                   max_tokens: 1024
                   stream: true
-                  messages: [{ role: user, content: "Count from 1 to 5" }]
-              structuredOutput:
-                value:
-                  model: claude
-                  max_tokens: 1024
-                  messages: [{ role: user, content: "Extract: Ana is 32 years old and lives in Caracas." }]
-                  output_config:
-                    format:
-                      type: json_schema
-                      schema:
-                        type: object
-                        properties:
-                          name: { type: string }
-                          age: { type: integer }
-                          city: { type: string }
-                        required: [name, age, city]
-                        additionalProperties: false
+                  messages:
+                    - role: user
+                      content: Count from 1 to 5
       responses:
-        "200": { description: "message (or SSE stream: message_start, content_block_*, message_delta, message_stop)" }
-        "400": { description: "{ type: 'error', error: {...} } (shape Anthropic)" }
-
+        "200":
+          description: "message (or SSE stream: message_start, content_block_*, message_delta, message_stop)"
+        "400":
+          description: "{ type: 'error', error: {...} } (Anthropic shape)"
   /v1/embeddings:
     post:
       operationId: createEmbedding
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Create embeddings (OpenAI contract, no-stream)
-      description: >
-        Accepts a string input, a string batch, tokens, or a tokenized batch. Routes the embeddings
-        operation to OpenAI/OpenAI-compatible providers or Google AI Studio, with opt-in response
-        caching through x-unified-cache. Each model validates its own profile: for example, Google AI
-        Studio accepts text + float only, without tokenized input or base64.
+      description: "Accepts a string input, a string batch, tokens, or a tokenized batch. Routes the embeddings operation to OpenAI/OpenAI-compatible providers or Google AI Studio, with opt-in response caching through x-unified-cache. Each model validates its own profile: for example, Google AI Studio accepts text + float only, without tokenized input or base64."
       parameters:
-        - { $ref: "#/components/parameters/CacheHeader" }
-        - { $ref: "#/components/parameters/CacheTtlHeader" }
+        - *a2
+        - *a3
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/EmbeddingsRequest" }
+            schema:
+              $ref: "#/components/schemas/EmbeddingsRequest"
             examples:
               simple:
-                value: { model: text-embedding-3-small, input: "The food was delicious", encoding_format: float }
+                value:
+                  model: text-embedding-3-small
+                  input: The food was delicious
+                  encoding_format: float
               batch:
-                value: { model: text-embedding-3-small, input: ["red fox", "blue whale"], dimensions: 512 }
-              google_ai_studio:
-                value: { model: embed, input: ["red fox", "blue whale"], encoding_format: float, dimensions: 768 }
+                value:
+                  model: text-embedding-3-small
+                  input:
+                    - red fox
+                    - blue whale
+                  dimensions: 512
       responses:
         "200":
           description: CreateEmbeddingResponse
           content:
-            application/json: { schema: { $ref: "#/components/schemas/EmbeddingsResponse" } }
-        "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
-        "403": { $ref: "#/components/responses/Error" }
-        "429": { $ref: "#/components/responses/Error" }
-
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbeddingsResponse"
+        "400": *a1
+        "401": *a1
+        "403": *a1
+        "429": *a1
   /v1/images/generations:
     post:
       operationId: createImageGeneration
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Generate images (OpenAI Images contract, JSON or SSE)
-      description: >
-        Routes images.generations to OpenAI Images, compatible APIs, Gemini generateContent, or
-        multimodal chat_completions models. Parameters are validated against the model profile.
+      description: Routes images.generations to OpenAI Images, compatible APIs, Gemini generateContent, or multimodal chat_completions models. Parameters are validated against the model profile.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/ImageGenerationRequest" }
+            schema:
+              $ref: "#/components/schemas/ImageGenerationRequest"
             examples:
               gptImage:
-                value: { model: gpt-image, prompt: "A tiny astronaut in a botanical garden", size: 1024x1024, quality: high }
-              streaming:
-                value: { model: gpt-image, prompt: "A cinematic city", stream: true, partial_images: 2 }
-              providerExtra:
-                value: { model: nano-banana, prompt: "A product photo", extra_body: { safetySettings: [] } }
+                value:
+                  model: gpt-image
+                  prompt: A tiny astronaut in a botanical garden
+                  size: 1024x1024
+                  quality: high
       responses:
         "200":
           description: ImagesResponse JSON, or SSE events image_generation.partial_image/completed
           content:
-            application/json: { schema: { $ref: "#/components/schemas/ImagesResponse" } }
-            text/event-stream: { schema: { type: string } }
-        "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
-        "403": { $ref: "#/components/responses/Error" }
-        "429": { $ref: "#/components/responses/Error" }
-
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImagesResponse"
+        "400": *a1
+        "401": *a1
+        "403": *a1
+        "429": *a1
   /v1/images/edits:
     post:
       operationId: createImageEdit
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Edit images (multipart; OpenAI Images contract)
-      description: >
-        Accepts up to 16 `image`/`image[]` parts, an optional PNG mask, and `extra_body` as a JSON
-        string. Uploads are validated and stored temporarily during the request.
+      description: Accepts up to 16 `image`/`image[]` parts, an optional PNG mask, and `extra_body` as a JSON string. Uploads are validated and stored temporarily during the request.
       requestBody:
         required: true
         content:
           multipart/form-data:
-            schema: { $ref: "#/components/schemas/ImageEditRequest" }
+            schema:
+              $ref: "#/components/schemas/ImageEditRequest"
             encoding:
-              image: { contentType: "image/png, image/jpeg, image/webp" }
-              mask: { contentType: image/png }
+              image:
+                contentType: image/png, image/jpeg, image/webp
+              mask:
+                contentType: image/png
       responses:
         "200":
           description: ImagesResponse JSON, or SSE events image_edit.partial_image/completed
           content:
-            application/json: { schema: { $ref: "#/components/schemas/ImagesResponse" } }
-            text/event-stream: { schema: { type: string } }
-        "400": { $ref: "#/components/responses/Error" }
-        "401": { $ref: "#/components/responses/Error" }
-        "403": { $ref: "#/components/responses/Error" }
-        "429": { $ref: "#/components/responses/Error" }
-
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImagesResponse"
+        "400": *a1
+        "401": *a1
+        "403": *a1
+        "429": *a1
   /v1/models:
     get:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: List public models visible to the key (OpenAI contract)
       responses:
         "200":
           description: "{ object: 'list', data: [{ id, object, created, owned_by }] }"
-
   /v1/models/{model}:
     get:
-      tags: [Inference]
+      tags:
+        - Inference
       summary: Retrieve a public model (OpenAI contract)
       parameters:
-        - { name: model, in: path, required: true, schema: { type: string } }
+        - name: model
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        "200": { description: "{ id, object: 'model', created, owned_by }" }
-        "404": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ id, object: 'model', created, owned_by }"
+        "404": *a1
   /admin/operations:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: listOperations
       summary: Discover available operations, endpoints, and transports by adapter
       responses:
-        "200": { description: Operation and adapter registry }
-        "401": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: Operation and adapter registry
+        "401": *a1
   /admin/provider-presets:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: listProviderPresets
       summary: List provider presets (OpenAI, Azure OpenAI/Foundry, Google, Anthropic, OpenRouter, compatibles)
-      description: >
-        Each preset resolves the code adapter, required credential keys, defaults (for example
-        baseUrl), and the per-operation transport. They are used when creating a deployment with `provider`.
+      description: Each preset resolves the code adapter, required credential keys, defaults (for example baseUrl), and the per-operation transport. They are used when creating a deployment with `provider`.
       responses:
-        "200": { description: Provider presets without credentials }
-        "401": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: Provider presets without credentials
+        "401": *a1
   /admin/deployments/resolve:
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: resolveDeployment
       summary: Resolve profile, operations, and transports without saving
       description: Same body as POST /admin/deployments (credentials are accepted and ignored).
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/CreateDeployment" } } }
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateDeployment"
       responses:
-        "200": { description: Effective deployment configuration }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: Effective deployment configuration
+        "400": *a1
   /admin/deployments:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: listDeployments
       summary: List deployments (master key, paginated)
       parameters:
-        - { $ref: "#/components/parameters/Limit" }
-        - { $ref: "#/components/parameters/Offset" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
       responses:
-        "200": { description: Paginated deployments (without credentials) }
-        "401": { $ref: "#/components/responses/Error" }
+        "200":
+          description: Paginated deployments (without credentials)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {}
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+                required:
+                  - data
+                  - pagination
+                additionalProperties: false
+        "401": *a1
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: createDeployment
       summary: Create a deployment with the API key inline
-      description: >
-        Creates a deployment: public name (`publicModel`) + exact upstream model + inline credentials.
-        `provider` (preset) resolves the adapter, required keys, and default transports; an explicit
-        `adapterKey` can be provided instead. Multiple deployments with the same `publicModel` form a
-        balanced pool.
+      description: "Creates a deployment: public name (`publicModel`) + exact upstream model + inline credentials. `provider` (preset) resolves the adapter, required keys, and default transports; an explicit `adapterKey` can be provided instead. Multiple deployments with the same `publicModel` form a balanced pool."
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateDeployment" }
+            schema:
+              $ref: "#/components/schemas/CreateDeployment"
             examples:
               gptImage:
-                value: { publicModel: gpt-image, provider: openai, upstreamModel: gpt-image-2, credentials: { apiKey: "sk-..." } }
-              nanoBananaOpenRouter:
-                value: { publicModel: nano-banana, provider: openrouter, upstreamModel: google/gemini-3.1-flash-image-preview, credentials: { apiKey: "sk-or-..." } }
+                value:
+                  publicModel: gpt-image
+                  provider: openai
+                  upstreamModel: gpt-image-2
+                  credentials:
+                    apiKey: sk-...
               customCompatible:
-                value: { publicModel: grok, adapterKey: openaicompatible, upstreamModel: grok-4, credentials: { apiKey: "xai-...", baseUrl: "https://api.x.ai/v1" } }
+                value:
+                  publicModel: grok
+                  adapterKey: openaicompatible
+                  upstreamModel: grok-4
+                  credentials:
+                    apiKey: xai-...
+                    baseUrl: https://api.x.ai/v1
       responses:
-        "201": { description: Deployment created and resolved; credentials are never returned }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "201":
+          description: Deployment created and resolved; credentials are never returned
+        "400": *a1
   /admin/deployments/{id}:
-    parameters: [{ $ref: "#/components/parameters/IdPath" }]
+    parameters:
+      - $ref: "#/components/parameters/IdPath"
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: retrieveDeployment
       summary: Retrieve a deployment (without credentials)
       responses:
-        "200": { description: Deployment }
-        "404": { $ref: "#/components/responses/Error" }
+        "200":
+          description: Deployment
+        "404": *a1
     patch:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: updateDeployment
       summary: Update upstreamModel, credentials, catalogEntry, pricing, transportOverrides, or routing
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateDeployment" } } }
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateDeployment"
       responses:
-        "200": { description: Deployment updated and resolved }
-        "404": { $ref: "#/components/responses/Error" }
+        "200":
+          description: Deployment updated and resolved
+        "404": *a1
     delete:
-      tags: [Admin]
+      tags:
+        - Admin
       operationId: deleteDeployment
       summary: Delete a deployment
       responses:
-        "204": { description: No Content }
-        "404": { $ref: "#/components/responses/Error" }
-
+        "204":
+          description: No Content
+        "404": *a1
   /admin/keys:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: List virtual keys (master key, paginated)
       parameters:
-        - { $ref: "#/components/parameters/Limit" }
-        - { $ref: "#/components/parameters/Offset" }
-        - { name: enabled, in: query, schema: { type: boolean } }
-        - { name: publicModel, in: query, schema: { type: string }, description: "Keys with access to this Public Model" }
-        - { name: q, in: query, schema: { type: string }, description: "Search in name/prefix" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: enabled
+          in: query
+          schema:
+            type: boolean
+        - name: publicModel
+          in: query
+          schema:
+            type: string
+          description: Keys with access to this Public Model
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search in name/prefix
       responses:
-        "200": { description: "{ data: [...], pagination: {...} }" }
+        "200":
+          description: Paginated virtual keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: {}
+                  pagination:
+                    $ref: "#/components/schemas/Pagination"
+                required:
+                  - data
+                  - pagination
+                additionalProperties: false
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Create virtual key (returns the plaintext key ONCE)
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreateKey" }
+            schema:
+              $ref: "#/components/schemas/CreateKey"
             examples:
               scoped:
                 value:
                   name: app-frontend
-                  allowedModels: [gemini, gpt]
+                  allowedModels:
+                    - gemini
+                    - gpt
                   maxBudgetCents: 500
                   budgetReset: monthly
                   rpm: 60
-              unlimited: { value: { name: full-access, allowedModels: [] } }
-      responses: { "201": { description: "{ data: { ...key, key: '<rawKey>' } }" } }
+              unlimited:
+                value:
+                  name: full-access
+                  allowedModels: []
+      responses:
+        "201":
+          description: "{ data: { ...key, key: '<rawKey>' } }"
   /admin/keys/{id}:
     patch:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Edit virtual key (master key)
-      parameters: [{ $ref: "#/components/parameters/IdPath" }]
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/UpdateKey" }
+            schema:
+              $ref: "#/components/schemas/UpdateKey"
             examples:
-              disable: { value: { enabled: false } }
-              raiseBudget: { value: { maxBudgetCents: 2000 } }
-              resetSpend: { value: { resetSpend: true } }
-      responses: { "200": { description: "{ data: <key> }" }, "404": { $ref: "#/components/responses/Error" } }
+              disable:
+                value:
+                  enabled: false
+              raiseBudget:
+                value:
+                  maxBudgetCents: 2000
+              resetSpend:
+                value:
+                  resetSpend: true
+      responses:
+        "200":
+          description: "{ data: <key> }"
+        "404": *a1
     delete:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Delete virtual key (master key)
-      parameters: [{ $ref: "#/components/parameters/IdPath" }]
-      responses: { "204": { description: No Content } }
-
+      parameters:
+        - $ref: "#/components/parameters/IdPath"
+      responses:
+        "204":
+          description: No Content
   /admin/cache:
     delete:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Invalidate response cache (master key)
       parameters:
-        - { name: callType, in: query, schema: { type: string }, description: "e.g. chat | responses (default: all)" }
-        - { name: namespace, in: query, schema: { type: string }, description: "virtual key id or 'master' (default: all)" }
-      responses: { "200": { description: "{ data: { deleted: <n> } }" } }
-
+        - name: callType
+          in: query
+          schema:
+            type: string
+          description: "e.g. chat | responses (default: all)"
+        - name: namespace
+          in: query
+          schema:
+            type: string
+          description: "virtual key id or 'master' (default: all)"
+      responses:
+        "200":
+          description: "{ data: { deleted: <n> } }"
   /admin/extensions:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Inspect the runtime extension state of this process (master key, read-only)
       responses:
         "200":
           description: "{ data: { loaded, status, healthy, definitions, instances } }"
-
   /admin/extensions/artifacts:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: List uploaded extension artifacts (all keys and versions, no code)
       responses:
-        "200": { description: "{ data: [{ id, key, version, contentHash, sizeBytes, status, uploadedBy, createdAt }] }" }
+        "200":
+          description: "{ data: [{ id, key, version, contentHash, sizeBytes, status, uploadedBy, createdAt }] }"
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Upload a new extension version and make it active (master key)
-      description: >
-        The module source is validated (imported and checked for a valid definition whose key matches)
-        before it is stored, so an invalid upload is rejected with 400 and never reaches the fleet.
+      description: The module source is validated (imported and checked for a valid definition whose key matches) before it is stored, so an invalid upload is rejected with 400 and never reaches the fleet.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [key, code]
               properties:
-                key: { type: string, pattern: "^[a-z0-9]+$" }
-                code: { type: string, description: "ESM module source" }
+                key:
+                  type: string
+                  pattern: ^[a-z0-9]+$
+                code:
+                  type: string
+                  description: ESM module source
+              required:
+                - key
+                - code
       responses:
-        "201": { description: "{ data: <artifact summary> }" }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "201":
+          description: "{ data: <artifact summary> }"
+        "400": *a1
   /admin/extensions/artifacts/{key}/versions:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Version history for one definition (master key)
       parameters:
-        - { name: key, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        "200": { description: "{ data: [<artifact summary>] }" }
-
+        "200":
+          description: "{ data: [<artifact summary>] }"
   /admin/extensions/artifacts/{key}/activate:
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Activate a specific version, archiving the rest (rollback, master key)
       parameters:
-        - { name: key, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [version]
-              properties: { version: { type: integer, minimum: 1 } }
+              properties:
+                version:
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
+              required:
+                - version
       responses:
-        "200": { description: "{ data: [<artifact summary>] }" }
-        "404": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ data: [<artifact summary>] }"
+        "404": *a1
   /admin/extensions/artifacts/{key}:
     delete:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Remove every version of a definition (master key)
       parameters:
-        - { name: key, in: path, required: true, schema: { type: string } }
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        "204": { description: Deleted (idempotent) }
-
+        "204":
+          description: Deleted (idempotent)
   /admin/extensions/instances:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: List extension instances (master key)
       responses:
-        "200": { description: "{ data: [<instance>] }" }
+        "200":
+          description: "{ data: [<instance>] }"
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Create an extension instance (master key)
       requestBody:
         required: true
@@ -576,25 +688,47 @@ paths:
           application/json:
             schema:
               type: object
-              required: [id, definition]
               properties:
-                id: { type: string, pattern: "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$" }
-                definition: { type: string, pattern: "^[a-z0-9]+$" }
-                enabled: { type: boolean }
-                critical: { type: boolean, nullable: true }
-                priority: { type: integer }
-                match: { type: object, additionalProperties: true }
+                id:
+                  type: string
+                  pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$
+                definition:
+                  type: string
+                  pattern: ^[a-z0-9]+$
+                enabled:
+                  type: boolean
+                critical:
+                  anyOf:
+                    - type: boolean
+                    - type: "null"
+                priority:
+                  type: integer
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                match:
+                  type: object
+                  propertyNames:
+                    type: string
+                  additionalProperties: {}
                 config: {}
+              required:
+                - id
+                - definition
       responses:
-        "201": { description: "{ data: <instance> }" }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "201":
+          description: "{ data: <instance> }"
+        "400": *a1
   /admin/extensions/instances/{id}:
     patch:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Update an extension instance (master key)
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -602,92 +736,199 @@ paths:
             schema:
               type: object
               properties:
-                definition: { type: string, pattern: "^[a-z0-9]+$" }
-                enabled: { type: boolean }
-                critical: { type: boolean, nullable: true }
-                priority: { type: integer }
-                match: { type: object, additionalProperties: true }
+                definition:
+                  type: string
+                  pattern: ^[a-z0-9]+$
+                enabled:
+                  type: boolean
+                critical:
+                  anyOf:
+                    - type: boolean
+                    - type: "null"
+                priority:
+                  type: integer
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                match:
+                  type: object
+                  propertyNames:
+                    type: string
+                  additionalProperties: {}
                 config: {}
       responses:
-        "200": { description: "{ data: <instance> }" }
-        "404": { $ref: "#/components/responses/Error" }
+        "200":
+          description: "{ data: <instance> }"
+        "404": *a1
     delete:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Delete an extension instance (master key)
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        "204": { description: Deleted (idempotent) }
-
+        "204":
+          description: Deleted (idempotent)
   /admin/extensions/{id}/reset:
     post:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Clear a circuit-breaker trip and re-activate an instance (master key)
       parameters:
-        - { name: id, in: path, required: true, schema: { type: string } }
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
-        "200": { description: "{ data: <extension status> }" }
-        "400": { $ref: "#/components/responses/Error" }
-        "404": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ data: <extension status> }"
+        "400": *a1
+        "404": *a1
   /admin/logs:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: List request logs (master key, paginated, newest first)
       parameters:
-        - { $ref: "#/components/parameters/Limit" }
-        - { $ref: "#/components/parameters/Offset" }
-        - { name: virtualKeyId, in: query, schema: { type: string, format: uuid } }
-        - { name: publicModel, in: query, schema: { type: string } }
-        - { name: deploymentId, in: query, schema: { type: string, format: uuid } }
-        - { name: adapterKey, in: query, schema: { type: string } }
-        - { name: callType, in: query, schema: { type: string }, description: "chat | responses | messages" }
-        - { name: status, in: query, schema: { type: string, enum: [success, error] } }
-        - { name: requestId, in: query, schema: { type: string } }
-        - { name: cacheHit, in: query, schema: { type: boolean } }
-        - { name: start, in: query, schema: { type: string, format: date-time }, description: "start_time >= (narrows partitions)" }
-        - { name: end, in: query, schema: { type: string, format: date-time }, description: "start_time <=" }
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+        - name: virtualKeyId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: publicModel
+          in: query
+          schema:
+            type: string
+        - name: deploymentId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: adapterKey
+          in: query
+          schema:
+            type: string
+        - name: callType
+          in: query
+          schema:
+            type: string
+          description: chat | responses | messages
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - success
+              - error
+        - name: requestId
+          in: query
+          schema:
+            type: string
+        - name: cacheHit
+          in: query
+          schema:
+            type: boolean
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: start_time >= (narrows partitions)
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: start_time <=
       responses:
-        "200": { description: "{ data: [<requestLog>], pagination: {...} }" }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ data: [<requestLog>], pagination: {...} }"
+        "400": *a1
   /admin/usage:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Aggregate usage (requests, tokens, cost), optionally grouped (master key)
-      description: >
-        Sums requests/tokens/cost over request_logs. Accepts the same filters as /admin/logs
-        (virtualKeyId, publicModel, status, start, end, ...). groupBy=none returns a single total.
+      description: Sums requests/tokens/cost over request_logs. Accepts the same filters as /admin/logs (virtualKeyId, publicModel, status, start, end, ...). groupBy=none returns a single total.
       parameters:
         - name: groupBy
           in: query
           required: false
-          schema: { type: string, enum: [public_model, virtual_key, adapter_key, day, none], default: none }
-        - { name: virtualKeyId, in: query, schema: { type: string, format: uuid } }
-        - { name: publicModel, in: query, schema: { type: string } }
-        - { name: adapterKey, in: query, schema: { type: string } }
-        - { name: callType, in: query, schema: { type: string } }
-        - { name: status, in: query, schema: { type: string, enum: [success, error] } }
-        - { name: cacheHit, in: query, schema: { type: boolean } }
-        - { name: start, in: query, schema: { type: string, format: date-time } }
-        - { name: end, in: query, schema: { type: string, format: date-time } }
+          schema:
+            type: string
+            enum:
+              - public_model
+              - virtual_key
+              - adapter_key
+              - day
+              - none
+            default: none
+        - name: virtualKeyId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: publicModel
+          in: query
+          schema:
+            type: string
+        - name: adapterKey
+          in: query
+          schema:
+            type: string
+        - name: callType
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum:
+              - success
+              - error
+        - name: cacheHit
+          in: query
+          schema:
+            type: boolean
+        - name: start
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          schema:
+            type: string
+            format: date-time
       responses:
-        "200": { description: "{ data: [{ key, requests, promptTokens, completionTokens, totalTokens, costCents }] }" }
-        "400": { $ref: "#/components/responses/Error" }
-
+        "200":
+          description: "{ data: [{ key, requests, promptTokens, completionTokens, totalTokens, costCents }] }"
+        "400": *a1
   /admin/router-settings:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: View router config (master key)
-      responses: { "200": { description: "{ data: <settings|null> }" } }
+      responses:
+        "200":
+          description: "{ data: <settings|null> }"
     put:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Update router config (master key)
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/RouterSettings" }
+            schema:
+              $ref: "#/components/schemas/RouterSettings"
             examples:
               default:
                 value:
@@ -697,489 +938,1160 @@ paths:
                   numRetries: 3
                   timeoutSeconds: 600
                   retryAfterSeconds: 0
-      responses: { "200": { description: "{ data: <settings> }" } }
-
+      responses:
+        "200":
+          description: "{ data: <settings> }"
   /admin/fallbacks:
     get:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: List fallbacks (master key)
-      responses: { "200": { description: "{ data: [...] }" } }
+      responses:
+        "200":
+          description: "{ data: [...] }"
     put:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Create/update dedicated fallback (master key)
-      description: >
-        Configures an exact chain by (primaryModel, reason). Public Models must exist and each
-        target must share at least one executable operation with the primary. The router
-        exhausts the primary deployments before traversing the chain.
+      description: Configures an exact chain by (primaryModel, reason). Public Models must exist and each target must share at least one executable operation with the primary. The router exhausts the primary deployments before traversing the chain.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/Fallback" }
+            schema:
+              $ref: "#/components/schemas/Fallback"
             examples:
-              general: { value: { primaryModel: gpt, fallbackModels: [gemini], reason: general } }
+              general:
+                value:
+                  primaryModel: gpt
+                  fallbackModels:
+                    - gemini
+                  reason: general
       responses:
-        "201": { description: "{ data: <fallback> }" }
-        "400": { $ref: "#/components/responses/Error" }
+        "201":
+          description: "{ data: <fallback> }"
+        "400": *a1
   /admin/fallbacks/{primaryModel}/{reason}:
     delete:
-      tags: [Admin]
+      tags:
+        - Admin
       summary: Delete fallback (master key)
       parameters:
-        - { name: primaryModel, in: path, required: true, schema: { type: string } }
-        - { name: reason, in: path, required: true, schema: { type: string, enum: [general, context_window, content_policy] } }
-      responses: { "204": { description: No Content } }
-
+        - name: primaryModel
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: reason
+          in: path
+          required: true
+          schema:
+            type: string
+            enum:
+              - general
+              - context_window
+              - content_policy
+      responses:
+        "204":
+          description: No Content
 components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      description: "Master key or virtual key. Admin requires the master key. Alternative: x-api-key header or ?api_key=."
-  parameters:
-    IdPath:
-      name: id
-      in: path
-      required: true
-      schema: { type: string, format: uuid }
-    ResponseIdPath:
-      name: id
-      in: path
-      required: true
-      schema: { type: string }
-      description: "OpenResponses response id (resp_...)"
-    Limit:
-      name: limit
-      in: query
-      required: false
-      schema: { type: integer, default: 50 }
-    Offset:
-      name: offset
-      in: query
-      required: false
-      schema: { type: integer, default: 0 }
-    CacheHeader:
-      name: x-unified-cache
-      in: header
-      required: false
-      schema: { type: string, enum: ["true", "1"] }
-      description: Opt-in response cache (non-stream, no tools).
-    CacheTtlHeader:
-      name: x-unified-cache-ttl
-      in: header
-      required: false
-      schema: { type: integer }
-      description: Cache TTL in seconds (default 300).
-  responses:
-    Error:
-      description: OpenAI-shaped error
-      content:
-        application/json:
-          schema: { $ref: "#/components/schemas/Error" }
   schemas:
+    ChatCompletionRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          description: public model (public_model)
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum:
+                  - system
+                  - developer
+                  - user
+                  - assistant
+                  - tool
+              content: {}
+            required:
+              - role
+            additionalProperties: true
+        stream:
+          default: false
+          type: boolean
+        stream_options:
+          type: object
+          properties:
+            include_usage:
+              type: boolean
+        temperature:
+          type: number
+        top_p:
+          type: number
+        max_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        max_completion_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        tools:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        tool_choice: {}
+        response_format:
+          $ref: "#/components/schemas/ChatResponseFormat"
+      required:
+        - model
+        - messages
+      additionalProperties: true
+    ChatResponseFormat:
+      anyOf:
+        - type: object
+          properties:
+            type:
+              type: string
+              const: text
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: json_object
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: json_schema
+            json_schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                schema:
+                  $ref: "#/components/schemas/JsonSchemaDefinition"
+                strict:
+                  anyOf:
+                    - type: boolean
+                    - type: "null"
+              required:
+                - name
+          required:
+            - type
+            - json_schema
+    JsonSchemaDefinition:
+      type: object
+      propertyNames:
+        type: string
+      additionalProperties: {}
+      description: JSON Schema the model output must satisfy.
+    ResponsesRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        input:
+          description: string or array of items (message/function_call/...)
+        instructions:
+          anyOf:
+            - type: string
+            - type: "null"
+        stream:
+          default: false
+          type: boolean
+        max_output_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        temperature:
+          type: number
+        top_p:
+          type: number
+        tools:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        tool_choice: {}
+        text:
+          $ref: "#/components/schemas/ResponsesTextConfig"
+        store:
+          description: Persist server-side state for chaining with previous_response_id. Default follows RESPONSES_STORE_DEFAULT (true = OpenAI-compatible). Managed by the gateway; not forwarded upstream.
+          type: boolean
+        previous_response_id:
+          description: "Chains with a stored response (store): the gateway concatenates its input+output with the new input. Local pointer, not forwarded upstream. Cannot be combined with conversation."
+          type: string
+        background:
+          description: "Unsupported: background:true is rejected with 400."
+          type: boolean
+        conversation:
+          description: Cannot be combined with previous_response_id (400).
+        prompt:
+          description: Prompt templates are unsupported (400).
+      required:
+        - model
+      additionalProperties: true
+    ResponsesTextConfig:
+      type: object
+      properties:
+        format:
+          $ref: "#/components/schemas/ResponsesTextFormat"
+      additionalProperties: true
+    ResponsesTextFormat:
+      anyOf:
+        - type: object
+          properties:
+            type:
+              type: string
+              const: text
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: json_object
+          required:
+            - type
+        - type: object
+          properties:
+            type:
+              type: string
+              const: json_schema
+            name:
+              type: string
+            description:
+              type: string
+            schema:
+              $ref: "#/components/schemas/JsonSchemaDefinition"
+            strict:
+              anyOf:
+                - type: boolean
+                - type: "null"
+          required:
+            - type
+            - name
+            - schema
+    MessagesRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        max_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum:
+                  - user
+                  - assistant
+              content: {}
+            required:
+              - role
+            additionalProperties: true
+        system:
+          description: string or array of text blocks
+        stream:
+          default: false
+          type: boolean
+        temperature:
+          type: number
+        top_p:
+          type: number
+        top_k:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        stop_sequences:
+          type: array
+          items:
+            type: string
+        tools:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        tool_choice:
+          type: object
+          properties: {}
+          additionalProperties: true
+        output_config:
+          $ref: "#/components/schemas/MessagesOutputConfig"
+      required:
+        - model
+        - max_tokens
+        - messages
+      additionalProperties: true
+    MessagesOutputConfig:
+      type: object
+      properties:
+        effort:
+          anyOf:
+            - type: string
+              enum:
+                - low
+                - medium
+                - high
+                - xhigh
+                - max
+            - type: "null"
+        format:
+          type: object
+          properties:
+            type:
+              type: string
+              const: json_schema
+            schema:
+              $ref: "#/components/schemas/JsonSchemaDefinition"
+          required:
+            - type
+            - schema
+      additionalProperties: true
+    EmbeddingsRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          description: public model
+        input:
+          anyOf:
+            - type: string
+              minLength: 1
+            - minItems: 1
+              type: array
+              items:
+                type: string
+                minLength: 1
+            - minItems: 1
+              type: array
+              items:
+                type: integer
+                minimum: 0
+                maximum: 9007199254740991
+            - minItems: 1
+              type: array
+              items:
+                minItems: 1
+                type: array
+                items:
+                  type: integer
+                  minimum: 0
+                  maximum: 9007199254740991
+        encoding_format:
+          default: float
+          type: string
+          enum:
+            - float
+            - base64
+        dimensions:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        user:
+          type: string
+        extra_body:
+          description: Provider-specific JSON parameters without collisions with managed fields.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+      required:
+        - model
+        - input
+    ImageGenerationRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          description: public model
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 32000
+        background:
+          anyOf:
+            - type: string
+              enum:
+                - transparent
+                - opaque
+                - auto
+            - type: "null"
+        moderation:
+          anyOf:
+            - type: string
+              enum:
+                - low
+                - auto
+            - type: "null"
+        n:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        output_compression:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        output_format:
+          anyOf:
+            - type: string
+              enum:
+                - png
+                - jpeg
+                - webp
+            - type: "null"
+        partial_images:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        quality:
+          anyOf:
+            - type: string
+              enum:
+                - standard
+                - hd
+                - low
+                - medium
+                - high
+                - auto
+            - type: "null"
+        response_format:
+          default: b64_json
+          anyOf:
+            - type: string
+              enum:
+                - b64_json
+            - type: "null"
+        size:
+          anyOf:
+            - type: string
+              pattern: ^(auto|[1-9][0-9]*x[1-9][0-9]*)$
+            - type: "null"
+        stream:
+          default: false
+          anyOf:
+            - type: boolean
+            - type: "null"
+        style:
+          anyOf:
+            - type: string
+              enum:
+                - vivid
+                - natural
+            - type: "null"
+        user:
+          anyOf:
+            - type: string
+            - type: "null"
+        extra_body:
+          description: Provider-specific JSON parameters; max 64 KiB and no collisions with managed fields.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+      required:
+        - model
+        - prompt
+    ImageEditRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 32000
+        image:
+          minItems: 1
+          maxItems: 16
+          type: array
+          items:
+            type: string
+            format: binary
+          description: Send one or more parts named image or image[].
+        mask:
+          type: string
+          format: binary
+          description: PNG <=4 MB; same dimensions as the first image.
+        background:
+          anyOf:
+            - type: string
+              enum:
+                - transparent
+                - opaque
+                - auto
+            - type: "null"
+        input_fidelity:
+          anyOf:
+            - type: string
+              enum:
+                - high
+                - low
+            - type: "null"
+        n:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        output_compression:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        output_format:
+          anyOf:
+            - type: string
+              enum:
+                - png
+                - jpeg
+                - webp
+            - type: "null"
+        partial_images:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        quality:
+          anyOf:
+            - type: string
+              enum:
+                - standard
+                - low
+                - medium
+                - high
+                - auto
+            - type: "null"
+        response_format:
+          default: b64_json
+          anyOf:
+            - type: string
+              enum:
+                - b64_json
+            - type: "null"
+        size:
+          anyOf:
+            - type: string
+              pattern: ^(auto|[1-9][0-9]*x[1-9][0-9]*)$
+            - type: "null"
+        stream:
+          default: false
+          anyOf:
+            - type: boolean
+            - type: "null"
+        user:
+          anyOf:
+            - type: string
+            - type: "null"
+        extra_body:
+          type: string
+          description: Serialized JSON object; max 64 KiB.
+      required:
+        - model
+        - prompt
+        - image
+    CreateDeployment:
+      type: object
+      properties:
+        publicModel:
+          type: string
+          description: Public alias sent as model in /v1.
+        provider:
+          description: Known preset (openai, googleaistudio, anthropic, openrouter, openaicompatible).
+          type: string
+        adapterKey:
+          description: Explicit adapter; alternative to provider.
+          type: string
+        upstreamModel:
+          type: string
+          description: Exact ID; preserves slash namespaces.
+        credentials:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+          description: Inline API key (e.g. { apiKey }). Encrypted; never returned.
+        label:
+          description: Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label).
+          anyOf:
+            - type: string
+            - type: "null"
+        metadata:
+          description: Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        catalogEntry:
+          description: REQUIRED if the model is not in the catalog (custom); FORBIDDEN if it is. 1:1 entry with catalog.json.
+          $ref: "#/components/schemas/CatalogEntry"
+        pricing:
+          description: Operator pricing for cost calculation (optional).
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties:
+            type: number
+        transportOverrides:
+          description: Per-operation transport override. Usually inferred from the adapter; rarely needed.
+          $ref: "#/components/schemas/TransportOverrides"
+        enabled:
+          type: boolean
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        tpmLimit:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        rpmLimit:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+      required:
+        - publicModel
+        - upstreamModel
+        - credentials
+    CatalogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        family:
+          type: string
+        operations:
+          $ref: "#/components/schemas/OperationProfiles"
+      required:
+        - operations
+      additionalProperties: true
+    OperationProfiles:
+      type: object
+      propertyNames:
+        type: string
+        enum:
+          - text.generate
+          - image.generate
+          - image.edit
+          - audio.transcribe
+          - embedding.create
+      additionalProperties:
+        type: object
+        propertyNames:
+          type: string
+        additionalProperties: {}
+      required:
+        - text.generate
+        - image.generate
+        - image.edit
+        - audio.transcribe
+        - embedding.create
+    TransportOverrides:
+      type: object
+      propertyNames:
+        type: string
+        enum:
+          - text.generate
+          - image.generate
+          - image.edit
+          - audio.transcribe
+          - embedding.create
+      additionalProperties:
+        type: string
+      required:
+        - text.generate
+        - image.generate
+        - image.edit
+        - audio.transcribe
+        - embedding.create
+      description: Advanced operation-to-transport override. Defaults normally come from the connection.
+    UpdateDeployment:
+      type: object
+      properties:
+        publicModel:
+          type: string
+        upstreamModel:
+          type: string
+        credentials:
+          description: Credential patch; re-encrypted, never returned.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        label:
+          description: Human identifier; null clears it.
+          anyOf:
+            - type: string
+            - type: "null"
+        metadata:
+          description: Replaces the stored metadata object.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        catalogEntry:
+          anyOf:
+            - $ref: "#/components/schemas/CatalogEntry"
+            - type: "null"
+        pricing:
+          anyOf:
+            - type: object
+              propertyNames:
+                type: string
+              additionalProperties:
+                type: number
+            - type: "null"
+        transportOverrides:
+          $ref: "#/components/schemas/TransportOverrides"
+        enabled:
+          type: boolean
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        tpmLimit:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        rpmLimit:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+    CreateKey:
+      type: object
+      properties:
+        name:
+          type: string
+        allowedModels:
+          description: Allowed Public Models; [] = all
+          type: array
+          items:
+            type: string
+        maxBudgetCents:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        budgetReset:
+          anyOf:
+            - type: string
+              enum:
+                - hourly
+                - daily
+                - weekly
+                - monthly
+            - type: "null"
+        tpm:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        rpm:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        expiresAt:
+          anyOf:
+            - type: string
+              format: date-time
+              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z))$
+            - type: "null"
+      required:
+        - name
+    UpdateKey:
+      type: object
+      properties:
+        name:
+          type: string
+        allowedModels:
+          type: array
+          items:
+            type: string
+        maxBudgetCents:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        budgetReset:
+          anyOf:
+            - type: string
+              enum:
+                - hourly
+                - daily
+                - weekly
+                - monthly
+            - type: "null"
+        tpm:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        rpm:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        enabled:
+          type: boolean
+        expiresAt:
+          anyOf:
+            - type: string
+              format: date-time
+              pattern: ^(?:(?:\d\d[2468][048]|\d\d[13579][26]|\d\d0[48]|[02468][048]00|[13579][26]00)-02-29|\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\d|30)|(?:02)-(?:0[1-9]|1\d|2[0-8])))T(?:(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d+)?)?(?:Z))$
+            - type: "null"
+        resetSpend:
+          description: true resets spend for the current period
+          type: boolean
+    RouterSettings:
+      type: object
+      properties:
+        routingStrategy:
+          type: string
+          enum:
+            - simple-shuffle
+            - least-busy
+            - usage-based-tpm
+            - usage-based-rpm
+        allowedFails:
+          description: Accumulated failures that trigger cooldown for a deployment.
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        cooldownSeconds:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        numRetries:
+          description: Maximum retries per deployment, in addition to the initial attempt. Resets for each deployment in each fallback pool.
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        timeoutSeconds:
+          description: Timeout per upstream attempt.
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        retryAfterSeconds:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+    Fallback:
+      type: object
+      properties:
+        primaryModel:
+          type: string
+          description: Primary public name; must have at least one persisted deployment.
+        fallbackModels:
+          minItems: 1
+          maxItems: 5
+          type: array
+          items:
+            type: string
+          uniqueItems: true
+          description: Fallback public names in order. Each one must exist and share an executable operation with the primary.
+        reason:
+          description: Aggregated cause of the primary failure; not an operation. Chain lookup is exact by reason.
+          default: general
+          type: string
+          enum:
+            - general
+            - context_window
+            - content_policy
+      required:
+        - primaryModel
+        - fallbackModels
     Error:
       type: object
       properties:
         error:
           type: object
           properties:
-            message: { type: string }
-            type: { type: string }
-            param: { type: [string, "null"] }
-            code: { type: [string, "null"] }
-    Pagination:
-      type: object
-      properties:
-        limit: { type: integer }
-        offset: { type: integer }
-        total: { type: integer }
-        nextOffset: { type: [integer, "null"] }
-    JsonSchemaDefinition:
-      type: object
-      additionalProperties: true
-      description: JSON Schema the model output must satisfy.
-    ChatResponseFormat:
-      oneOf:
-        - type: object
-          additionalProperties: true
-          required: [type]
-          properties:
-            type: { type: string, enum: [text] }
-        - type: object
-          additionalProperties: true
-          required: [type]
-          properties:
-            type: { type: string, enum: [json_object] }
-        - type: object
-          additionalProperties: true
-          required: [type, json_schema]
-          properties:
-            type: { type: string, enum: [json_schema] }
-            json_schema:
-              type: object
-              additionalProperties: true
-              required: [name]
-              properties:
-                name: { type: string }
-                description: { type: string }
-                schema: { $ref: "#/components/schemas/JsonSchemaDefinition" }
-                strict: { type: [boolean, "null"] }
-    ResponsesTextFormat:
-      oneOf:
-        - type: object
-          additionalProperties: true
-          required: [type]
-          properties:
-            type: { type: string, enum: [text] }
-        - type: object
-          additionalProperties: true
-          required: [type]
-          properties:
-            type: { type: string, enum: [json_object] }
-        - type: object
-          additionalProperties: true
-          required: [type, name, schema]
-          properties:
-            type: { type: string, enum: [json_schema] }
-            name: { type: string }
-            description: { type: string }
-            schema: { $ref: "#/components/schemas/JsonSchemaDefinition" }
-            strict: { type: [boolean, "null"] }
-    ResponsesTextConfig:
-      type: object
-      additionalProperties: true
-      properties:
-        format: { $ref: "#/components/schemas/ResponsesTextFormat" }
-    MessagesOutputConfig:
-      type: object
-      additionalProperties: true
-      properties:
-        effort: { type: [string, "null"], enum: [low, medium, high, xhigh, max, null] }
-        format:
-          type: [object, "null"]
-          additionalProperties: true
-          required: [type, schema]
-          properties:
-            type: { type: string, enum: [json_schema] }
-            schema: { $ref: "#/components/schemas/JsonSchemaDefinition" }
-    ChatCompletionRequest:
-      type: object
-      additionalProperties: true
-      required: [model, messages]
-      properties:
-        model: { type: string, description: "public model (public_model)" }
-        messages:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-            properties:
-              role: { type: string, enum: [system, developer, user, assistant, tool] }
-              content: {}
-        stream: { type: boolean, default: false }
-        stream_options:
-          type: object
-          properties: { include_usage: { type: boolean } }
-        temperature: { type: number }
-        top_p: { type: number }
-        max_tokens: { type: integer }
-        max_completion_tokens: { type: integer }
-        tools: { type: array, items: { type: object, additionalProperties: true } }
-        tool_choice: {}
-        response_format: { $ref: "#/components/schemas/ChatResponseFormat" }
-    MessagesRequest:
-      type: object
-      additionalProperties: true
-      required: [model, max_tokens, messages]
-      properties:
-        model: { type: string }
-        max_tokens: { type: integer }
-        messages:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-            properties:
-              role: { type: string, enum: [user, assistant] }
-              content: {}
-        system: { description: "string o array de bloques de texto" }
-        stream: { type: boolean, default: false }
-        temperature: { type: number }
-        top_p: { type: number }
-        top_k: { type: integer }
-        stop_sequences: { type: array, items: { type: string } }
-        tools: { type: array, items: { type: object, additionalProperties: true } }
-        tool_choice: { type: object, additionalProperties: true }
-        output_config: { $ref: "#/components/schemas/MessagesOutputConfig" }
-    ResponsesRequest:
-      type: object
-      additionalProperties: true
-      required: [model]
-      properties:
-        model: { type: string }
-        input: { description: "string o array de items (message/function_call/...)" }
-        instructions: { type: [string, "null"] }
-        stream: { type: boolean, default: false }
-        max_output_tokens: { type: integer }
-        temperature: { type: number }
-        top_p: { type: number }
-        tools: { type: array, items: { type: object, additionalProperties: true } }
-        tool_choice: {}
-        text: { $ref: "#/components/schemas/ResponsesTextConfig" }
-        store:
-          type: boolean
-          description: >
-            Persist server-side state for chaining with previous_response_id. Default follows
-            RESPONSES_STORE_DEFAULT (true = OpenAI-compatible). Managed by the gateway; not forwarded upstream.
-        previous_response_id:
-          type: string
-          description: >
-            Chains with a stored response (store): the gateway concatenates its input+output with the new input.
-            Local pointer, not forwarded upstream. Cannot be combined with conversation.
-        background:
-          type: boolean
-          description: "Unsupported: background:true is rejected with 400."
-        conversation: { description: "Cannot be combined with previous_response_id (400)." }
-        prompt: { description: "Prompt templates are unsupported (400)." }
-    EmbeddingsRequest:
-      type: object
+            message:
+              type: string
+            type:
+              type: string
+            param:
+              anyOf:
+                - type: string
+                - type: "null"
+            code:
+              anyOf:
+                - type: string
+                - type: "null"
+          required:
+            - message
+            - type
+          additionalProperties: false
+      required:
+        - error
       additionalProperties: false
-      required: [model, input]
-      properties:
-        model: { type: string, description: "public model" }
-        input:
-          oneOf:
-            - type: string
-              minLength: 1
-            - type: array
-              minItems: 1
-              items: { type: string, minLength: 1 }
-            - type: array
-              minItems: 1
-              items: { type: integer, minimum: 0 }
-            - type: array
-              minItems: 1
-              items:
-                type: array
-                minItems: 1
-                items: { type: integer, minimum: 0 }
-        encoding_format: { type: string, enum: [float, base64], default: float }
-        dimensions: { type: integer, minimum: 1 }
-        user: { type: string }
-        extra_body:
-          type: object
-          additionalProperties: true
-          description: "Provider-specific JSON parameters without collisions with managed fields."
-    Embedding:
-      type: object
-      required: [object, embedding, index]
-      properties:
-        object: { type: string, enum: [embedding] }
-        embedding:
-          oneOf:
-            - type: array
-              items: { type: number }
-            - type: string
-              description: "Base64 when encoding_format=base64."
-        index: { type: integer }
     EmbeddingsResponse:
       type: object
-      required: [object, data, model]
       properties:
-        object: { type: string, enum: [list] }
-        data: { type: array, items: { $ref: "#/components/schemas/Embedding" } }
-        model: { type: string }
+        object:
+          type: string
+          const: list
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Embedding"
+        model:
+          type: string
         usage:
           type: object
           properties:
-            prompt_tokens: { type: integer }
-            total_tokens: { type: integer }
-    ImageGenerationRequest:
-      type: object
+            prompt_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            total_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+          additionalProperties: false
+      required:
+        - object
+        - data
+        - model
       additionalProperties: false
-      required: [model, prompt]
-      properties:
-        model: { type: string, description: "public model" }
-        prompt: { type: string, minLength: 1, maxLength: 32000 }
-        background: { type: [string, "null"], enum: [transparent, opaque, auto, null] }
-        moderation: { type: [string, "null"], enum: [low, auto, null] }
-        n: { type: [integer, "null"], minimum: 1, maximum: 10 }
-        output_compression: { type: [integer, "null"], minimum: 0, maximum: 100 }
-        output_format: { type: [string, "null"], enum: [png, jpeg, webp, null] }
-        partial_images: { type: [integer, "null"], minimum: 0, maximum: 3 }
-        quality: { type: [string, "null"], enum: [standard, hd, low, medium, high, auto, null] }
-        response_format: { type: [string, "null"], enum: [b64_json, null], default: b64_json }
-        size: { type: [string, "null"], pattern: "^(auto|[1-9][0-9]*x[1-9][0-9]*)$" }
-        stream: { type: [boolean, "null"], default: false }
-        style: { type: [string, "null"], enum: [vivid, natural, null] }
-        user: { type: [string, "null"] }
-        extra_body:
-          type: object
-          additionalProperties: true
-          description: "Provider-specific JSON parameters; max 64 KiB and no collisions with managed fields."
-    ImageEditRequest:
+    Embedding:
       type: object
+      properties:
+        object:
+          type: string
+          const: embedding
+        embedding:
+          anyOf:
+            - type: array
+              items:
+                type: number
+            - type: string
+              description: Base64 when encoding_format=base64.
+        index:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+      required:
+        - object
+        - embedding
+        - index
       additionalProperties: false
-      required: [model, prompt, image]
-      properties:
-        model: { type: string }
-        prompt: { type: string, minLength: 1, maxLength: 32000 }
-        image:
-          type: array
-          minItems: 1
-          maxItems: 16
-          items: { type: string, format: binary }
-          description: "Send one or more parts named image or image[]."
-        mask: { type: string, format: binary, description: "PNG <=4 MB; same dimensions as the first image." }
-        background: { type: [string, "null"], enum: [transparent, opaque, auto, null] }
-        input_fidelity: { type: [string, "null"], enum: [high, low, null] }
-        n: { type: [integer, "null"], minimum: 1, maximum: 10 }
-        output_compression: { type: [integer, "null"], minimum: 0, maximum: 100 }
-        output_format: { type: [string, "null"], enum: [png, jpeg, webp, null] }
-        partial_images: { type: [integer, "null"], minimum: 0, maximum: 3 }
-        quality: { type: [string, "null"], enum: [standard, low, medium, high, auto, null] }
-        response_format: { type: [string, "null"], enum: [b64_json, null], default: b64_json }
-        size: { type: [string, "null"], pattern: "^(auto|[1-9][0-9]*x[1-9][0-9]*)$" }
-        stream: { type: [boolean, "null"], default: false }
-        user: { type: [string, "null"] }
-        extra_body: { type: string, description: "Serialized JSON object; max 64 KiB." }
-    ImageData:
-      type: object
-      additionalProperties: false
-      required: [b64_json]
-      properties:
-        b64_json: { type: string }
-        revised_prompt: { type: string }
-    ImageUsage:
-      type: object
-      required: [input_tokens, output_tokens, total_tokens, input_tokens_details]
-      properties:
-        input_tokens: { type: integer }
-        output_tokens: { type: integer }
-        total_tokens: { type: integer }
-        input_tokens_details:
-          type: object
-          properties: { image_tokens: { type: integer }, text_tokens: { type: integer } }
-        output_tokens_details:
-          type: object
-          properties: { image_tokens: { type: integer }, text_tokens: { type: integer } }
     ImagesResponse:
       type: object
-      required: [created, data]
       properties:
-        created: { type: integer }
-        data: { type: array, items: { $ref: "#/components/schemas/ImageData" } }
-        background: { type: string, enum: [transparent, opaque] }
-        output_format: { type: string, enum: [png, jpeg, webp] }
-        quality: { type: string, enum: [low, medium, high] }
-        size: { type: string }
-        usage: { $ref: "#/components/schemas/ImageUsage" }
-    TransportOverrides:
-      type: object
-      propertyNames:
-        enum: [text.generate, image.generate, image.edit, audio.transcribe, embedding.create]
-      additionalProperties: { type: string }
-      description: "Advanced operation-to-transport override. Defaults normally come from the connection."
-    OperationProfiles:
-      type: object
-      minProperties: 1
-      propertyNames:
-        enum: [text.generate, image.generate, image.edit, audio.transcribe, embedding.create]
-      additionalProperties: { type: object, additionalProperties: true }
-    CatalogEntry:
-      type: object
-      required: [operations]
-      properties:
-        id: { type: string }
-        name: { type: string }
-        family: { type: string }
-        operations: { $ref: "#/components/schemas/OperationProfiles" }
-      additionalProperties: true
-    CreateDeployment:
-      type: object
-      required: [publicModel, upstreamModel, credentials]
-      properties:
-        publicModel: { type: string, description: "Public alias sent as model in /v1." }
-        provider: { type: string, description: "Known preset (openai, googleaistudio, anthropic, openrouter, openaicompatible)." }
-        adapterKey: { type: string, description: "Explicit adapter; alternative to provider." }
-        upstreamModel: { type: string, description: "Exact ID; preserves slash namespaces." }
-        credentials: { type: object, additionalProperties: true, description: "Inline API key (e.g. { apiKey }). Encrypted; never returned." }
-        label: { type: [string, "null"], description: "Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label)." }
-        metadata: { type: object, additionalProperties: true, description: "Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim." }
-        catalogEntry:
-          allOf: [{ $ref: "#/components/schemas/CatalogEntry" }]
-          description: "REQUIRED if the model is not in the catalog (custom); FORBIDDEN if it is. 1:1 entry with catalog.json."
-        pricing: { type: object, additionalProperties: { type: number }, description: "Operator pricing for cost calculation (optional)." }
-        transportOverrides:
-          allOf: [{ $ref: "#/components/schemas/TransportOverrides" }]
-          description: "Per-operation transport override. Usually inferred from the adapter; rarely needed."
-        enabled: { type: boolean }
-        weight: { type: integer, minimum: 0 }
-        tpmLimit: { type: [integer, "null"] }
-        rpmLimit: { type: [integer, "null"] }
-      additionalProperties: false
-    UpdateDeployment:
-      type: object
-      properties:
-        publicModel: { type: string }
-        upstreamModel: { type: string }
-        credentials: { type: object, additionalProperties: true, description: "Credential patch; re-encrypted, never returned." }
-        label: { type: [string, "null"], description: "Human identifier; null clears it." }
-        metadata: { type: object, additionalProperties: true, description: "Replaces the stored metadata object." }
-        catalogEntry: { oneOf: [{ $ref: "#/components/schemas/CatalogEntry" }, { type: "null" }] }
-        pricing: { type: [object, "null"], additionalProperties: { type: number } }
-        transportOverrides: { $ref: "#/components/schemas/TransportOverrides" }
-        enabled: { type: boolean }
-        weight: { type: integer, minimum: 0 }
-        tpmLimit: { type: [integer, "null"] }
-        rpmLimit: { type: [integer, "null"] }
-      additionalProperties: false
-    CreateKey:
-      type: object
-      required: [name]
-      properties:
-        name: { type: string }
-        allowedModels: { type: array, items: { type: string }, description: "Allowed Public Models; [] = all" }
-        maxBudgetCents: { type: [integer, "null"] }
-        budgetReset: { type: [string, "null"], enum: [hourly, daily, weekly, monthly, null] }
-        tpm: { type: [integer, "null"] }
-        rpm: { type: [integer, "null"] }
-        expiresAt: { type: [string, "null"], format: date-time }
-    UpdateKey:
-      type: object
-      properties:
-        name: { type: string }
-        allowedModels: { type: array, items: { type: string } }
-        maxBudgetCents: { type: [integer, "null"] }
-        budgetReset: { type: [string, "null"], enum: [hourly, daily, weekly, monthly, null] }
-        tpm: { type: [integer, "null"] }
-        rpm: { type: [integer, "null"] }
-        enabled: { type: boolean }
-        expiresAt: { type: [string, "null"], format: date-time }
-        resetSpend: { type: boolean, description: "true resets spend for the current period" }
-    RouterSettings:
-      type: object
-      properties:
-        routingStrategy: { type: string, enum: [simple-shuffle, least-busy, usage-based-tpm, usage-based-rpm] }
-        allowedFails: { type: integer, minimum: 0, description: "Accumulated failures that trigger cooldown for a deployment." }
-        cooldownSeconds: { type: integer, minimum: 0 }
-        numRetries: { type: integer, minimum: 0, description: "Maximum retries per deployment, in addition to the initial attempt. Resets for each deployment in each fallback pool." }
-        timeoutSeconds: { type: integer, minimum: 1, description: "Timeout por intento upstream." }
-        retryAfterSeconds: { type: integer, minimum: 0 }
-    Fallback:
-      type: object
-      required: [primaryModel, fallbackModels]
-      properties:
-        primaryModel: { type: string, description: "Primary public name; must have at least one persisted deployment." }
-        fallbackModels:
+        created:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        data:
           type: array
-          minItems: 1
-          maxItems: 5
-          uniqueItems: true
-          items: { type: string }
-          description: "Fallback public names in order. Each one must exist and share an executable operation with the primary."
-        reason:
+          items:
+            $ref: "#/components/schemas/ImageData"
+        background:
           type: string
-          enum: [general, context_window, content_policy]
-          default: general
-          description: "Aggregated cause of the primary failure; not an operation. Chain lookup is exact by reason."
+          enum:
+            - transparent
+            - opaque
+        output_format:
+          type: string
+          enum:
+            - png
+            - jpeg
+            - webp
+        quality:
+          type: string
+          enum:
+            - low
+            - medium
+            - high
+        size:
+          type: string
+        usage:
+          $ref: "#/components/schemas/ImageUsage"
+      required:
+        - created
+        - data
+      additionalProperties: false
+    ImageData:
+      type: object
+      properties:
+        b64_json:
+          type: string
+        revised_prompt:
+          type: string
+      required:
+        - b64_json
+      additionalProperties: false
+    ImageUsage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        output_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        total_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        input_tokens_details:
+          type: object
+          properties:
+            image_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            text_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+          additionalProperties: false
+        output_tokens_details:
+          type: object
+          properties:
+            image_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            text_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+          additionalProperties: false
+      required:
+        - input_tokens
+        - output_tokens
+        - total_tokens
+      additionalProperties: false
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        offset:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        total:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        nextOffset:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+      required:
+        - limit
+        - offset
+        - total
+        - nextOffset
+      additionalProperties: false
+  responses:
+    Error:
+      description: OpenAI-shaped error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    ResponseIdPath:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: OpenResponses response id (resp_...)
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 50
+    Offset:
+      name: offset
+      in: query
+      required: false
+      schema:
+        type: integer
+        default: 0
+    CacheHeader:
+      name: x-unified-cache
+      in: header
+      required: false
+      schema:
+        type: string
+        enum:
+          - "true"
+          - "1"
+      description: Opt-in response cache (non-stream, no tools).
+    CacheTtlHeader:
+      name: x-unified-cache-ttl
+      in: header
+      required: false
+      schema:
+        type: integer
+      description: Cache TTL in seconds (default 300).
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: "Master key or virtual key. Admin requires the master key. Alternative: x-api-key header or ?api_key=."

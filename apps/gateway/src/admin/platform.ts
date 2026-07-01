@@ -105,7 +105,7 @@ function deploymentView(row: DeploymentRow) {
 	};
 }
 
-const createDeploymentSchema = z
+export const createDeploymentSchema = z
 	.object({
 		publicModel: z.string().min(1).max(200),
 		provider: z.string().min(1).max(80).optional(),
@@ -140,7 +140,7 @@ const resolveDeploymentSchema = z
 	})
 	.strict();
 
-const updateDeploymentSchema = z
+export const updateDeploymentSchema = z
 	.object({
 		publicModel: z.string().min(1).max(200).optional(),
 		upstreamModel: z.string().min(1).max(300).optional(),
