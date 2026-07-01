@@ -40,6 +40,7 @@
 		"test:integration": "bun scripts/run-integration.ts",
 		"test:all": "bun run test:unit && bun run test:integration",
 		"catalog:validate": "bun scripts/validate-catalog.ts",
+		"openapi:generate": "bun scripts/openapi-generate.ts",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",
 		"db:migrate": "bun src/db/migrate.ts"
@@ -67,6 +68,8 @@
 		"@types/busboy": "1.5.4",
 		"@types/node": "26.0.1",
 		"drizzle-kit": "0.31.10",
-		"typescript": "6.0.3"
+		"typescript": "6.0.3",
+		"yaml": "2.9.0",
+		"zod-openapi": "6.0.0"
 	}
 }
