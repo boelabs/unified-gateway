@@ -1104,6 +1104,8 @@ components:
         adapterKey: { type: string, description: "Explicit adapter; alternative to provider." }
         upstreamModel: { type: string, description: "Exact ID; preserves slash namespaces." }
         credentials: { type: object, additionalProperties: true, description: "Inline API key (e.g. { apiKey }). Encrypted; never returned." }
+        label: { type: [string, "null"], description: "Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label)." }
+        metadata: { type: object, additionalProperties: true, description: "Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim." }
         catalogEntry:
           allOf: [{ $ref: "#/components/schemas/CatalogEntry" }]
           description: "REQUIRED if the model is not in the catalog (custom); FORBIDDEN if it is. 1:1 entry with catalog.json."
@@ -1122,6 +1124,8 @@ components:
         publicModel: { type: string }
         upstreamModel: { type: string }
         credentials: { type: object, additionalProperties: true, description: "Credential patch; re-encrypted, never returned." }
+        label: { type: [string, "null"], description: "Human identifier; null clears it." }
+        metadata: { type: object, additionalProperties: true, description: "Replaces the stored metadata object." }
         catalogEntry: { oneOf: [{ $ref: "#/components/schemas/CatalogEntry" }, { type: "null" }] }
         pricing: { type: [object, "null"], additionalProperties: { type: number } }
         transportOverrides: { $ref: "#/components/schemas/TransportOverrides" }
