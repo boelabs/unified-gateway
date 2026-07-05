@@ -231,6 +231,15 @@ export async function listDeploymentsByPublicModel(
 	return db.select().from(modelDeployments).where(where);
 }
 
+/** All enabled deployments, used for public model discovery. */
+export async function listEnabledDeployments(): Promise<DeploymentRow[]> {
+	return db
+		.select()
+		.from(modelDeployments)
+		.where(eq(modelDeployments.enabled, true))
+		.orderBy(modelDeployments.createdAt);
+}
+
 /** Enabled public models, derived from public_model, with their oldest deployment. */
 export async function listPublicModels(): Promise<
 	Array<{ name: string; createdAt: Date }>
