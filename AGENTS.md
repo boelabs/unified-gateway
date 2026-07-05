@@ -7,9 +7,11 @@ reference.
 ## What this is
 
 Unified Gateway — a backend-only, provider-agnostic AI gateway. Public endpoints are OpenAI-shaped
-(`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`, `/v1/audio/transcriptions`,
-`/v1/models`) plus an Anthropic-compatible `/v1/messages`. Every request is translated through one
-canonical core and routed to provider adapters.
+(`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`, `/v1/audio/transcriptions`)
+plus an Anthropic-compatible `/v1/messages`. Model discovery (`/v1/models`,
+`/v1/models/{model}/deployments`) is deliberately **unauthenticated**, like other providers' public
+catalogs, and must never expose deployment labels, credentials, database ids, or upstream model ids.
+Every request is translated through one canonical core and routed to provider adapters.
 
 Monorepo — Turborepo on Bun workspaces:
 
@@ -29,11 +31,19 @@ Monorepo — Turborepo on Bun workspaces:
 | Unit tests | `bun run test` |
 
 Gateway-only scripts run with `bun run --filter @boelabs/unified-gateway <script>`: `dev`, `start`,
-`db:generate`, `db:migrate`, `test:integration`, `catalog:validate`.
+`db:generate`, `db:migrate`, `db:studio`, `test:integration`, `test:all`, `catalog:validate`,
+`catalog:sync[:verify]`, `openapi:generate`.
 
 **Before you finish a change**, run `bun run check`, `bun run typecheck`, and `bun run test`. If you
 touched the database, router, rate limiting, or admin endpoints, also run `test:integration` (needs a
 real Postgres + Redis).
+
+To run a **single test file**, plain `bun test <file>` fails with "Invalid environment variables"
+(anything importing `#config/env.ts` needs the test env). Use the preload, from `apps/gateway`:
+
+```bash
+bun test --preload ./tests/support/unitSetup.ts src/router/strategies.test.ts
+```
 
 ## Conventions
 
@@ -43,6 +53,13 @@ real Postgres + Redis).
 - **Formatting/lint:** Biome is the single source of truth (tabs, double quotes). Don't hand-format;
   run `bun run format`. `organizeImports` is intentionally **off** — import order is owned by
   `scripts/sort-imports.ts` (folded into `bun run format`), which sorts by length, descending.
+  Biome also formats **JSON**, including every `catalog.json` — if you edit those by hand or with a
+  script, run `bun run check` before finishing (CI runs it with `--error-on-warnings`; serializer
+  output like multi-line short arrays will fail the gate even when the data is correct).
+- **`apps/gateway/openapi.yaml` is generated, never hand-edited.** It comes from the Zod schemas in
+  `src/openapi/` via `openapi:generate`, and a unit test fails when the committed file drifts from the
+  generator. If you touch `src/openapi/components.ts`/`document.ts` — or any Zod schema they re-export —
+  regenerate and commit the YAML in the same change.
 - **Types are strict** (`packages/tsconfig/base.json`: `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, …). Do not weaken the config; fix the types.
 - **Commits:** clear, imperative mood. Conventional Commit prefixes are welcome but not required.
@@ -52,13 +69,20 @@ real Postgres + Redis).
 ```
 contracts/  → public request/response shapes (OpenAI, Anthropic)
 core/       → provider-agnostic canonical hub (the "unified" format)
-adapters/   → upstream provider protocols
-endpoints/  → HTTP handlers
+adapters/   → upstream provider protocols (one dir per provider, each with its catalog.json)
+endpoints/  → HTTP handlers (+ endpoints/runtime/ for shared per-request plumbing)
 ```
 
 Adapters translate **to/from** the canonical format and must **never leak provider-specific fields
 into `core`**. The canonical vocabulary is fixed — see the
 [glossary](apps/docs/content/docs/glossary.mdx).
+
+The request path for chat is: endpoint → canonical request → `router/` picks a deployment (strategy,
+cooldowns, fallbacks; per-deployment latency/throughput state lives in `router/state.ts`) → `gateway/`
+executes against the adapter. Model metadata (capabilities, limits, reasoning spec, pricing) resolves
+from `catalog/` + `profiles/`, and per-parameter support is enforced by
+`endpoints/runtime/parameterPolicy.ts` according to the operator's `unsupportedParameterStrategy`
+(`drop`/`error`/`allow`).
 
 ## Database & migrations (Drizzle)
 
@@ -85,6 +109,11 @@ A new provider touches **four** files: the adapter `index.ts`, its `catalog.json
 (forgetting the last means CI never validates the new catalog). Full step-by-step:
 [model catalog → Adding catalog entries](apps/docs/content/docs/model-catalog.mdx#adding-catalog-entries).
 
+Catalog entries are **deliberately minimal**: only `operations` and `pricing` (what the runtime
+consumes) plus `deprecated`, `notes`, and `needsHumanReview`. The loader rejects anything else as an
+unknown field — do not add descriptive metadata (names, lifecycle dates, modalities lists, provenance);
+it was removed on purpose.
+
 ### Catalog sync
 
 `apps/gateway/src/catalog/sync/` (CLI: `scripts/catalog-sync.ts`, `bun run catalog:sync[:verify]`) is a
@@ -103,6 +132,20 @@ Reasoning specs are a special case: no source can express *how* a model controls
 has a non-empty `needsHumanReview` — verify the draft against the provider's actual docs and clear the
 marker before merging. Hand-edited catalog entries never carry this marker, so manual catalog work is
 unaffected.
+
+## Pull requests & CI
+
+- `main` is **branch-protected**: nothing lands without the required CI checks passing (lint/typecheck/
+  unit, integration tests, container image build). Auto-merge is disabled and admin bypass is off-limits
+  — push, open the PR, wait for `mergeStateStatus: CLEAN`, then squash-merge.
+- PRs are **squash-merged**, one feature per PR. If your working tree mixes features, split it into
+  separate branches before opening anything.
+- CI's lint gate is exactly `bun run check` from the repo root — same flags, **whole repo**. Don't
+  substitute a path-scoped `biome check <paths>` limited to the files you edited: the gate also covers
+  files your change regenerated or serialized (e.g. `catalog.json`), and those are the ones that fail
+  in CI after passing your local spot-check.
+- Keep unrelated formatter churn out of PRs: `bun run format` may reorder imports in files you didn't
+  touch (pre-existing drift); restore those from the base branch to keep the diff focused.
 
 ## Things that will bite you
 
