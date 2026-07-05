@@ -382,9 +382,6 @@ export const OperationProfiles = z
 
 export const CatalogEntry = loose(
 	{
-		id: z.string().optional(),
-		name: z.string().optional(),
-		family: z.string().optional(),
 		operations: OperationProfiles,
 	},
 	{ id: "CatalogEntry" },

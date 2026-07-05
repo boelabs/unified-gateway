@@ -332,35 +332,13 @@ export const operationProfilesSchema = z
 		{ message: "At least one operation profile is required" },
 	);
 
-const lifecycleSchema = z
-	.object({
-		status: z
-			.enum(["active", "preview", "deprecated", "retired", "limited"])
-			.optional(),
-		releaseDate: z.string().optional(),
-		lastUpdated: z.string().optional(),
-		deprecationDate: z.string().optional(),
-		retirementDate: z.string().optional(),
-	})
-	.strict();
-
+// Mirrors CatalogEntry (src/catalog/types.ts): only data the gateway consumes plus human-facing flags.
 const catalogEntrySchema = z
 	.object({
-		id: z.string().min(1).optional(),
-		name: z.string().min(1).optional(),
-		family: z.string().min(1).optional(),
-		aliases: z.array(z.string().min(1)).optional(),
-		openWeights: z.boolean().optional(),
 		deprecated: z.boolean().optional(),
-		lifecycle: lifecycleSchema.optional(),
-		knowledge: z.string().min(1).optional(),
-		modalities: modalitiesSchema.optional(),
 		operations: operationProfilesSchema,
 		pricing: pricingSchema.optional(),
-		sources: z.array(z.string().min(1)).optional(),
-		lastVerifiedAt: z.string().min(1).optional(),
 		notes: z.string().min(1).optional(),
-		metadata: z.record(z.string(), z.unknown()).optional(),
 	})
 	.strict();
 

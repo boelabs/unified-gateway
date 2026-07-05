@@ -36,48 +36,17 @@
 			"type": "object",
 			"additionalProperties": false,
 			"required": ["operations"],
+			"description": "Deliberately minimal: only data the gateway consumes (operations/pricing) plus human-facing flags.",
 			"properties": {
-				"id": {
-					"type": "string",
-					"description": "Optional duplicate of the models-map key; if present it must match the key."
-				},
-				"name": { "type": "string" },
-				"family": { "type": "string" },
-				"aliases": {
-					"type": "array",
-					"items": { "type": "string" },
-					"uniqueItems": true
-				},
-				"openWeights": { "type": "boolean" },
 				"deprecated": { "type": "boolean" },
-				"lifecycle": { "$ref": "#/$defs/lifecycle" },
-				"knowledge": {
-					"type": "string",
-					"description": "Knowledge cutoff, usually YYYY-MM-DD or YYYY-MM."
-				},
-				"modalities": { "$ref": "#/$defs/modalities" },
 				"operations": { "$ref": "#/$defs/operationProfiles" },
 				"pricing": { "$ref": "#/$defs/pricing" },
-				"sources": {
-					"type": "array",
-					"items": { "type": "string", "format": "uri" }
-				},
-				"lastVerifiedAt": { "type": "string", "format": "date" },
 				"notes": { "type": "string" },
-				"metadata": { "type": "object", "additionalProperties": true }
-			}
-		},
-		"lifecycle": {
-			"type": "object",
-			"additionalProperties": false,
-			"properties": {
-				"status": {
-					"enum": ["active", "preview", "deprecated", "retired", "limited"]
-				},
-				"releaseDate": { "type": "string", "format": "date" },
-				"lastUpdated": { "type": "string", "format": "date" },
-				"deprecationDate": { "type": "string", "format": "date" },
-				"retirementDate": { "type": "string", "format": "date" }
+				"needsHumanReview": {
+					"type": "array",
+					"items": { "type": "string" },
+					"description": "Dot-paths auto-drafted by the catalog sync; catalog:validate fails while non-empty."
+				}
 			}
 		},
 		"modalities": {

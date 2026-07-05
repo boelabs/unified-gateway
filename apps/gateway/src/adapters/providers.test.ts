@@ -82,7 +82,7 @@ test("catalog: DeepSeek-V4 includes official pricing and native thinking/effort"
 	assert.equal(flash.pricing?.inputCentsPerMTokens, 14);
 	assert.equal(flash.pricing?.cacheReadCentsPerMTokens, 0.28);
 	assert.equal(flash.pricing?.outputCentsPerMTokens, 28);
-	assert.equal(flash.maxOutputTokens, 393216);
+	assert.equal(flash.maxOutputTokens, 384000);
 	assert.equal(flash.capabilities.structuredOutputs, false);
 	assert.equal(flash.reasoning?.kind, "openai_body");
 	assert.deepEqual(
@@ -127,7 +127,7 @@ test("catalog: Kimi K2.6/K2.7 model native thinking", () => {
 	const k26 = resolveModelMetadata("moonshot", "kimi-k2.6");
 	const k27 = resolveModelMetadata("moonshot", "kimi-k2.7-code");
 	assert.equal(k26.capabilities.structuredOutputs, true);
-	assert.equal(k26.maxOutputTokens, 32768);
+	assert.equal(k26.maxOutputTokens, 262144);
 	assert.equal(k26.reasoning?.kind, "openai_body");
 	assert.equal(k27.reasoning?.kind, "fixed");
 	assert.equal(k27.reasoning?.levels.includes("none"), false);

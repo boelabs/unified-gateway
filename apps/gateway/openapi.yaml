@@ -1587,12 +1587,6 @@ components:
     CatalogEntry:
       type: object
       properties:
-        id:
-          type: string
-        name:
-          type: string
-        family:
-          type: string
         operations:
           $ref: "#/components/schemas/OperationProfiles"
       required:

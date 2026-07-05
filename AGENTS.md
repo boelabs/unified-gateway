@@ -85,6 +85,25 @@ A new provider touches **four** files: the adapter `index.ts`, its `catalog.json
 (forgetting the last means CI never validates the new catalog). Full step-by-step:
 [model catalog → Adding catalog entries](apps/docs/content/docs/model-catalog.mdx#adding-catalog-entries).
 
+### Catalog sync
+
+`apps/gateway/src/catalog/sync/` (CLI: `scripts/catalog-sync.ts`, `bun run catalog:sync[:verify]`) is a
+**local, report-only** tool — it never writes to any `catalog.json`, and it deliberately has no CI
+workflow or automation. It cross-references Vercel AI Gateway and OpenRouter (plus models.dev for
+enrichment) and writes `apps/gateway/.source/catalog-sync/REPORT.md` + `report.json` (gitignored) with:
+drafted entries for new models (ready to review and paste), stale pricing/context/limit essentials on
+existing entries, models no longer listed upstream (deprecation candidates), and numeric conflicts
+between sources. A human applies whatever they agree with by hand; `operations` details and everything
+beyond the essentials are always human work. `--mode verify` exits non-zero if the report is non-empty
+(a local drift check).
+
+Reasoning specs are a special case: no source can express *how* a model controls reasoning
+(`ReasoningSpec.kind`/`levels`/`budgets`), so drafts built from models.dev's `reasoning_options` carry
+`needsHumanReview: [...]` on the entry. `scripts/validate-catalog.ts` **fails the build** while any entry
+has a non-empty `needsHumanReview` — verify the draft against the provider's actual docs and clear the
+marker before merging. Hand-edited catalog entries never carry this marker, so manual catalog work is
+unaffected.
+
 ## Things that will bite you
 
 - **Bun's TLS rejects self-signed Postgres/Redis certificates** (e.g. databases exposed by a raw

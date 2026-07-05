@@ -15,50 +15,20 @@ import type { CallType } from "#core/callType.ts";
  * The DB pricing can override these defaults (see resolveModelMetadata).
  */
 export interface CatalogEntry {
-	/** Optional: if declared in JSON it must match the key of the `models` map. */
-	id?: string;
-	name?: string;
-	family?: string;
-	aliases?: string[];
-	openWeights?: boolean;
-	knowledge?: string;
-	lifecycle?: {
-		status?: "active" | "preview" | "deprecated" | "retired" | "limited";
-		releaseDate?: string;
-		lastUpdated?: string;
-		deprecationDate?: string;
-		retirementDate?: string;
-	};
-	modalities?: {
-		input?: Array<
-			| "text"
-			| "image"
-			| "audio"
-			| "video"
-			| "pdf"
-			| "file"
-			| "embedding"
-			| "moderation"
-		>;
-		output?: Array<
-			| "text"
-			| "image"
-			| "audio"
-			| "video"
-			| "pdf"
-			| "file"
-			| "embedding"
-			| "moderation"
-		>;
-	};
-	sources?: string[];
-	lastVerifiedAt?: string;
+	/** Free-form human notes (e.g. why a model is deprecated, review reminders). */
 	notes?: string;
-	metadata?: Record<string, unknown>;
 	operations: OperationProfiles;
 	pricing?: RuntimeModelMetadata["pricing"];
 	/** Flagged as not recommended (does not affect behavior). */
 	deprecated?: boolean;
+	/**
+	 * Dot-paths (e.g. "operations.text.generate.reasoning") the catalog sync auto-drafted from a source
+	 * that can't express our exact schema (currently: reasoning specs from models.dev's `reasoning_options`).
+	 * `scripts/validate-catalog.ts` fails the build while this is non-empty, so a drafted field can't reach
+	 * production unreviewed. Never set by hand - a human clears it once they've verified the field against
+	 * the provider's docs.
+	 */
+	needsHumanReview?: string[];
 }
 
 /**
