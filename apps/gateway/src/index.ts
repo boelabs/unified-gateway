@@ -16,7 +16,6 @@ import {
 
 import "./adapters/index.ts"; // registers the adapters (side-effect)
 
-import { listModelsHandler, retrieveModelHandler } from "./endpoints/models.ts";
 import { startRequestLogPartitionJob } from "./db/requestLogPartitions.ts";
 import { startResponseStateGcJob } from "./db/repos/responseStates.ts";
 import { requestContextMiddleware } from "./http/requestContext.ts";
@@ -47,6 +46,11 @@ import {
 	imageGenerationsHandler,
 	imageEditsHandler,
 } from "./endpoints/images.ts";
+
+import {
+	modelsWildcardHandler,
+	listModelsHandler,
+} from "./endpoints/models.ts";
 
 startTelemetry();
 try {
@@ -170,6 +174,10 @@ async function readiness(c: Context) {
 app.get("/health/ready", readiness);
 app.get("/health", readiness);
 
+// Public model discovery. Intentionally unauthenticated, like OpenAI/OpenRouter model catalogs.
+app.get("/v1/models", listModelsHandler);
+app.get("/v1/models/*", modelsWildcardHandler);
+
 // Admin (CRUD of models and keys) - requires the master key (middleware inside adminApp).
 app.route("/admin", adminApp);
 
@@ -185,8 +193,6 @@ app.post("/v1/images/generations", imageGenerationsHandler);
 app.post("/v1/images/edits", imageEditsHandler);
 app.post("/v1/audio/transcriptions", transcriptionsHandler);
 app.post("/v1/embeddings", embeddingsHandler);
-app.get("/v1/models", listModelsHandler);
-app.get("/v1/models/:model", retrieveModelHandler);
 
 const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 	log.info("server", "listening", { port: info.port, env: env.NODE_ENV });

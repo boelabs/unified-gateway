@@ -507,8 +507,19 @@ export const RouterSettings = z
 				"least-busy",
 				"usage-based-tpm",
 				"usage-based-rpm",
+				"latency-based",
+				"throughput-based",
+				"price-based",
+				"health-aware",
 			])
 			.optional(),
+		unsupportedParameterStrategy: z
+			.enum(["drop", "error", "allow"])
+			.optional()
+			.meta({
+				description:
+					"How the router handles parameters explicitly marked unsupported by the selected deployment profile.",
+			}),
 		allowedFails: z.int().min(0).optional().meta({
 			description:
 				"Accumulated failures that trigger cooldown for a deployment.",

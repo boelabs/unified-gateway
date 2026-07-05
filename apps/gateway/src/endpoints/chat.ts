@@ -1,13 +1,12 @@
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
+import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
-import { executeChat } from "#gateway/executor.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
 import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
-import { route } from "#router/index.ts";
 import type { Context } from "hono";
 
 import {
@@ -29,6 +28,17 @@ import {
 	chatRequestSchema,
 	toOpenAIChatChunk,
 } from "#contracts/openai/chat.ts";
+
+import {
+	routingMetadataRequested,
+	publicRoutingMetadata,
+	attachRoutingMetadata,
+} from "./runtime/routingMetadata.ts";
+
+import {
+	parameterPolicyLogMetadata,
+	routeChat,
+} from "./runtime/parameterPolicy.ts";
 
 /** POST /v1/chat/completions - exact OpenAI contract, stream and non-stream, with logging. */
 export async function chatCompletionsHandler(
@@ -57,11 +67,12 @@ export async function chatCompletionsHandler(
 		});
 		if (cache.hit) return c.json(cache.body as object);
 
-		const routing = await route(
-			canonical.model,
-			"chat",
-			{ clientSignal: c.req.raw.signal, requestId: log.requestId },
-			(cand, ctx) => executeChat(cand.adapter, canonical, ctx),
+		const settings = await getEffectiveSettings();
+		const { routing, parameterPolicy } = await routeChat(
+			c,
+			canonical,
+			log.requestId,
+			settings,
 		);
 		log.applyRouting(routing);
 		const upstreamStartedAt = routing.upstreamStartedAt;
@@ -72,6 +83,14 @@ export async function chatCompletionsHandler(
 			meta.capabilities.reasoning ? meta.reasoning : undefined,
 		);
 		if (reasoning) metadata.reasoning = reasoning;
+		const parameterMetadata = parameterPolicyLogMetadata(
+			parameterPolicy,
+			settings.unsupportedParameterStrategy,
+		);
+		if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+		const routingMetadata = routingMetadataRequested(c)
+			? publicRoutingMetadata(routing, settings)
+			: null;
 
 		if (routing.value.kind === "json") {
 			// no-stream: the response arrives complete -> the "first token" is the whole response.
@@ -84,8 +103,12 @@ export async function chatCompletionsHandler(
 			);
 			await routing.finish(response.usage);
 			const cost = accountUsage(c, meta, response.usage);
-			const oa = toOpenAIChatResponse(response);
-			cache.store(oa, response.usage);
+			const baseResponse = toOpenAIChatResponse(response);
+			cache.store(baseResponse, response.usage);
+			const oa = attachRoutingMetadata(
+				baseResponse as unknown as Record<string, unknown>,
+				routingMetadata,
+			);
 			log.write({
 				status: "success",
 				httpStatus: 200,
@@ -100,9 +123,16 @@ export async function chatCompletionsHandler(
 		}
 
 		let firstTokenAt: number | null = null;
-		const chunks = tapFirstToken(routing.value.chunks, (at) => {
-			firstTokenAt = at;
-		});
+		let lastChunkAt: number | null = null;
+		const chunks = tapFirstToken(
+			routing.value.chunks,
+			(at) => {
+				firstTokenAt = at;
+			},
+			(at) => {
+				lastChunkAt = at;
+			},
+		);
 		return streamSSE(c, async (stream) => {
 			let finalUsage: Usage | null = null;
 			let content = "";
@@ -130,6 +160,18 @@ export async function chatCompletionsHandler(
 						data: JSON.stringify(toOpenAIChatChunk(out)),
 					});
 				}
+				if (routingMetadata) {
+					await stream.writeSSE({
+						data: JSON.stringify({
+							id: `chatcmpl-${log.requestId}`,
+							object: "chat.completion.chunk",
+							created: Math.floor(Date.now() / 1000),
+							model: routing.candidate.row.publicModel,
+							choices: [],
+							unified_routing: routingMetadata,
+						}),
+					});
+				}
 				await stream.writeSSE({ data: "[DONE]" });
 			} catch (err) {
 				streamError = GatewayError.is(err)
@@ -144,7 +186,7 @@ export async function chatCompletionsHandler(
 			} finally {
 				if (firstTokenAt !== null)
 					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(finalUsage);
+				await routing.finish(finalUsage, lastChunkAt ?? undefined);
 				const cost = accountUsage(c, meta, finalUsage);
 				log.write({
 					status: streamError ? "error" : "success",
