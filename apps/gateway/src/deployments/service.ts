@@ -80,16 +80,8 @@ export interface DeploymentPreview {
 
 function validateCustomCatalogEntry(
 	adapter: NonNullable<ReturnType<typeof getAdapter>>,
-	upstreamModel: string,
 	entry: CatalogEntry,
 ): void {
-	if (entry.id !== undefined && entry.id !== upstreamModel) {
-		throw new GatewayError({
-			class: "bad_request",
-			message: `catalogEntry.id must match upstreamModel "${upstreamModel}"`,
-			param: "catalogEntry.id",
-		});
-	}
 	const kind = entry.operations["text.generate"]?.reasoning?.kind;
 	if (kind && adapter.reasoningKinds && !adapter.reasoningKinds.has(kind)) {
 		throw new GatewayError({
@@ -183,12 +175,7 @@ export async function previewDeployment(
 			param: "catalogEntry",
 		});
 	}
-	if (!inCatalog)
-		validateCustomCatalogEntry(
-			adapter,
-			input.upstreamModel,
-			input.catalogEntry!,
-		);
+	if (!inCatalog) validateCustomCatalogEntry(adapter, input.catalogEntry!);
 	const effective = resolveModelMetadata(
 		input.adapterKey,
 		input.upstreamModel,

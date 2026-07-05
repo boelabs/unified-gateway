@@ -16,12 +16,6 @@
 	},
 	"models": {
 		"kimi-k2.7-code": {
-			"name": "Kimi K2.7 Code",
-			"family": "kimi-k2.7-code",
-			"modalities": {
-				"input": ["text", "image", "video"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -57,7 +51,21 @@
 							"mode": "supported",
 							"values": ["auto", "none"],
 							"notes": "Thinking mode only supports auto or none."
-						}
+						},
+						"frequency_penalty": true,
+						"include_reasoning": true,
+						"max_tokens": true,
+						"presence_penalty": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"structured_outputs": true,
+						"tools": true,
+						"repetition_penalty": true,
+						"top_k": true,
+						"seed": true,
+						"min_p": true,
+						"logit_bias": true
 					}
 				}
 			},
@@ -65,39 +73,9 @@
 				"inputCentsPerMTokens": 95,
 				"outputCentsPerMTokens": 400,
 				"cacheReadCentsPerMTokens": 19
-			},
-			"sources": [
-				"https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart.md",
-				"https://platform.kimi.ai/docs/api/chat.md",
-				"https://platform.kimi.ai/docs/pricing/chat-k27-code.md"
-			],
-			"lastVerifiedAt": "2026-06-24",
-			"metadata": {
-				"supportedImageFormats": ["png", "jpeg", "webp", "gif"],
-				"supportedVideoFormats": [
-					"mp4",
-					"mpeg",
-					"mov",
-					"avi",
-					"x-flv",
-					"mpg",
-					"webm",
-					"wmv",
-					"3gpp"
-				],
-				"recommendedMaxImageResolution": "4096x2160",
-				"recommendedMaxVideoResolution": "1920x1080",
-				"maxRequestBodyBytes": 100000000,
-				"preservedThinking": "always"
 			}
 		},
 		"kimi-k2.7-code-highspeed": {
-			"name": "Kimi K2.7 Code HighSpeed",
-			"family": "kimi-k2.7-code",
-			"modalities": {
-				"input": ["text", "image", "video"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -131,7 +109,12 @@
 						"tool_choice": {
 							"mode": "supported",
 							"values": ["auto", "none"]
-						}
+						},
+						"max_tokens": true,
+						"stop": true,
+						"tools": true,
+						"reasoning": true,
+						"include_reasoning": true
 					}
 				}
 			},
@@ -139,39 +122,9 @@
 				"inputCentsPerMTokens": 190,
 				"outputCentsPerMTokens": 800,
 				"cacheReadCentsPerMTokens": 38
-			},
-			"sources": [
-				"https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart.md",
-				"https://platform.kimi.ai/docs/api/chat.md",
-				"https://platform.kimi.ai/docs/pricing/chat-k27-code.md"
-			],
-			"lastVerifiedAt": "2026-06-24",
-			"metadata": {
-				"supportedImageFormats": ["png", "jpeg", "webp", "gif"],
-				"supportedVideoFormats": [
-					"mp4",
-					"mpeg",
-					"mov",
-					"avi",
-					"x-flv",
-					"mpg",
-					"webm",
-					"wmv",
-					"3gpp"
-				],
-				"recommendedMaxImageResolution": "4096x2160",
-				"recommendedMaxVideoResolution": "1920x1080",
-				"maxRequestBodyBytes": 100000000,
-				"preservedThinking": "always"
 			}
 		},
 		"kimi-k2.6": {
-			"name": "Kimi K2.6",
-			"family": "kimi-k2.6",
-			"modalities": {
-				"input": ["text", "image", "video"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -181,7 +134,7 @@
 						"structuredOutputs": true
 					},
 					"maxInputTokens": 262144,
-					"maxOutputTokens": 32768,
+					"maxOutputTokens": 262144,
 					"reasoning": {
 						"kind": "openai_body",
 						"levels": ["none", "high"],
@@ -215,7 +168,18 @@
 							"mode": "supported",
 							"values": ["auto", "none"],
 							"notes": "With thinking enabled, tool_choice is limited to auto or none."
-						}
+						},
+						"frequency_penalty": true,
+						"include_reasoning": true,
+						"max_tokens": true,
+						"presence_penalty": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"structured_outputs": true,
+						"tools": true,
+						"logprobs": true,
+						"top_logprobs": true
 					}
 				}
 			},
@@ -223,39 +187,9 @@
 				"inputCentsPerMTokens": 95,
 				"outputCentsPerMTokens": 400,
 				"cacheReadCentsPerMTokens": 16
-			},
-			"sources": [
-				"https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart.md",
-				"https://platform.kimi.ai/docs/api/chat.md",
-				"https://platform.kimi.ai/docs/pricing/chat-k26.md"
-			],
-			"lastVerifiedAt": "2026-06-24",
-			"metadata": {
-				"supportedImageFormats": ["png", "jpeg", "webp", "gif"],
-				"supportedVideoFormats": [
-					"mp4",
-					"mpeg",
-					"mov",
-					"avi",
-					"x-flv",
-					"mpg",
-					"webm",
-					"wmv",
-					"3gpp"
-				],
-				"recommendedMaxImageResolution": "4096x2160",
-				"recommendedMaxVideoResolution": "1920x1080",
-				"maxRequestBodyBytes": 100000000,
-				"preservedThinking": "optional"
 			}
 		},
 		"kimi-k2.5": {
-			"name": "Kimi K2.5",
-			"family": "kimi-k2.5",
-			"modalities": {
-				"input": ["text", "image", "video"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -285,7 +219,21 @@
 							"mode": "supported",
 							"upstreamField": "thinking",
 							"values": ["enabled", "disabled"]
-						}
+						},
+						"frequency_penalty": true,
+						"include_reasoning": true,
+						"max_tokens": true,
+						"presence_penalty": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"temperature": true,
+						"top_p": true,
+						"logprobs": true,
+						"top_logprobs": true
 					}
 				}
 			},
@@ -293,12 +241,7 @@
 				"inputCentsPerMTokens": 60,
 				"outputCentsPerMTokens": 300,
 				"cacheReadCentsPerMTokens": 10
-			},
-			"sources": [
-				"https://platform.kimi.ai/docs/api/chat.md",
-				"https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart.md"
-			],
-			"lastVerifiedAt": "2026-06-24"
+			}
 		},
 		"kimi-latest": {
 			"operations": {
@@ -313,6 +256,66 @@
 					"maxOutputTokens": 16384
 				}
 			}
+		},
+		"kimi-k2": {
+			"operations": {
+				"text.generate": {
+					"maxInputTokens": 131072,
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"stop": true,
+						"tools": true,
+						"tool_choice": true,
+						"top_p": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"seed": true,
+						"top_k": true,
+						"repetition_penalty": true
+					},
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"structuredOutputs": false
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 57,
+				"outputCentsPerMTokens": 230
+			}
+		},
+		"kimi-k2-thinking": {
+			"operations": {
+				"text.generate": {
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"stop": true,
+						"tools": true,
+						"tool_choice": true,
+						"reasoning": true,
+						"include_reasoning": true,
+						"top_p": true,
+						"top_k": true,
+						"min_p": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"repetition_penalty": true,
+						"seed": true,
+						"logit_bias": true,
+						"response_format": true,
+						"structured_outputs": true
+					},
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"structuredOutputs": true
+					}
+				}
+			},
+			"pricing": {}
 		}
 	}
 }

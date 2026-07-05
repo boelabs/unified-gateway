@@ -40,6 +40,8 @@
 		"test:integration": "bun scripts/run-integration.ts",
 		"test:all": "bun run test:unit && bun run test:integration",
 		"catalog:validate": "bun scripts/validate-catalog.ts",
+		"catalog:sync": "bun scripts/catalog-sync.ts",
+		"catalog:sync:verify": "bun scripts/catalog-sync.ts --mode verify",
 		"openapi:generate": "bun scripts/openapi-generate.ts",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",

@@ -17,13 +17,6 @@
 	},
 	"models": {
 		"glm-5.2": {
-			"name": "GLM-5.2",
-			"family": "glm-5",
-			"openWeights": true,
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -73,29 +66,35 @@
 								"none"
 							],
 							"notes": "Z.AI maps low/medium to high, xhigh to max, and none/minimal skip thinking."
-						}
+						},
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"repetition_penalty": true,
+						"seed": true,
+						"min_p": true,
+						"logit_bias": true,
+						"structured_outputs": true
 					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 140,
 				"outputCentsPerMTokens": 440,
-				"cacheReadCentsPerMTokens": 26
-			},
-			"sources": [
-				"https://docs.z.ai/guides/llm/glm-5.2.md",
-				"https://docs.z.ai/guides/overview/concept-param.md"
-			],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 26,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-5.1": {
-			"name": "GLM-5.1",
-			"family": "glm-5",
-			"openWeights": true,
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -119,28 +118,32 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"structured_outputs": true,
+						"logprobs": true,
+						"top_logprobs": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 140,
 				"outputCentsPerMTokens": 440,
-				"cacheReadCentsPerMTokens": 26
-			},
-			"sources": [
-				"https://docs.z.ai/guides/llm/glm-5.1.md",
-				"https://docs.z.ai/guides/overview/concept-param.md"
-			],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 26,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-5": {
-			"name": "GLM-5",
-			"family": "glm-5",
-			"openWeights": true,
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -164,27 +167,31 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"seed": true,
+						"structured_outputs": true,
+						"response_format": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 100,
 				"outputCentsPerMTokens": 320,
-				"cacheReadCentsPerMTokens": 20
-			},
-			"sources": [
-				"https://docs.z.ai/guides/llm/glm-5.md",
-				"https://docs.z.ai/guides/overview/concept-param.md"
-			],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 20,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-5-turbo": {
-			"name": "GLM-5 Turbo",
-			"family": "glm-5",
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -208,24 +215,29 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 120,
 				"outputCentsPerMTokens": 400,
-				"cacheReadCentsPerMTokens": 24
-			},
-			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 24,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-5v-turbo": {
-			"name": "GLM-5V Turbo",
-			"family": "glm-5v",
-			"modalities": {
-				"input": ["text", "image"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -234,7 +246,7 @@
 						"reasoning": true,
 						"structuredOutputs": true
 					},
-					"maxInputTokens": 65536,
+					"maxInputTokens": 200000,
 					"maxOutputTokens": 131072,
 					"reasoning": {
 						"kind": "openai_body",
@@ -249,25 +261,29 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 120,
 				"outputCentsPerMTokens": 400,
-				"cacheReadCentsPerMTokens": 24
-			},
-			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 24,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-4.7": {
-			"name": "GLM-4.7",
-			"family": "glm-4.7",
-			"openWeights": true,
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -291,28 +307,36 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"repetition_penalty": true,
+						"seed": true,
+						"min_p": true,
+						"structured_outputs": true,
+						"logit_bias": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 60,
 				"outputCentsPerMTokens": 220,
-				"cacheReadCentsPerMTokens": 11
-			},
-			"sources": [
-				"https://docs.z.ai/guides/llm/glm-4.7.md",
-				"https://docs.z.ai/guides/overview/concept-param.md"
-			],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 11,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-4.6": {
-			"name": "GLM-4.6",
-			"family": "glm-4.6",
-			"openWeights": true,
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -336,27 +360,35 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"repetition_penalty": true,
+						"seed": true,
+						"min_p": true,
+						"response_format": true,
+						"logit_bias": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 60,
 				"outputCentsPerMTokens": 220,
-				"cacheReadCentsPerMTokens": 11
-			},
-			"sources": [
-				"https://docs.z.ai/guides/llm/glm-4.6.md",
-				"https://docs.z.ai/guides/overview/concept-param.md"
-			],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 11,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-4.6v": {
-			"name": "GLM-4.6V",
-			"family": "glm-4.6v",
-			"modalities": {
-				"input": ["text", "image"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -365,7 +397,7 @@
 						"reasoning": true,
 						"structuredOutputs": false
 					},
-					"maxInputTokens": 65536,
+					"maxInputTokens": 128000,
 					"maxOutputTokens": 32768,
 					"reasoning": {
 						"kind": "openai_body",
@@ -380,21 +412,32 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"seed": true,
+						"repetition_penalty": true,
+						"response_format": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 30,
 				"outputCentsPerMTokens": 90,
 				"cacheReadCentsPerMTokens": 5
-			},
-			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
-			"lastVerifiedAt": "2026-06-24"
+			}
 		},
 		"glm-4.5": {
-			"name": "GLM-4.5",
-			"family": "glm-4.5",
-			"openWeights": true,
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -418,20 +461,29 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 60,
 				"outputCentsPerMTokens": 220,
-				"cacheReadCentsPerMTokens": 11
-			},
-			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
-			"lastVerifiedAt": "2026-06-24"
+				"cacheReadCentsPerMTokens": 11,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		},
 		"glm-4.5-air": {
-			"name": "GLM-4.5 Air",
-			"family": "glm-4.5",
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -455,16 +507,115 @@
 							}
 						}
 					},
-					"contracts": ["chat.completions"]
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"seed": true,
+						"repetition_penalty": true
+					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 20,
 				"outputCentsPerMTokens": 110,
-				"cacheReadCentsPerMTokens": 3
+				"cacheReadCentsPerMTokens": 3,
+				"cacheWriteCentsPerMTokens": 0
+			}
+		},
+		"glm-4.5v": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 65536,
+					"maxOutputTokens": 16384,
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_k": true,
+						"top_p": true,
+						"stop": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"seed": true,
+						"repetition_penalty": true
+					}
+				}
 			},
-			"sources": ["https://docs.z.ai/guides/overview/concept-param.md"],
-			"lastVerifiedAt": "2026-06-24"
+			"pricing": {
+				"inputCentsPerMTokens": 60,
+				"outputCentsPerMTokens": 180,
+				"cacheReadCentsPerMTokens": 11
+			}
+		},
+		"glm-4.7-flash": {
+			"operations": {
+				"text.generate": {
+					"maxInputTokens": 200000,
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"stop": true,
+						"tools": true,
+						"tool_choice": true,
+						"reasoning": true,
+						"include_reasoning": true,
+						"top_p": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"repetition_penalty": true,
+						"top_k": true,
+						"seed": true,
+						"min_p": true,
+						"response_format": true,
+						"structured_outputs": true,
+						"logit_bias": true
+					},
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "openai_body",
+						"levels": ["none", "high"],
+						"bodyField": {
+							"param": "thinking",
+							"onValue": {
+								"type": "enabled"
+							},
+							"offValue": {
+								"type": "disabled"
+							}
+						}
+					}
+				}
+			},
+			"pricing": {
+				"outputCentsPerMTokens": 40,
+				"cacheReadCentsPerMTokens": 1,
+				"cacheWriteCentsPerMTokens": 0
+			}
 		}
 	}
 }

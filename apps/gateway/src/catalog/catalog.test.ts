@@ -131,15 +131,15 @@ test("Azure OpenAI and Azure Foundry keep their own catalogs", () => {
 });
 
 test("catalog does not match deprecated sibling variants by loose prefix", () => {
-	assert.equal(getCatalogEntry("openai", "gpt-5.3-chat"), undefined);
-	assert.equal(getCatalogEntry("openai", "gpt-5.2-codex"), undefined);
-	assert.equal(getCatalogEntry("openai", "gpt-4.1-nano"), undefined);
+	assert.equal(getCatalogEntry("openai", "gpt-5.3-chat-mini"), undefined);
+	assert.equal(getCatalogEntry("openai", "gpt-5.2-codex-legacy"), undefined);
+	assert.equal(getCatalogEntry("openai", "gpt-4.1-ultra"), undefined);
 	assert.equal(
-		getCatalogEntry("googleaistudio", "gemini-3-pro-preview"),
+		getCatalogEntry("googleaistudio", "gemini-3-pro-preview-legacy"),
 		undefined,
 	);
 	assert.equal(
-		getCatalogEntry("googleaistudio", "gemini-3.1-flash-lite-preview"),
+		getCatalogEntry("googleaistudio", "gemini-3.1-flash-lite-preview-legacy"),
 		undefined,
 	);
 	assert.equal(
@@ -197,7 +197,7 @@ test("resolved model metadata exposes limits and reasoning defaults from catalog
 	assert.deepEqual(azureEmbedding.supportedCallTypes, ["embeddings"]);
 	assert.equal(azureEmbedding.embedding?.dimensions, 3072);
 	assert.equal(azureEmbedding.embedding?.supportsDimensions, true);
-	assert.equal(azureEmbedding.pricing?.inputCentsPerMTokens, 14.3);
+	assert.equal(azureEmbedding.pricing?.inputCentsPerMTokens, 13);
 
 	const gpt41 = resolveModelMetadata("openai", "gpt-4.1");
 	assert.equal(gpt41.capabilities.reasoning, false);

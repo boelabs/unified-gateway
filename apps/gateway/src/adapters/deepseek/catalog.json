@@ -13,12 +13,6 @@
 	},
 	"models": {
 		"deepseek-v4-flash": {
-			"name": "DeepSeek V4 Flash",
-			"family": "deepseek-v4",
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -28,7 +22,7 @@
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 1000000,
-					"maxOutputTokens": 393216,
+					"maxOutputTokens": 384000,
 					"reasoning": {
 						"kind": "openai_body",
 						"levels": ["none", "high", "xhigh"],
@@ -62,7 +56,19 @@
 						"temperature": {
 							"mode": "ignored",
 							"notes": "Thinking mode does not use sampling parameters."
-						}
+						},
+						"frequency_penalty": true,
+						"include_reasoning": true,
+						"logprobs": true,
+						"max_tokens": true,
+						"presence_penalty": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_logprobs": true,
+						"top_p": true
 					}
 				}
 			},
@@ -70,32 +76,9 @@
 				"inputCentsPerMTokens": 14,
 				"outputCentsPerMTokens": 28,
 				"cacheReadCentsPerMTokens": 0.28
-			},
-			"sources": [
-				"https://api-docs.deepseek.com/quick_start/pricing",
-				"https://api-docs.deepseek.com/guides/thinking_mode"
-			],
-			"lastVerifiedAt": "2026-06-24",
-			"metadata": {
-				"baseUrlOpenAI": "https://api.deepseek.com",
-				"baseUrlAnthropic": "https://api.deepseek.com/anthropic",
-				"concurrencyLimit": 2500,
-				"features": [
-					"json_output",
-					"tool_calls",
-					"chat_prefix_completion",
-					"fim_completion_non_thinking"
-				],
-				"thinkingDefault": "enabled"
 			}
 		},
 		"deepseek-v4-pro": {
-			"name": "DeepSeek V4 Pro",
-			"family": "deepseek-v4",
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -105,7 +88,7 @@
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 1000000,
-					"maxOutputTokens": 393216,
+					"maxOutputTokens": 384000,
 					"reasoning": {
 						"kind": "openai_body",
 						"levels": ["none", "high", "xhigh"],
@@ -137,45 +120,29 @@
 						"temperature": {
 							"mode": "ignored",
 							"notes": "Thinking mode does not use sampling parameters."
-						}
+						},
+						"frequency_penalty": true,
+						"include_reasoning": true,
+						"logprobs": true,
+						"max_tokens": true,
+						"presence_penalty": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"tool_choice": true,
+						"tools": true,
+						"top_logprobs": true,
+						"top_p": true
 					}
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 43.5,
 				"outputCentsPerMTokens": 87,
-				"cacheReadCentsPerMTokens": 0.3625
-			},
-			"sources": [
-				"https://api-docs.deepseek.com/quick_start/pricing",
-				"https://api-docs.deepseek.com/guides/thinking_mode"
-			],
-			"lastVerifiedAt": "2026-06-24",
-			"metadata": {
-				"baseUrlOpenAI": "https://api.deepseek.com",
-				"baseUrlAnthropic": "https://api.deepseek.com/anthropic",
-				"concurrencyLimit": 500,
-				"features": [
-					"json_output",
-					"tool_calls",
-					"chat_prefix_completion",
-					"fim_completion_non_thinking"
-				],
-				"thinkingDefault": "enabled"
+				"cacheReadCentsPerMTokens": 0.36
 			}
 		},
 		"deepseek-chat": {
-			"name": "DeepSeek Chat",
-			"family": "deepseek-v4",
-			"deprecated": true,
-			"lifecycle": {
-				"status": "deprecated",
-				"deprecationDate": "2026-07-24"
-			},
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -184,32 +151,31 @@
 						"reasoning": false,
 						"structuredOutputs": false
 					},
-					"maxInputTokens": 1000000,
-					"maxOutputTokens": 393216,
-					"contracts": ["chat.completions"]
+					"maxInputTokens": 128000,
+					"maxOutputTokens": 16000,
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"top_p": true,
+						"frequency_penalty": true,
+						"stop": true,
+						"presence_penalty": true,
+						"response_format": true,
+						"structured_outputs": true,
+						"tools": true,
+						"tool_choice": true
+					}
 				}
 			},
 			"pricing": {
-				"inputCentsPerMTokens": 14,
-				"outputCentsPerMTokens": 28,
+				"inputCentsPerMTokens": 20.02,
+				"outputCentsPerMTokens": 80.01,
 				"cacheReadCentsPerMTokens": 0.28
 			},
-			"sources": ["https://api-docs.deepseek.com/quick_start/pricing"],
-			"lastVerifiedAt": "2026-06-24",
 			"notes": "Deprecated compatibility alias for non-thinking mode of deepseek-v4-flash."
 		},
 		"deepseek-reasoner": {
-			"name": "DeepSeek Reasoner",
-			"family": "deepseek-v4",
-			"deprecated": true,
-			"lifecycle": {
-				"status": "deprecated",
-				"deprecationDate": "2026-07-24"
-			},
-			"modalities": {
-				"input": ["text"],
-				"output": ["text"]
-			},
 			"operations": {
 				"text.generate": {
 					"capabilities": {
@@ -232,12 +198,97 @@
 				"outputCentsPerMTokens": 28,
 				"cacheReadCentsPerMTokens": 0.28
 			},
-			"sources": [
-				"https://api-docs.deepseek.com/quick_start/pricing",
-				"https://api-docs.deepseek.com/guides/thinking_mode"
-			],
-			"lastVerifiedAt": "2026-06-24",
 			"notes": "Deprecated compatibility alias for thinking mode of deepseek-v4-flash."
+		},
+		"deepseek-r1": {
+			"operations": {
+				"text.generate": {
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"stop": true,
+						"tools": true,
+						"tool_choice": true,
+						"reasoning": true,
+						"include_reasoning": true,
+						"top_p": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"seed": true,
+						"top_k": true,
+						"repetition_penalty": true,
+						"response_format": true,
+						"structured_outputs": true
+					},
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"structuredOutputs": true
+					}
+				}
+			},
+			"pricing": {}
+		},
+		"deepseek-v3.2": {
+			"operations": {
+				"text.generate": {
+					"maxInputTokens": 128000,
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"stop": true,
+						"tools": true,
+						"tool_choice": true,
+						"reasoning": true,
+						"include_reasoning": true,
+						"top_p": true,
+						"frequency_penalty": true,
+						"response_format": true,
+						"structured_outputs": true,
+						"logprobs": true,
+						"top_logprobs": true
+					},
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"structuredOutputs": true
+					}
+				}
+			},
+			"pricing": {}
+		},
+		"deepseek-v3.1-terminus": {
+			"operations": {
+				"text.generate": {
+					"parameters": {
+						"max_tokens": true,
+						"temperature": true,
+						"stop": true,
+						"tools": true,
+						"tool_choice": true,
+						"reasoning": true,
+						"include_reasoning": true,
+						"top_p": true,
+						"frequency_penalty": true,
+						"presence_penalty": true,
+						"repetition_penalty": true,
+						"top_k": true,
+						"seed": true,
+						"min_p": true,
+						"response_format": true,
+						"logit_bias": true,
+						"structured_outputs": true
+					},
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"structuredOutputs": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 27
+			}
 		}
 	}
 }

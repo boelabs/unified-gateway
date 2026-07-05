@@ -1,6 +1,7 @@
 import { EFFORT_ORDER, type ReasoningControlKind } from "#core/reasoning.ts";
 import { ADAPTER_KEY_PATTERN, ADAPTER_KEY_RULE } from "#adapters/key.ts";
 import type { OperationProfiles } from "#profiles/types.ts";
+import { PARAMETER_SUPPORT_MODES } from "./parameters.ts";
 import type { CatalogEntry } from "./types.ts";
 import { readFileSync } from "node:fs";
 
@@ -41,41 +42,18 @@ const REASONING_KINDS = new Set<ReasoningControlKind>([
 	"fixed",
 ]);
 
+// Deliberately minimal: only data the gateway actually consumes (operations/pricing) plus the few
+// human-facing fields (deprecated/notes/needsHumanReview). Descriptive metadata (lifecycle, modalities,
+// sources, aliases...) was removed on purpose - anything else here is an unknown-field failure.
 const MODEL_KEYS = new Set([
-	"id",
-	"name",
-	"family",
-	"aliases",
-	"openWeights",
 	"deprecated",
-	"lifecycle",
-	"knowledge",
-	"modalities",
 	"operations",
 	"pricing",
-	"sources",
-	"lastVerifiedAt",
 	"notes",
-	"metadata",
+	"needsHumanReview",
 ]);
 
-const LIFECYCLE_STATUSES = new Set([
-	"active",
-	"preview",
-	"deprecated",
-	"retired",
-	"limited",
-]);
-const MODALITIES = new Set([
-	"text",
-	"image",
-	"audio",
-	"video",
-	"pdf",
-	"file",
-	"embedding",
-	"moderation",
-]);
+const PARAMETER_MODES = new Set<string>(PARAMETER_SUPPORT_MODES);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -229,6 +207,43 @@ function validateReasoning(value: unknown, path: string): void {
 	}
 }
 
+function validateParameterSupport(value: unknown, path: string): void {
+	if (typeof value === "boolean") return;
+	if (!isRecord(value)) fail(path, "must be a boolean or object");
+	if (value.mode !== undefined) {
+		assertString(value.mode, `${path}.mode`);
+		if (!PARAMETER_MODES.has(value.mode))
+			fail(`${path}.mode`, `unknown mode "${value.mode}"`);
+	}
+	if (value.min !== undefined) assertNumber(value.min, `${path}.min`);
+	if (value.max !== undefined) assertNumber(value.max, `${path}.max`);
+	if (value.values !== undefined) {
+		if (!Array.isArray(value.values))
+			fail(`${path}.values`, "must be an array");
+		for (const [i, item] of value.values.entries()) {
+			if (
+				typeof item !== "string" &&
+				typeof item !== "number" &&
+				typeof item !== "boolean"
+			) {
+				fail(`${path}.values[${i}]`, "must be a string, number, or boolean");
+			}
+		}
+	}
+	if (value.upstreamField !== undefined)
+		assertString(value.upstreamField, `${path}.upstreamField`);
+	if (value.notes !== undefined) assertString(value.notes, `${path}.notes`);
+}
+
+function validateParameters(value: unknown, path: string): void {
+	if (value === undefined) return;
+	if (!isRecord(value)) fail(path, "must be an object");
+	for (const [name, support] of Object.entries(value)) {
+		assertString(name, `${path} key`);
+		validateParameterSupport(support, `${path}.${name}`);
+	}
+}
+
 function validateOperations(value: unknown, path: string): void {
 	if (!isRecord(value)) fail(path, "must be an object");
 	for (const [operation, profile] of Object.entries(value)) {
@@ -251,6 +266,7 @@ function validateOperations(value: unknown, path: string): void {
 					`${path}.${operation}.maxOutputTokens`,
 				);
 			validateReasoning(profile.reasoning, `${path}.${operation}.reasoning`);
+			validateParameters(profile.parameters, `${path}.${operation}.parameters`);
 		} else if (operation === "embedding.create") {
 			for (const key of [
 				"dimensions",
@@ -286,37 +302,6 @@ function validateOperations(value: unknown, path: string): void {
 	}
 }
 
-function validateLifecycle(value: unknown, path: string): void {
-	if (value === undefined) return;
-	if (!isRecord(value)) fail(path, "must be an object");
-	if (value.status !== undefined) {
-		assertString(value.status, `${path}.status`);
-		if (!LIFECYCLE_STATUSES.has(value.status))
-			fail(`${path}.status`, `unknown status "${value.status}"`);
-	}
-	for (const key of [
-		"releaseDate",
-		"lastUpdated",
-		"deprecationDate",
-		"retirementDate",
-	]) {
-		if (value[key] !== undefined) assertString(value[key], `${path}.${key}`);
-	}
-}
-
-function validateModalities(value: unknown, path: string): void {
-	if (value === undefined) return;
-	if (!isRecord(value)) fail(path, "must be an object");
-	for (const key of ["input", "output"]) {
-		if (value[key] === undefined) continue;
-		assertStringArray(value[key], `${path}.${key}`);
-		for (const modality of value[key]) {
-			if (!MODALITIES.has(modality))
-				fail(`${path}.${key}`, `unknown modality "${modality}"`);
-		}
-	}
-}
-
 function validateModelMetadata(
 	model: Record<string, unknown>,
 	path: string,
@@ -324,26 +309,9 @@ function validateModelMetadata(
 	for (const key of Object.keys(model)) {
 		if (!MODEL_KEYS.has(key)) fail(path, `unknown field "${key}"`);
 	}
-	for (const key of [
-		"id",
-		"name",
-		"family",
-		"knowledge",
-		"lastVerifiedAt",
-		"notes",
-	]) {
-		if (model[key] !== undefined) assertString(model[key], `${path}.${key}`);
-	}
-	if (model.aliases !== undefined)
-		assertStringArray(model.aliases, `${path}.aliases`);
-	if (model.openWeights !== undefined)
-		assertBoolean(model.openWeights, `${path}.openWeights`);
-	validateLifecycle(model.lifecycle, `${path}.lifecycle`);
-	validateModalities(model.modalities, `${path}.modalities`);
-	if (model.sources !== undefined)
-		assertStringArray(model.sources, `${path}.sources`);
-	if (model.metadata !== undefined && !isRecord(model.metadata))
-		fail(`${path}.metadata`, "must be an object");
+	if (model.notes !== undefined) assertString(model.notes, `${path}.notes`);
+	if (model.needsHumanReview !== undefined)
+		assertStringArray(model.needsHumanReview, `${path}.needsHumanReview`);
 }
 
 function validateDocument(
@@ -375,12 +343,6 @@ function validateDocument(
 		if (!isRecord(model))
 			fail(`${path}.models.${modelId}`, "must be an object");
 		validateModelMetadata(model, `${path}.models.${modelId}`);
-		if (model.id !== undefined && model.id !== modelId) {
-			fail(
-				`${path}.models.${modelId}.id`,
-				`if declared, it must match key "${modelId}"`,
-			);
-		}
 		validateOperations(
 			model.operations,
 			`${path}.models.${modelId}.operations`,

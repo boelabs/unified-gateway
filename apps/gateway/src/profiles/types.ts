@@ -1,4 +1,5 @@
 import type { TextCapabilities, ReasoningSpec } from "#core/reasoning.ts";
+import type { ParameterSupportMap } from "#catalog/parameters.ts";
 import type { EmbeddingProfile } from "#core/embeddings.ts";
 import type { TranscriptionProfile } from "#core/audio.ts";
 import type { OperationId } from "#operations/registry.ts";
@@ -39,18 +40,7 @@ interface TextGenerateProfile {
 		| "images.edits"
 		| "audio.transcriptions"
 	>;
-	parameters?: Record<
-		string,
-		| boolean
-		| {
-				mode?: "supported" | "unsupported" | "ignored" | "range" | "mapped";
-				min?: number;
-				max?: number;
-				values?: Array<string | number | boolean>;
-				upstreamField?: string;
-				notes?: string;
-		  }
-	>;
+	parameters?: ParameterSupportMap;
 	// ── Gateway behavior: how the reasoning control is translated to the provider ──
 	reasoning?: ReasoningSpec;
 }

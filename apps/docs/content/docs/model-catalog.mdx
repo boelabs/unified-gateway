@@ -90,8 +90,9 @@ rules the admin API enforces.
   the catalog forward-compatible: a new model only declares its `levels`.
 - `openai_effort` emits `reasoning_effort`; `openai_body` emits a provider-specific top-level field
   such as `thinking: {"type":"enabled"}` and, where applicable, an `effortField` like `reasoning_effort`.
-- Optional metadata such as `name`, `family`, `lifecycle`, `modalities`, `sources`, and
-  `lastVerifiedAt` exists to enrich the catalog without affecting the runtime yet.
+- Entries are deliberately minimal: only `operations` and `pricing` (the data the runtime consumes)
+  plus the human-facing `deprecated`, `notes`, and `needsHumanReview`. Descriptive metadata the gateway
+  never reads (names, lifecycle dates, modalities lists, provenance) is rejected by the validator.
 
 The loader is in `src/catalog/jsonCatalog.ts`; `getCatalogEntry()` indexes by provider/model and
 resolves dated snapshots like `gpt-5.5-2026-04-23` against their base model.
@@ -166,14 +167,12 @@ Besides `operations` and `pricing`, each entry under `models` accepts:
 
 | Field | Purpose |
 |---|---|
-| `name` | Human-readable label. |
-| `family` | Groups variants/snapshots of one model. |
-| `modalities` | `{ input: [...], output: [...] }` (`text`, `image`, `audio`). |
-| `lifecycle` / `deprecated` | Status (`deprecated`, `deprecationDate`); informational. |
-| `contracts` | Upstream wire(s) the model speaks, e.g. `["chat.completions"]`. |
-| `parameters` | Per-parameter handling (`supported` / `mapped` / `ignored`) with notes. |
-| `sources` / `lastVerifiedAt` | Provenance for the pricing and capabilities. |
-| `metadata` | Free-form provider notes (base URLs, limits, features). |
+| `deprecated` | Flags a model as not recommended; informational, never changes behavior. |
+| `notes` | Free-form human notes (e.g. why a model is deprecated). |
+| `needsHumanReview` | Dot-paths auto-drafted by the catalog sync; `catalog:validate` fails while non-empty. |
+
+Inside `operations["text.generate"]`, `contracts` declares the upstream wire(s) the model speaks and
+`parameters` the per-parameter handling (`supported` / `mapped` / `ignored`) with notes.
 
 Dated snapshots such as `gpt-5.5-2026-04-23` resolve to their base model, so you normally declare only
 the base id.
