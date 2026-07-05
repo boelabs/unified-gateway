@@ -32,6 +32,11 @@ function metrics(
 			inflight: v.inflight ?? 0,
 			rpm: v.rpm ?? 0,
 			tpm: v.tpm ?? 0,
+			successes: v.successes ?? 0,
+			failures: v.failures ?? 0,
+			latencyMs: v.latencyMs ?? null,
+			throughputTps: v.throughputTps ?? null,
+			healthScore: v.healthScore ?? 1,
 		});
 	}
 	return map;
@@ -62,6 +67,37 @@ test("usage-based-rpm chooses the lowest rpm", () => {
 	const c = [cand("a"), cand("b")];
 	const m = metrics({ a: { rpm: 2 }, b: { rpm: 9 } });
 	assert.equal(pickDeployment("usage-based-rpm", c, m).row.id, "a");
+});
+
+test("latency-based chooses the lowest observed latency", () => {
+	const c = [cand("a"), cand("b")];
+	const m = metrics({ a: { latencyMs: 900 }, b: { latencyMs: 120 } });
+	assert.equal(pickDeployment("latency-based", c, m).row.id, "b");
+});
+
+test("throughput-based chooses the highest observed throughput", () => {
+	const c = [cand("a"), cand("b")];
+	const m = metrics({ a: { throughputTps: 12 }, b: { throughputTps: 28 } });
+	assert.equal(pickDeployment("throughput-based", c, m).row.id, "b");
+});
+
+test("price-based chooses the lowest catalog price", () => {
+	const c = [cand("a"), cand("b")];
+	c[0]!.meta.pricing = {
+		inputCentsPerMTokens: 300,
+		outputCentsPerMTokens: 1200,
+	};
+	c[1]!.meta.pricing = {
+		inputCentsPerMTokens: 100,
+		outputCentsPerMTokens: 400,
+	};
+	assert.equal(pickDeployment("price-based", c, new Map()).row.id, "b");
+});
+
+test("health-aware chooses the strongest health score adjusted by weight", () => {
+	const c = [cand("a", 1), cand("b", 2)];
+	const m = metrics({ a: { healthScore: 0.9 }, b: { healthScore: 0.8 } });
+	assert.equal(pickDeployment("health-aware", c, m).row.id, "b");
 });
 
 test("simple-shuffle always returns a valid candidate", () => {

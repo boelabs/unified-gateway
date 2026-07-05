@@ -38,6 +38,9 @@ export async function getFallbackPolicy(
 
 export interface RouterSettingsPatch {
 	routingStrategy?: RouterSettingsRow["routingStrategy"] | undefined;
+	unsupportedParameterStrategy?:
+		| RouterSettingsRow["unsupportedParameterStrategy"]
+		| undefined;
 	allowedFails?: number | undefined;
 	cooldownSeconds?: number | undefined;
 	numRetries?: number | undefined;

@@ -1,13 +1,19 @@
+import type { UnsupportedParameterStrategy } from "#catalog/parameters.ts";
 import { getRouterSettings } from "#db/repos/router.ts";
 
 export type RoutingStrategy =
 	| "simple-shuffle"
 	| "least-busy"
 	| "usage-based-tpm"
-	| "usage-based-rpm";
+	| "usage-based-rpm"
+	| "latency-based"
+	| "throughput-based"
+	| "price-based"
+	| "health-aware";
 
 export interface EffectiveSettings {
 	routingStrategy: RoutingStrategy;
+	unsupportedParameterStrategy: UnsupportedParameterStrategy;
 	allowedFails: number;
 	cooldownSeconds: number;
 	/** Maximum retries per deployment, on top of the initial attempt. */
@@ -18,6 +24,7 @@ export interface EffectiveSettings {
 
 const DEFAULTS: EffectiveSettings = {
 	routingStrategy: "simple-shuffle",
+	unsupportedParameterStrategy: "drop",
 	allowedFails: 3,
 	cooldownSeconds: 5,
 	numRetries: 3,
@@ -36,6 +43,7 @@ async function loadGlobal(): Promise<EffectiveSettings> {
 	const value: EffectiveSettings = row
 		? {
 				routingStrategy: row.routingStrategy,
+				unsupportedParameterStrategy: row.unsupportedParameterStrategy,
 				allowedFails: row.allowedFails,
 				cooldownSeconds: row.cooldownSeconds,
 				numRetries: row.numRetries,

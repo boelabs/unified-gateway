@@ -2,7 +2,18 @@ import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
 import type { RoutingStrategy } from "./settings.ts";
 import type { DeploymentMetrics } from "./state.ts";
 
-const ZERO: DeploymentMetrics = { inflight: 0, rpm: 0, tpm: 0 };
+// healthScore: 0.5 (neutral), matching fetchMetrics' default for a deployment with no recorded
+// attempts - see NEUTRAL_HEALTH_SCORE in router/state.ts for why this isn't 1 (perfect).
+const ZERO: DeploymentMetrics = {
+	inflight: 0,
+	rpm: 0,
+	tpm: 0,
+	successes: 0,
+	failures: 0,
+	latencyMs: null,
+	throughputTps: null,
+	healthScore: 0.5,
+};
 
 function weightedRandom(
 	candidates: DeploymentCandidate[],
@@ -22,7 +33,7 @@ function weightedRandom(
 function pickMin(
 	candidates: DeploymentCandidate[],
 	metrics: Map<string, DeploymentMetrics>,
-	key: keyof DeploymentMetrics,
+	key: "inflight" | "rpm" | "tpm",
 ): DeploymentCandidate {
 	let min = Infinity;
 	let winners: DeploymentCandidate[] = [];
@@ -36,6 +47,57 @@ function pickMin(
 		}
 	}
 	return winners[Math.floor(Math.random() * winners.length)]!;
+}
+
+function pickMinScore(
+	candidates: DeploymentCandidate[],
+	score: (candidate: DeploymentCandidate) => number | null,
+): DeploymentCandidate {
+	let min = Infinity;
+	let winners: DeploymentCandidate[] = [];
+	for (const c of candidates) {
+		const v = score(c);
+		if (v === null || !Number.isFinite(v)) continue;
+		if (v < min) {
+			min = v;
+			winners = [c];
+		} else if (v === min) {
+			winners.push(c);
+		}
+	}
+	return winners.length > 0
+		? winners[Math.floor(Math.random() * winners.length)]!
+		: weightedRandom(candidates);
+}
+
+function pickMaxScore(
+	candidates: DeploymentCandidate[],
+	score: (candidate: DeploymentCandidate) => number | null,
+): DeploymentCandidate {
+	let max = -Infinity;
+	let winners: DeploymentCandidate[] = [];
+	for (const c of candidates) {
+		const v = score(c);
+		if (v === null || !Number.isFinite(v)) continue;
+		if (v > max) {
+			max = v;
+			winners = [c];
+		} else if (v === max) {
+			winners.push(c);
+		}
+	}
+	return winners.length > 0
+		? winners[Math.floor(Math.random() * winners.length)]!
+		: weightedRandom(candidates);
+}
+
+function priceScore(candidate: DeploymentCandidate): number | null {
+	const pricing = candidate.meta.pricing;
+	if (!pricing) return null;
+	const input = pricing.inputCentsPerMTokens ?? 0;
+	const output = pricing.outputCentsPerMTokens ?? 0;
+	if (input === 0 && output === 0) return null;
+	return input + output;
 }
 
 /**
@@ -55,6 +117,25 @@ export function pickDeployment(
 			return pickMin(candidates, metrics, "tpm");
 		case "usage-based-rpm":
 			return pickMin(candidates, metrics, "rpm");
+		case "latency-based":
+			return pickMinScore(
+				candidates,
+				(candidate) => metrics.get(candidate.row.id)?.latencyMs ?? null,
+			);
+		case "throughput-based":
+			return pickMaxScore(
+				candidates,
+				(candidate) => metrics.get(candidate.row.id)?.throughputTps ?? null,
+			);
+		case "price-based":
+			return pickMinScore(candidates, priceScore);
+		case "health-aware":
+			return pickMaxScore(
+				candidates,
+				(candidate) =>
+					(metrics.get(candidate.row.id) ?? ZERO).healthScore *
+					Math.max(0, candidate.row.weight),
+			);
 		case "simple-shuffle":
 			return weightedRandom(candidates);
 	}

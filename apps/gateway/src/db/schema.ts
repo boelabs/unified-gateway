@@ -31,7 +31,16 @@ export const routingStrategyEnum = pgEnum("routing_strategy", [
 	"least-busy",
 	"usage-based-tpm",
 	"usage-based-rpm",
+	"latency-based",
+	"throughput-based",
+	"price-based",
+	"health-aware",
 ]);
+
+export const unsupportedParameterStrategyEnum = pgEnum(
+	"unsupported_parameter_strategy",
+	["drop", "error", "allow"],
+);
 
 export const budgetResetEnum = pgEnum("budget_reset", [
 	"hourly",
@@ -169,6 +178,11 @@ export const routerSettings = pgTable(
 		numRetries: integer("num_retries").notNull().default(3),
 		timeoutSeconds: integer("timeout_seconds").notNull().default(600),
 		retryAfterSeconds: integer("retry_after_seconds").notNull().default(0),
+		unsupportedParameterStrategy: unsupportedParameterStrategyEnum(
+			"unsupported_parameter_strategy",
+		)
+			.notNull()
+			.default("drop"),
 		updatedAt: timestamp("updated_at", { withTimezone: true })
 			.notNull()
 			.defaultNow(),

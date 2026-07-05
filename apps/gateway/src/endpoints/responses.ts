@@ -1,7 +1,7 @@
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
+import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
-import { executeChat } from "#gateway/executor.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { log as appLog } from "#logging/log.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -10,7 +10,6 @@ import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
 import type { Auth } from "#auth/types.ts";
-import { route } from "#router/index.ts";
 import { env } from "#config/env.ts";
 import type { Context } from "hono";
 
@@ -45,9 +44,20 @@ import {
 } from "#db/repos/responseStates.ts";
 
 import {
+	routingMetadataRequested,
+	publicRoutingMetadata,
+	attachRoutingMetadata,
+} from "./runtime/routingMetadata.ts";
+
+import {
 	responsesRequestSchema,
 	type ResponsesRequest,
 } from "#contracts/openai/responses.ts";
+
+import {
+	parameterPolicyLogMetadata,
+	routeChat,
+} from "./runtime/parameterPolicy.ts";
 
 interface PreparedResponsesRequest {
 	req: ResponsesRequest;
@@ -175,11 +185,12 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 		});
 		if (cache.hit) return c.json(cache.body as object);
 
-		const routing = await route(
-			canonical.model,
-			"chat",
-			{ clientSignal: c.req.raw.signal, requestId: log.requestId },
-			(cand, ctx) => executeChat(cand.adapter, canonical, ctx),
+		const settings = await getEffectiveSettings();
+		const { routing, parameterPolicy } = await routeChat(
+			c,
+			canonical,
+			log.requestId,
+			settings,
 		);
 		log.applyRouting(routing);
 		const upstreamStartedAt = routing.upstreamStartedAt;
@@ -194,6 +205,14 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			meta.capabilities.reasoning ? meta.reasoning : undefined,
 		);
 		if (reasoning) metadata.reasoning = reasoning;
+		const parameterMetadata = parameterPolicyLogMetadata(
+			parameterPolicy,
+			settings.unsupportedParameterStrategy,
+		);
+		if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+		const routingMetadata = routingMetadataRequested(c)
+			? publicRoutingMetadata(routing, settings)
+			: null;
 
 		if (routing.value.kind === "json") {
 			// no-stream: the response arrives complete -> the "first token" is the whole response.
@@ -219,6 +238,7 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 				metadata,
 			});
 			cache.store(rendered, usage);
+			const body = attachRoutingMetadata(rendered, routingMetadata);
 			log.write({
 				status: "success",
 				httpStatus: 200,
@@ -229,13 +249,20 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 				metadata,
 				error: null,
 			});
-			return c.json(rendered);
+			return c.json(body);
 		}
 
 		let firstTokenAt: number | null = null;
-		const tapped = tapFirstToken(routing.value.chunks, (at) => {
-			firstTokenAt = at;
-		});
+		let lastChunkAt: number | null = null;
+		const tapped = tapFirstToken(
+			routing.value.chunks,
+			(at) => {
+				firstTokenAt = at;
+			},
+			(at) => {
+				lastChunkAt = at;
+			},
+		);
 		async function* transformedChunks() {
 			for await (const chunk of tapped) {
 				yield await applyStreamEventExtensions(
@@ -256,6 +283,7 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			let statePersisted = false;
 			try {
 				for await (const ev of events) {
+					let eventData = ev.data;
 					if (
 						ev.event === "response.completed" ||
 						ev.event === "response.incomplete"
@@ -268,6 +296,15 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 								response?: Record<string, unknown> & { usage?: unknown };
 							};
 							completed = data.response;
+							if (routingMetadata && completed) {
+								eventData = JSON.stringify({
+									...data,
+									response: {
+										...completed,
+										unified_routing: routingMetadata,
+									},
+								});
+							}
 							const u = completed?.usage as
 								| {
 										input_tokens?: number;
@@ -308,7 +345,7 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 							}
 						}
 					}
-					await stream.writeSSE({ event: ev.event!, data: ev.data });
+					await stream.writeSSE({ event: ev.event!, data: eventData });
 				}
 			} catch (err) {
 				streamError = GatewayError.is(err)
@@ -326,7 +363,7 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			} finally {
 				if (firstTokenAt !== null)
 					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(usage);
+				await routing.finish(usage, lastChunkAt ?? undefined);
 				const cost = accountUsage(c, meta, usage);
 				log.write({
 					status: streamError ? "error" : "success",

@@ -52,10 +52,15 @@ test("inflight/rpm: start counts, success/cancel release without penalty", {
 		assert.equal((await partitionByCooldown([id])).cooling.length, 0);
 
 		// Success: releases inflight and adds tpm.
-		await onSuccessFinish(id, 100);
+		await onSuccessFinish(id, {
+			totalTokens: 100,
+			completionTokens: 25,
+			durationMs: 1000,
+		});
 		m = (await fetchMetrics([id])).get(id)!;
 		assert.equal(m.inflight, 0);
 		assert.equal(m.tpm, 100);
+		assert.equal(m.throughputTps, 25);
 	} finally {
 		await cleanup(id);
 	}

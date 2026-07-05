@@ -67,8 +67,14 @@ export interface RouteResult<T> {
 	upstreamStartedAt: number;
 	/** Per-attempt detail (includes fallbacks). */
 	attemptLog: AttemptRecord[];
-	/** Call on completion (json: after responding; stream: in finally) to release inflight and record TPM. */
-	finish: (usage: Usage | null) => Promise<void>;
+	/**
+	 * Call on completion (json: after responding; stream: in finally) to release inflight and record
+	 * TPM. `finishedAt`, if given, is the epoch ms when upstream actually finished responding (e.g. the
+	 * last upstream chunk received) - pass it for streaming so latency/throughput metrics reflect
+	 * upstream speed, not how long relaying the response to the client additionally took. Defaults to
+	 * `Date.now()`, which is accurate for the non-streaming case (finish() runs before the client write).
+	 */
+	finish: (usage: Usage | null, finishedAt?: number) => Promise<void>;
 }
 
 type FallbackReason = "general" | "context_window" | "content_policy";
@@ -227,8 +233,12 @@ export async function route<T>(
 						fallbackUsed,
 						upstreamStartedAt: startedAt,
 						attemptLog,
-						finish: (usage) =>
-							onSuccessFinish(chosen.row.id, usage?.totalTokens ?? null),
+						finish: (usage, finishedAt) =>
+							onSuccessFinish(chosen.row.id, {
+								totalTokens: usage?.totalTokens ?? null,
+								completionTokens: usage?.completionTokens ?? null,
+								durationMs: (finishedAt ?? Date.now()) - startedAt,
+							}),
 					},
 				};
 			} catch (err) {

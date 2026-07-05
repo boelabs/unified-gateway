@@ -393,11 +393,14 @@ export function buildOpenApiDocument() {
 			"/v1/models": {
 				get: {
 					tags: ["Inference"],
-					summary: "List public models visible to the key (OpenAI contract)",
+					security: [],
+					summary: "List public models (unauthenticated)",
+					description:
+						"OpenAI-compatible base fields plus OpenRouter-like capability metadata aggregated from enabled deployments. Does not expose deployment labels, credentials, or upstream model ids.",
 					responses: {
 						"200": {
 							description:
-								"{ object: 'list', data: [{ id, object, created, owned_by }] }",
+								"{ object: 'list', data: [{ id, object, created, owned_by, architecture, top_provider, pricing, operations, supported_parameters, endpoint_count }] }",
 						},
 					},
 				},
@@ -405,7 +408,10 @@ export function buildOpenApiDocument() {
 			"/v1/models/{model}": {
 				get: {
 					tags: ["Inference"],
-					summary: "Retrieve a public model (OpenAI contract)",
+					security: [],
+					summary: "Retrieve a public model (unauthenticated)",
+					description:
+						"Supports model ids containing slashes. Returns the same public capability shape as /v1/models.",
 					parameters: [
 						{
 							name: "model",
@@ -417,6 +423,30 @@ export function buildOpenApiDocument() {
 					responses: {
 						"200": {
 							description: "{ id, object: 'model', created, owned_by }",
+						},
+						"404": errorResponse,
+					},
+				},
+			},
+			"/v1/models/{model}/deployments": {
+				get: {
+					tags: ["Inference"],
+					security: [],
+					summary: "List redacted deployments for a public model",
+					description:
+						"OpenRouter-like endpoint data for each enabled deployment. Public response redacts database ids, operator labels, credentials, metadata, and upstream model ids.",
+					parameters: [
+						{
+							name: "model",
+							in: "path",
+							required: true,
+							schema: { type: "string" },
+						},
+					],
+					responses: {
+						"200": {
+							description:
+								"{ object: 'list', data: [{ id, object: 'model.deployment', model, provider, status, top_provider, pricing, operations, supported_parameters, metrics }] }",
 						},
 						"404": errorResponse,
 					},
@@ -952,6 +982,7 @@ export function buildOpenApiDocument() {
 						default: {
 							value: {
 								routingStrategy: "simple-shuffle",
+								unsupportedParameterStrategy: "drop",
 								allowedFails: 3,
 								cooldownSeconds: 5,
 								numRetries: 3,
