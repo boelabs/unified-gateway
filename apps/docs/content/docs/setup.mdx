@@ -15,7 +15,7 @@ target under [Deployment](/docs/deployment).
 - **Redis 8+**
 
 > Unified Gateway runs on **Bun**, not Node. If you plan to reach a database or Redis over TLS with a
-> **self-signed** certificate, read [Known errors](/docs/known-errors) first — Bun's TLS may not
+> **self-signed** certificate, read [Troubleshooting](/docs/troubleshooting) first — Bun's TLS may not
 > accept those, and the fix is a configuration choice you make here.
 
 ## Environment
@@ -43,6 +43,9 @@ Everything else ships with production-ready defaults — override only what you 
 | `UNIFIED_GATEWAY_EXTENSIONS_RELOAD_INTERVAL_MS` | `15000` | How often each replica polls for [extension](/docs/extensions) changes to hot-reload. |
 | `UNIFIED_GATEWAY_EXTENSIONS_MAX_CODE_BYTES` | `1000000` | Maximum size of an uploaded [extension](/docs/extensions) module (bytes). |
 
+Full list of every variable, including OpenTelemetry and response-state retention:
+[Environment variables](/docs/reference-environment).
+
 ## Secrets
 
 Two secrets are critical. Store them in your secret manager — never in git or the image:
@@ -66,7 +69,7 @@ of the Bun TLS constraint:
 
 - **Self-hosted on the same private network** (Compose / Coolify / Portainer / Dokploy): connect over
   **plaintext** — `postgres://…` and `redis://…`. Safe by network isolation, and it sidesteps the
-  [self-signed TLS issue](/docs/known-errors). This is the default in every
+  [self-signed TLS issue](/docs/troubleshooting). This is the default in every
   [Deployment](/docs/deployment) recipe.
 - **Managed provider** (recommended for development, or when the database lives off-network): pick one
   that presents a **public-CA** certificate, which Bun connects to cleanly.
@@ -83,4 +86,4 @@ Good free-tier options that work with Bun's TLS out of the box:
 | [Upstash](https://upstash.com) | Redis | Free tier; `rediss://` over public-CA TLS. |
 
 Avoid pointing the gateway at a **self-signed** database over a public port (the default for a raw
-Coolify/Dokploy database exposed publicly) — see [Known errors](/docs/known-errors).
+Coolify/Dokploy database exposed publicly) — see [Troubleshooting](/docs/troubleshooting).

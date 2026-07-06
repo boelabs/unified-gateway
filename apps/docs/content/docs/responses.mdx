@@ -1,0 +1,68 @@
+---
+title: "Responses"
+description: "POST /v1/responses and its persisted-state siblings — the OpenAI Responses contract."
+---
+
+```bash
+curl -X POST "$GATEWAY/v1/responses" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "model": "general", "input": "Say hi" }'
+```
+
+Same canonical core as [Chat completions](/docs/chat-completions), rendered through the Responses
+shape: `input` instead of `messages`, `text.format` instead of `response_format`,
+`reasoning: { effort, summary }` instead of `reasoning_effort`, plus multi-turn state the client doesn't
+have to resend by hand.
+
+## Persisted state
+
+Unlike Chat Completions, a Response can be **stored** and referenced later:
+
+- **`store`** (boolean) — whether to persist this response. Defaults to `RESPONSES_STORE_DEFAULT`
+  (gateway-wide, `true` by default; set `false` gateway-wide for a privacy-first deployment) when the
+  client omits it.
+- **`previous_response_id`** — chains a new request onto a previously stored one: the gateway
+  reconstructs the full input (the previous request's input + its output) and prepends it, so the
+  client only sends the new turn. Returns `400 previous_response_not_found` if the referenced id
+  doesn't exist **or belongs to a different virtual key** — stored state is scoped per key, the same
+  way rate limits and budgets are.
+- **`GET /v1/responses/:id`** — retrieve a previously stored response.
+- **`GET /v1/responses/:id/input_items`** — list the resolved input items (including anything
+  inherited via `previous_response_id`).
+- **`DELETE /v1/responses/:id`** — delete stored state early, before its retention window
+  (`RESPONSES_STATE_RETENTION_DAYS`) expires it automatically.
+
+Stored state lives in Postgres (`response_states`), separate from `request_logs` — it exists to
+reconstruct conversation state, not for observability. See
+[Environment variables](/docs/reference-environment#requests-logging-and-limits) for the retention
+variable and [Operations → `response_states` GC](/docs/operations#response_states-gc) for how expiry
+actually runs.
+
+## `text.format`
+
+Maps to the same canonical `responseFormat` as Chat Completions' `response_format` — `text`,
+`json_object`, or `json_schema`. See [Chat completions → Structured outputs](/docs/chat-completions#structured-outputs).
+
+## Reasoning
+
+`reasoning: { "effort": "high", "summary": "auto" }` — the object form of the same canonical knob
+described in [Reasoning](/docs/reasoning). `summary` controls whether the model's reasoning is
+surfaced back (`auto`, `none`, `concise`, `detailed`).
+
+## `responsesTransport` passthrough
+
+Fields specific to the Responses wire contract that don't have a Chat Completions equivalent —
+`include`, `metadata`, `service_tier`, `safety_identifier`, `prompt_cache_key`, `top_logprobs`,
+`max_tool_calls` — are threaded through as-is to providers that support the Responses transport
+natively (currently OpenAI and Azure OpenAI).
+
+## Streaming
+
+Same SSE mechanics as every other endpoint — see [Streaming](/docs/streaming).
+
+## What to read next
+
+- [Chat completions](/docs/chat-completions) — the fields shared between both contracts.
+- [Reasoning](/docs/reasoning) — the `reasoning` object in full.
+- [Security](/docs/security) — why stored responses are scoped per virtual key.

@@ -8,10 +8,12 @@ reference.
 
 Unified Gateway — a backend-only, provider-agnostic AI gateway. Public endpoints are OpenAI-shaped
 (`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`, `/v1/audio/transcriptions`)
-plus an Anthropic-compatible `/v1/messages`. Model discovery (`/v1/models`,
-`/v1/models/{model}/deployments`) is deliberately **unauthenticated**, like other providers' public
-catalogs, and must never expose deployment labels, credentials, database ids, or upstream model ids.
-Every request is translated through one canonical core and routed to provider adapters.
+plus an Anthropic-compatible `/v1/messages`. `GET /v1/models` and `GET /v1/models/{model}` are
+deliberately **unauthenticated**, like other providers' public catalogs; `GET /v1/models/{model}/deployments`
+requires auth, since per-deployment weight/limits/live metrics are operator infrastructure detail, not
+public model information. None of the three ever expose deployment labels, credentials, database ids,
+or upstream model ids. Every request is translated through one canonical core and routed to provider
+adapters. See [Model discovery](apps/docs/content/docs/models-discovery.mdx).
 
 Monorepo — Turborepo on Bun workspaces:
 
@@ -151,7 +153,7 @@ unaffected.
 
 - **Bun's TLS rejects self-signed Postgres/Redis certificates** (e.g. databases exposed by a raw
   Coolify/Dokploy port). Connect over a private network without TLS, or use a managed provider with a
-  public-CA certificate. See [Known errors](apps/docs/content/docs/known-errors.mdx).
+  public-CA certificate. See [Troubleshooting](apps/docs/content/docs/troubleshooting.mdx).
 - **Background jobs run in-process**, not via cron: `request_logs` partition maintenance (drains the
   default partition, creates/drops daily partitions; guarded by a Postgres advisory lock so only one
   replica runs it per cycle) and `response_states` GC.

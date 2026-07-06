@@ -104,25 +104,25 @@ Everything beyond this page — API contracts, provider setup, admin operations 
 authored in MDX under [`apps/docs/content/docs`](apps/docs/content/docs) and rendered as a Fumadocs
 site (`bun run --filter @boelabs/docs dev`).
 
-- [Overview](apps/docs/content/docs/index.mdx) — what Unified Gateway is and a documentation map
+- [Overview](apps/docs/content/docs/index.mdx) — what Unified Gateway is, and the full documentation map
 - [Quickstart](apps/docs/content/docs/quickstart.mdx) — clone to first response, end to end
+- [Architecture](apps/docs/content/docs/architecture.mdx) — the request pipeline, traced in precise order
 - [Setup](apps/docs/content/docs/setup.mdx) — requirements, environment, secrets, and database choices
 - [Deployment](apps/docs/content/docs/deployment.mdx) — Docker Compose and per-platform guides (Coolify, Portainer, Dokploy, Linux)
-- [Concepts](apps/docs/content/docs/concepts.mdx) — the mental model and request flow
 - [Creating deployments](apps/docs/content/docs/creating-deployments.mdx) — provider setup and custom model examples
+- [Routing](apps/docs/content/docs/routing.mdx) — balancing strategies, cooldowns, and retries
 - [Virtual keys](apps/docs/content/docs/virtual-keys.mdx) — client keys, scopes, budgets, and limits
 - [Fallbacks](apps/docs/content/docs/fallbacks.mdx) — fallback semantics and lifecycle
-- [Caching](apps/docs/content/docs/caching.mdx) — the opt-in response cache and its headers
 - [Model catalog](apps/docs/content/docs/model-catalog.mdx) — catalog schema and capability profiles
+- [Providers](apps/docs/content/docs/providers.mdx) — every built-in adapter's credentials and quirks
 - [Runtime extensions](apps/docs/content/docs/extensions.mdx) — uploading extensions, hooks, and versioning
 - [Operations](apps/docs/content/docs/operations.mdx) — production runbook
-- [API reference](apps/docs/content/docs/api.mdx) — OpenAPI, authentication, and import notes
-- [Errors](apps/docs/content/docs/errors.mdx) — error shape, status codes, and troubleshooting
-- [Known errors](apps/docs/content/docs/known-errors.mdx) — exact symptoms and fixes
-- [Testing](apps/docs/content/docs/testing.mdx) — test strategy and commands
+- [Security](apps/docs/content/docs/security.mdx) — auth model, credential encryption, and redaction
+- [API overview](apps/docs/content/docs/api-overview.mdx) — auth, error shape, and OpenAPI import notes
+- [Troubleshooting](apps/docs/content/docs/troubleshooting.mdx) — error shapes, status codes, and known issues with exact fixes
 
 The machine-readable API spec is [`apps/gateway/openapi.yaml`](apps/gateway/openapi.yaml) — see
-[the API guide](apps/docs/content/docs/api.mdx) for import instructions.
+[the API guide](apps/docs/content/docs/api-overview.mdx) for import instructions.
 
 ## Common errors
 
@@ -132,8 +132,7 @@ The machine-readable API spec is [`apps/gateway/openapi.yaml`](apps/gateway/open
 - **The gateway refuses to start** until `MASTER_KEY` and `CREDENTIALS_ENCRYPTION_KEY` are set — the
   production compose base deliberately ships them empty.
 
-Exact symptoms and fixes: [Known errors](apps/docs/content/docs/known-errors.mdx). Runtime error shapes
-and status codes: [Errors](apps/docs/content/docs/errors.mdx).
+Exact symptoms, fixes, and every error code: [Troubleshooting](apps/docs/content/docs/troubleshooting.mdx).
 
 ## Contributing
 

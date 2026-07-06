@@ -1,0 +1,24 @@
+---
+title: "OpenAI"
+description: "Adapter key openai. Credentials, transport, and quirks."
+---
+
+```json
+{ "publicModel": "gpt-5.5", "provider": "openai", "upstreamModel": "gpt-5.5", "credentials": { "apiKey": "sk-..." } }
+```
+
+- **Credentials**: `apiKey` only.
+- **Default transport**: Responses API for text, `images` for image generate/edit,
+  `embeddings` for embeddings. `transportOverrides` can pin `text.generate` to `chat_completions`
+  if you need the older contract's exact behavior for a specific deployment.
+- **Reasoning**: `openai_effort` (`reasoning_effort`) on reasoning-family models. `-chat` suffixed
+  variants (e.g. `gpt-5.2-chat`) are non-reasoning — the real API rejects `reasoning_effort` on them,
+  and the catalog declares them without a `reasoning` spec accordingly.
+- **Images**: `gpt-image-*` models; always returns `b64_json` regardless of requested
+  `response_format` (see [Images](/docs/images)).
+- Catalog: `src/adapters/openai/catalog.json`.
+
+## What to read next
+
+- [Creating deployments](/docs/creating-deployments) — the full request shape.
+- [Reasoning](/docs/reasoning) — the `openai_effort` kind in detail.

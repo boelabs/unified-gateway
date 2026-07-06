@@ -1,0 +1,56 @@
+---
+title: "Cost accounting"
+description: "Where pricing comes from, how spend is tracked, and how to query usage."
+---
+
+## Where pricing comes from
+
+Every model's rate is declared in cents-per-1M-tokens in its catalog entry's `pricing`
+(`inputCentsPerMTokens`, `outputCentsPerMTokens`, `cacheReadCentsPerMTokens`, `cacheWriteCentsPerMTokens`).
+A deployment's own `pricing` field, if set, **overrides** the catalog rate entirely for that deployment
+— useful for a negotiated rate or a custom model with no catalog entry at all. A model with no pricing
+anywhere (no catalog rate, no override) bills as **zero cost**, not an error — cost accounting never
+blocks a request.
+
+## How spend is tracked
+
+On every request with usage (tokens actually consumed), the gateway computes the cost from the
+resolved pricing and:
+
+- **Redis** is the hot-path counter: virtual-key TPM windows and the running budget total are checked
+  and incremented here, on the request's critical path, because it needs to be fast and atomic.
+- **Postgres** (`spend_cents` on the virtual key, plus the per-request cost breakdown in `request_logs`)
+  is the durable source of truth, updated on every billed request.
+
+Master-key traffic is never billed against any budget (the master key has no limits) — see
+[Security](/docs/security) for the full auth model.
+
+## Budgets and RPM/TPM (per virtual key)
+
+Covered in full in [Virtual keys](/docs/virtual-keys#budgets-and-limits): a budget's window resets on
+its configured cadence (`hourly`, `daily`, `weekly`, or `monthly`), and exceeding it or an RPM/TPM limit
+returns `429 rate_limit_exceeded` with the matching `x-ratelimit-*` headers so a well-behaved client can
+back off before being throttled.
+
+## Querying usage
+
+`GET /admin/usage` aggregates cost and request counts, grouped by `public_model`, `virtual_key`,
+`adapter_key`, `day`, or ungrouped (`none`) — the same filters as `GET /admin/logs` apply (date range,
+virtual key, public model, deployment, adapter, call type, status, cache hit). See
+[Admin API reference](/docs/reference-admin-api#logs-and-usage).
+
+```bash
+curl "$GATEWAY/admin/usage?groupBy=public_model&start=2026-06-01&end=2026-07-01" \
+  -H "Authorization: Bearer $MASTER_KEY"
+```
+
+For per-request detail (not aggregated), `GET /admin/logs` returns the individual cost breakdown and
+the deployment that served each request. A cache hit is the one exception to "every request with usage
+is billed": it returns before cost accounting runs at all, logs with `cost: null`, and never touches the
+virtual key's spend or TPM counters — see [Caching](/docs/caching).
+
+## What to read next
+
+- [Virtual keys](/docs/virtual-keys) — budgets, RPM/TPM limits, and their reset cadence.
+- [Observability](/docs/observability) — request logs and telemetry beyond cost.
+- [Model catalog](/docs/model-catalog) — the `pricing` schema.

@@ -18,13 +18,13 @@ is first-class on Coolify, Portainer, and Dokploy.
 ## Topologies
 
 How the gateway reaches Postgres/Redis decides whether you need TLS — and, because the gateway runs on
-**Bun**, whether you hit the [self-signed TLS issue](/docs/known-errors).
+**Bun**, whether you hit the [self-signed TLS issue](/docs/troubleshooting).
 
 | Topology | Connection | TLS | Works on Bun |
 |---|---|---|---|
 | **Compose (all-in-one)** — gateway + Postgres + Redis together | internal Docker network | none (plaintext) | ✅ recommended |
 | **Managed database** (Neon / Aiven / Upstash …) | internet | public-CA | ✅ |
-| **Self-signed database exposed publicly** (raw Coolify/Dokploy port) | internet | self-signed | ⚠️ may fail — see [Known errors](/docs/known-errors) |
+| **Self-signed database exposed publicly** (raw Coolify/Dokploy port) | internet | self-signed | ⚠️ may fail — see [Troubleshooting](/docs/troubleshooting) |
 
 The first row is the default for every recipe here: the gateway talks to Postgres/Redis over the
 private Compose network in plaintext, which is both safe (network isolation) and immune to the Bun TLS

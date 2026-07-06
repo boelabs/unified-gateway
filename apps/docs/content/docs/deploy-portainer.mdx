@@ -19,7 +19,7 @@ If the proxy runs directly on the same Docker host instead, add loopback-only ma
 Never publish Postgres, Redis, or `migrate`.
 
 The gateway reaches Postgres/Redis over the internal stack network in plaintext, so there is no TLS
-handshake and no [Bun TLS issue](/docs/known-errors).
+handshake and no [Bun TLS issue](/docs/troubleshooting).
 
 If you point at **external** instances instead, set `DATABASE_URL`/`REDIS_URL` in the stack
 environment and prefer a [managed provider with a public-CA certificate](/docs/setup#managed-database-and-redis);
