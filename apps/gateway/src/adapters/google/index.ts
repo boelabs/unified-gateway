@@ -808,6 +808,7 @@ const embeddings: EmbeddingsHandler = {
 
 export const googleAdapter: Adapter = {
 	key: "googleaistudio",
+	credentials: { required: ["apiKey"] },
 	supportedCallTypes: new Set([
 		"chat",
 		"images.generations",

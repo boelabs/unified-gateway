@@ -1,6 +1,7 @@
 import { resolveModelMetadata, getCatalogEntry } from "#catalog/index.ts";
 import type { TransportOverrides } from "#profiles/types.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
+import type { Adapter } from "#adapters/types.ts";
 import { isUpstreamTransport } from "#core/transport.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
 import { getAdapter } from "#adapters/registry.ts";
@@ -89,6 +90,21 @@ function validateCustomCatalogEntry(
 			message: `Adapter "${adapter.key}" cannot emit reasoning.kind "${kind}"`,
 			param: "catalogEntry.operations.text.generate.reasoning.kind",
 		});
+	}
+}
+
+function validateRequiredCredentials(
+	adapter: Adapter,
+	credentials: Record<string, unknown>,
+): void {
+	for (const key of adapter.credentials.required) {
+		if (typeof credentials[key] !== "string" || credentials[key] === "") {
+			throw new GatewayError({
+				class: "bad_request",
+				message: `Credential "${key}" is required`,
+				param: `credentials.${key}`,
+			});
+		}
 	}
 }
 
@@ -229,6 +245,15 @@ export async function createDeployment(
 	input: CreateDeploymentInput,
 ): Promise<{ row: DeploymentRow; preview: DeploymentPreview }> {
 	const preview = await previewDeployment(input);
+	const adapter = getAdapter(input.adapterKey);
+	if (!adapter) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Adapter "${input.adapterKey}" is not registered`,
+			param: "adapterKey",
+		});
+	}
+	validateRequiredCredentials(adapter, input.credentials);
 	const row = await insertDeployment({
 		publicModel: input.publicModel,
 		adapterKey: input.adapterKey,
@@ -278,6 +303,16 @@ export async function updateDeployment(
 				: {}),
 	};
 	const preview = await previewDeployment(input);
+	const adapter = getAdapter(input.adapterKey);
+	if (!adapter) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Adapter "${input.adapterKey}" is not registered`,
+			param: "adapterKey",
+		});
+	}
+	if (patch.credentials !== undefined)
+		validateRequiredCredentials(adapter, patch.credentials);
 	let row: DeploymentRow | undefined;
 	try {
 		row = await persistDeployment(id, {

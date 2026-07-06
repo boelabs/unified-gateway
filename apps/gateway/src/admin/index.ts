@@ -194,7 +194,7 @@ export const adminApp = new Hono<AppEnv>();
 
 // Every /admin route requires the master key.
 adminApp.use("*", authMiddleware(), requireMaster());
-// Model CRUD (with inline CatalogEntry for custom models) and provider presets.
+// Model CRUD (with inline CatalogEntry for custom models) and adapter introspection.
 adminApp.route("/", platformAdminApp);
 
 /* --------------------------------------------------------- virtual keys */

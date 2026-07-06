@@ -6,7 +6,6 @@ import "#adapters/index.ts";
 
 import { createDeployment, previewDeployment } from "#deployments/service.ts";
 import { redisAvailable, pgAvailable } from "#test-support/infra.ts";
-import { getProviderPreset } from "#providers/presets.ts";
 import { resolveTransport } from "#router/transport.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
 
@@ -26,16 +25,17 @@ const skip = (await Promise.all([pgAvailable(), redisAvailable()])).every(
 	? false
 	: "Postgres/Redis unavailables";
 
-test("deployments: custom OpenRouter with inline catalogEntry resolves universal transport", {
+test("deployments: custom OpenAI-compatible aggregator with inline catalogEntry resolves explicit transport", {
 	skip,
 }, async () => {
-	const preset = getProviderPreset("openrouter");
-	assert.ok(preset);
 	const publicModel = `nano-banana-${randomUUID()}`;
 	const upstreamModel = "google/gemini-3.1-flash-image-preview";
-	const adapterKey = preset.adapterKey;
-	const transportOverrides = preset.defaultTransportOverrides;
-	// OpenRouter (openaicompatible) is not in the catalog -> custom -> catalogEntry required.
+	const adapterKey = "openaicompatible";
+	const transportOverrides = {
+		"image.generate": "chat_completions",
+		"image.edit": "chat_completions",
+	};
+	// OpenAI-compatible has no catalog -> custom -> catalogEntry required.
 	const catalogEntry: CatalogEntry = {
 		operations: {
 			"image.generate": {
@@ -76,7 +76,7 @@ test("deployments: custom OpenRouter with inline catalogEntry resolves universal
 			catalogEntry,
 			credentials: {
 				apiKey: "test-key",
-				baseUrl: "https://openrouter.ai/api/v1",
+				baseUrl: "https://api.aggregator.example/v1",
 			},
 		});
 		deploymentId = created.row.id;
@@ -97,7 +97,7 @@ test("deployments: custom OpenRouter with inline catalogEntry resolves universal
 		);
 		assert.equal(
 			decryptDeploymentCredentials(candidate).baseUrl,
-			"https://openrouter.ai/api/v1",
+			"https://api.aggregator.example/v1",
 		);
 		assert.equal(
 			(await getDeploymentCredentials(created.row.id))?.apiKey,

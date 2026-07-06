@@ -302,7 +302,7 @@ paths:
         - Inference
       security: []
       summary: List public models (unauthenticated)
-      description: OpenAI-compatible base fields plus OpenRouter-like capability metadata aggregated from enabled deployments. Does not expose deployment labels, credentials, or upstream model ids.
+      description: OpenAI-compatible base fields plus capability metadata aggregated from enabled deployments. Does not expose deployment labels, credentials, or upstream model ids.
       responses:
         "200":
           description: "{ object: 'list', data: [{ id, object, created, owned_by, architecture, top_provider, pricing, operations, supported_parameters, endpoint_count }] }"
@@ -329,7 +329,7 @@ paths:
         - Inference
       security: []
       summary: List redacted deployments for a public model
-      description: OpenRouter-like endpoint data for each enabled deployment. Public response redacts database ids, operator labels, credentials, metadata, and upstream model ids.
+      description: Redacted endpoint data for each enabled deployment. Public response redacts database ids, operator labels, credentials, metadata, and upstream model ids.
       parameters:
         - name: model
           in: path
@@ -350,30 +350,19 @@ paths:
         "200":
           description: Operation and adapter registry
         "401": *a1
-  /admin/provider-presets:
-    get:
-      tags:
-        - Admin
-      operationId: listProviderPresets
-      summary: List provider presets (OpenAI, Azure OpenAI/Foundry, Google, Anthropic, OpenRouter, compatibles)
-      description: Each preset resolves the code adapter, required credential keys, defaults (for example baseUrl), and the per-operation transport. They are used when creating a deployment with `provider`.
-      responses:
-        "200":
-          description: Provider presets without credentials
-        "401": *a1
   /admin/deployments/resolve:
     post:
       tags:
         - Admin
       operationId: resolveDeployment
       summary: Resolve profile, operations, and transports without saving
-      description: Same body as POST /admin/deployments (credentials are accepted and ignored).
+      description: Validates adapter, catalog/custom model metadata, operation profiles, and transports without saving. Credentials are accepted for body reuse and ignored.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateDeployment"
+              $ref: "#/components/schemas/ResolveDeployment"
       responses:
         "200":
           description: Effective deployment configuration
@@ -410,7 +399,7 @@ paths:
         - Admin
       operationId: createDeployment
       summary: Create a deployment with the API key inline
-      description: "Creates a deployment: public name (`publicModel`) + exact upstream model + inline credentials. `provider` (preset) resolves the adapter, required keys, and default transports; an explicit `adapterKey` can be provided instead. Multiple deployments with the same `publicModel` form a balanced pool."
+      description: "Creates a deployment: public name (`publicModel`) + adapter + exact upstream model + inline credentials. Multiple deployments with the same `publicModel` form a balanced pool."
       requestBody:
         required: true
         content:
@@ -421,7 +410,7 @@ paths:
               gptImage:
                 value:
                   publicModel: gpt-image
-                  provider: openai
+                  adapterKey: openai
                   upstreamModel: gpt-image-2
                   credentials:
                     apiKey: sk-...
@@ -1539,38 +1528,18 @@ components:
         - model
         - prompt
         - image
-    CreateDeployment:
+    ResolveDeployment:
       type: object
       properties:
         publicModel:
           type: string
           description: Public alias sent as model in /v1.
-        provider:
-          description: Known preset (openai, googleaistudio, anthropic, openrouter, openaicompatible).
-          type: string
         adapterKey:
-          description: Explicit adapter; alternative to provider.
           type: string
+          description: Code adapter key (for example openai, googleaistudio, anthropic, openaicompatible).
         upstreamModel:
           type: string
           description: Exact ID; preserves slash namespaces.
-        credentials:
-          type: object
-          propertyNames:
-            type: string
-          additionalProperties: {}
-          description: Inline API key (e.g. { apiKey }). Encrypted; never returned.
-        label:
-          description: Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label).
-          anyOf:
-            - type: string
-            - type: "null"
-        metadata:
-          description: Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim.
-          type: object
-          propertyNames:
-            type: string
-          additionalProperties: {}
         catalogEntry:
           description: REQUIRED if the model is not in the catalog (custom); FORBIDDEN if it is. 1:1 entry with catalog.json.
           $ref: "#/components/schemas/CatalogEntry"
@@ -1584,28 +1553,27 @@ components:
         transportOverrides:
           description: Per-operation transport override. Usually inferred from the adapter; rarely needed.
           $ref: "#/components/schemas/TransportOverrides"
-        enabled:
-          type: boolean
-        weight:
-          type: integer
-          minimum: 0
-          maximum: 9007199254740991
-        tpmLimit:
+        credentials:
+          description: Accepted for body reuse with POST /admin/deployments, but ignored by resolve.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        label:
+          description: Accepted for body reuse with POST /admin/deployments, but ignored by resolve.
           anyOf:
-            - type: integer
-              minimum: -9007199254740991
-              maximum: 9007199254740991
+            - type: string
             - type: "null"
-        rpmLimit:
-          anyOf:
-            - type: integer
-              minimum: -9007199254740991
-              maximum: 9007199254740991
-            - type: "null"
+        metadata:
+          description: Accepted for body reuse with POST /admin/deployments, but ignored by resolve.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
       required:
         - publicModel
+        - adapterKey
         - upstreamModel
-        - credentials
     CatalogEntry:
       type: object
       properties:
@@ -1654,6 +1622,71 @@ components:
         - audio.transcribe
         - embedding.create
       description: Advanced operation-to-transport override. Defaults normally come from the connection.
+    CreateDeployment:
+      type: object
+      properties:
+        publicModel:
+          type: string
+          description: Public alias sent as model in /v1.
+        adapterKey:
+          type: string
+          description: Code adapter key (for example openai, googleaistudio, anthropic, openaicompatible).
+        upstreamModel:
+          type: string
+          description: Exact ID; preserves slash namespaces.
+        credentials:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+          description: Inline provider credentials. Required keys are exposed by GET /admin/operations under adapter.credentials.required. Encrypted; never returned.
+        label:
+          description: Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label).
+          anyOf:
+            - type: string
+            - type: "null"
+        metadata:
+          description: Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim.
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        catalogEntry:
+          description: REQUIRED if the model is not in the catalog (custom); FORBIDDEN if it is. 1:1 entry with catalog.json.
+          $ref: "#/components/schemas/CatalogEntry"
+        pricing:
+          description: Operator pricing for cost calculation (optional).
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties:
+            type: number
+        transportOverrides:
+          description: Per-operation transport override. Usually inferred from the adapter; rarely needed.
+          $ref: "#/components/schemas/TransportOverrides"
+        enabled:
+          type: boolean
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        tpmLimit:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        rpmLimit:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+      required:
+        - publicModel
+        - adapterKey
+        - upstreamModel
+        - credentials
     UpdateDeployment:
       type: object
       properties:

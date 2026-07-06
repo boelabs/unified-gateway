@@ -5,29 +5,27 @@ description: "Every built-in adapter: credentials, default transport, and where 
 
 Each provider is a code **adapter** (translates the canonical format to/from the provider's wire
 format) paired with a **catalog** (`catalog.json`, the known models and their capabilities/pricing).
-Creating a deployment for a known provider is usually a `provider` preset plus credentials — see
+Creating a deployment always names the adapter directly with `adapterKey` — see
 [Creating deployments](/docs/creating-deployments) for the full request shape.
 
-| Provider | `provider` preset | Adapter key | Credentials | Default transport |
-|---|---|---|---|---|
-| [OpenAI](/docs/providers-openai) | `openai` | `openai` | `apiKey` | Responses API |
-| [Azure OpenAI](/docs/providers-azure-openai) | `azureopenai` | `azureopenai` | `apiKey`, `baseUrl` | Responses API |
-| [Azure Foundry](/docs/providers-azure-foundry) | `azurefoundry` | `azurefoundry` | `apiKey`, `baseUrl` | Chat Completions |
-| [Google AI Studio](/docs/providers-google) | `googleaistudio` | `googleaistudio` | `apiKey` | `generateContent` |
-| [Anthropic](/docs/providers-anthropic) | `anthropic` | `anthropic` | `apiKey` | Messages API |
-| [DeepSeek](/docs/providers-deepseek) | — (`adapterKey`) | `deepseek` | `apiKey` | Chat Completions |
-| [MiniMax](/docs/providers-minimax) | — (`adapterKey`) | `minimax` | `apiKey` | Chat Completions |
-| [Moonshot](/docs/providers-moonshot) | — (`adapterKey`) | `moonshot` | `apiKey` | Chat Completions |
-| [Z.AI](/docs/providers-zai) | — (`adapterKey`) | `zai` | `apiKey` | Chat Completions |
-| [OpenAI-compatible](/docs/providers-openai-compatible) | `openaicompatible` | `openaicompatible` | `apiKey`, `baseUrl` | Chat Completions |
-| OpenRouter | `openrouter` | `openaicompatible` | `apiKey` (baseUrl defaulted) | Chat Completions |
+| Provider | Adapter key | Credentials | Default transport |
+|---|---|---|---|
+| [OpenAI](/docs/providers-openai) | `openai` | `apiKey` | Responses API |
+| [Azure OpenAI](/docs/providers-azure-openai) | `azureopenai` | `apiKey`, `baseUrl` | Responses API |
+| [Azure Foundry](/docs/providers-azure-foundry) | `azurefoundry` | `apiKey`, `baseUrl` | Chat Completions |
+| [Google AI Studio](/docs/providers-google) | `googleaistudio` | `apiKey` | `generateContent` |
+| [Anthropic](/docs/providers-anthropic) | `anthropic` | `apiKey` | Messages API |
+| [DeepSeek](/docs/providers-deepseek) | `deepseek` | `apiKey` | Chat Completions |
+| [MiniMax](/docs/providers-minimax) | `minimax` | `apiKey` | Chat Completions |
+| [Moonshot](/docs/providers-moonshot) | `moonshot` | `apiKey` | Chat Completions |
+| [Z.AI](/docs/providers-zai) | `zai` | `apiKey` | Chat Completions |
+| [OpenAI-compatible](/docs/providers-openai-compatible) | `openaicompatible` | `apiKey`, `baseUrl` | Chat Completions |
 
-Providers without their own `provider` preset (DeepSeek, MiniMax, Moonshot, Z.AI) ship a **built-in
-default `baseUrl`** — pass `adapterKey` instead of `provider` when creating a deployment; no `baseUrl`
-credential is required unless you're pointing at a compatible mirror.
+Adapters with a built-in upstream host do not require `baseUrl`. `openaicompatible`, Azure OpenAI,
+and Azure Foundry require `baseUrl` because the operator chooses the target endpoint.
 
-`GET /admin/provider-presets` returns this same data live; `GET /admin/operations` returns which
-operations and transports each adapter actually implements.
+`GET /admin/operations` returns this same adapter list live, including required credential keys and
+which operations/transports each adapter actually implements.
 
 ## What to read next
 

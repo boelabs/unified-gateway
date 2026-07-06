@@ -1,6 +1,6 @@
 ---
 title: "DeepSeek"
-description: "Adapter key deepseek. Built-in base URL, no provider preset needed."
+description: "Adapter key deepseek. Built-in base URL."
 ---
 
 ```json
@@ -8,7 +8,6 @@ description: "Adapter key deepseek. Built-in base URL, no provider preset needed
 ```
 
 - **Credentials**: `apiKey` only. No `baseUrl` needed — defaults to `https://api.deepseek.com/v1`.
-- Use `adapterKey: "deepseek"` (there's no `provider` preset for this one).
 - **Default transport**: Chat Completions.
 - **Reasoning**: `openai_body` (native `thinking`/effort controls), per model in the catalog.
 - Catalog: `src/adapters/deepseek/catalog.json`.
