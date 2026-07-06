@@ -1,0 +1,53 @@
+---
+title: "Upgrades"
+description: "How to roll out a new version safely: migrations, breaking changes, and rollback."
+---
+
+## Pulling a new image
+
+`docker-compose.yml`'s `migrate` service is a one-off job that applies pending SQL migrations and
+exits; the `gateway` service depends on it completing before it starts. Pulling a new image and
+re-running `docker compose up -d` (or your PaaS's redeploy) re-runs that job automatically — you don't
+need a separate manual migration step for the bundled Compose stack. If you run the gateway outside
+Compose, run `bun run --filter @boelabs/unified-gateway db:migrate` yourself before rolling out new
+instances.
+
+## Migrations are forward-only
+
+There is no `db:migrate:down`. Migrations in `src/db/migrations/` are never edited after being applied —
+a fix ships as a new migration, never a rewrite of an old one. This means:
+
+- **Rolling back the gateway image does not roll back the schema.** If a migration shipped with the
+  version you're rolling back from, the old code needs to still tolerate the new columns/enums (additive
+  changes are the norm specifically so this holds).
+- If a migration must be undone, that's a new forward migration that reverses it — plan for it the same
+  way you'd plan any other schema change, not as an emergency `DOWN`.
+
+## Pre-1.0 breaking changes
+
+Unified Gateway is pre-1.0: the adapter surface and admin API can still change in breaking ways between
+releases. Before upgrading in production:
+
+1. Read [`CHANGELOG.md`](https://github.com/boelabs/unified-gateway/blob/main/CHANGELOG.md) for the
+   versions between your current one and the target — entries are grouped `Added`/`Changed`/`Fixed`
+   per [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+2. Check whether any admin API request/response shape you depend on changed — the OpenAPI spec
+   (`apps/gateway/openapi.yaml`) is the source of truth; diff it against the version you're upgrading
+   from if you have automation built against it.
+3. If the release adds a router setting or catalog field with a new default (as router capabilities
+   did for `unsupportedParameterStrategy`), decide explicitly whether the default is what you want
+   rather than inheriting it silently — see [Routing](/docs/routing) and
+   [Parameter policy](/docs/parameter-policy).
+
+## Rolling back an image
+
+Since schema changes are additive and forward-only, redeploying a previous image tag is normally safe
+as long as that older code doesn't reference a column/enum value a *newer* migration added (which it
+won't, by construction — old code simply doesn't know about new columns). What it can **not** undo is
+data written under new semantics (e.g. rows using a new enum value); if you must revert behavior as
+well as code, ship a forward migration or a config change rather than relying on the rollback alone.
+
+## What to read next
+
+- [Operations](/docs/operations) — the day-to-day runbook.
+- [Production checklist](/docs/production-checklist) — pre-launch verification.

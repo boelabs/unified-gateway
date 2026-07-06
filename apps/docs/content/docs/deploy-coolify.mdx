@@ -29,13 +29,13 @@ publish a raw host port.
 
 Because Postgres/Redis live on the Compose network and the gateway connects over plaintext
 (`postgres://gateway:gateway@postgres:5432/unifiedgateway`, `redis://redis:6379`), there is no TLS and
-therefore no [Bun TLS issue](/docs/known-errors).
+therefore no [Bun TLS issue](/docs/troubleshooting).
 
 ## Using Coolify's standalone database / Redis services
 
 If you instead create Coolify's **standalone** Postgres and Redis services and connect the gateway to
 them, Coolify exposes them with **self-signed** certificates, which Bun's TLS may reject (see
-[Known errors](/docs/known-errors)). The simplest setup is to run both without TLS on the private
+[Troubleshooting](/docs/troubleshooting)). The simplest setup is to run both without TLS on the private
 network:
 
 - **Disable SSL on both services** — uncheck **Enable SSL** on the Postgres and Redis services.
@@ -46,5 +46,5 @@ network:
 > disabling SSL is the simplest path for the gateway.
 
 Do not expose the database publicly in plaintext — see the
-[security note](/docs/known-errors#security-note). For an off-network database, prefer a
+[security note](/docs/troubleshooting#security-note). For an off-network database, prefer a
 [managed provider with a public-CA certificate](/docs/setup#managed-database-and-redis).

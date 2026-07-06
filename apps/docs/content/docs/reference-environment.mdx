@@ -1,0 +1,80 @@
+---
+title: "Environment variables"
+description: "Every variable the gateway reads, with its default and what it controls."
+---
+
+Validated once at startup with a strict schema — a missing or malformed required variable fails the
+process immediately with a clear message, rather than surfacing as a confusing runtime error later.
+Only `MASTER_KEY`, `CREDENTIALS_ENCRYPTION_KEY`, `DATABASE_URL`, and `REDIS_URL` have no default and
+must be set; everything else ships with a production-ready value.
+
+## Required
+
+| Variable | Format | Notes |
+|---|---|---|
+| `MASTER_KEY` | String, 8+ chars | Full-access operator key. Generate with `openssl rand -base64 48`. |
+| `CREDENTIALS_ENCRYPTION_KEY` | 64 hex chars (32 bytes) | Encrypts deployment credentials at rest. Generate with `openssl rand -hex 32`. Losing or rotating it makes existing encrypted credentials unreadable — see [Security](/docs/security). |
+| `DATABASE_URL` | Postgres connection URL | |
+| `REDIS_URL` | Redis connection URL | |
+
+## Server
+
+| Variable | Default | Controls |
+|---|---|---|
+| `PORT` | `4000` | HTTP listen port. |
+| `NODE_ENV` | `development` | `development` \| `test` \| `production`. |
+| `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
+| `SHUTDOWN_TIMEOUT_MS` | `10000` | Drain budget on `SIGTERM`/`SIGINT` before forcing exit. |
+
+## Requests, logging, and limits
+
+| Variable | Default | Controls |
+|---|---|---|
+| `MAX_STRING_LENGTH_PROMPT_IN_DB` | `8000` | Truncates prompt/response text stored in `request_logs`. Doesn't affect what's sent upstream. |
+| `IMAGES_MAX_MULTIPART_BYTES` | `805000000` (~805 MB) | Aggregate cap on an image multipart upload (images + mask + fields), streamed to temporary disk. |
+| `AUDIO_MAX_MULTIPART_BYTES` | `30000000` (30 MB) | Aggregate cap on an audio transcription multipart upload. |
+| `RESPONSES_STORE_DEFAULT` | `true` | Default for `store` when a `/v1/responses` request omits it. Set `false` for privacy-first deployments. |
+| `RESPONSES_STATE_RETENTION_DAYS` | `14` | How long a stored Response (with `store: true`) stays retrievable via `GET /v1/responses/:id`. |
+| `RESPONSE_STATE_GC_INTERVAL_MS` | `3600000` (1h) | How often the in-process job deletes expired response state. |
+
+## Request log partitioning
+
+| Variable | Default | Controls |
+|---|---|---|
+| `REQUEST_LOG_PARTITION_CREATE_DAYS` | `7` | How many future daily partitions stay pre-created. |
+| `REQUEST_LOG_PARTITION_RETENTION_DAYS` | `30` | How many days of partitions are kept before being dropped. |
+| `REQUEST_LOG_PARTITION_JOB_INTERVAL_MS` | `3600000` (1h) | How often the in-process job creates/drops partitions. |
+
+## Runtime extensions
+
+| Variable | Default | Controls |
+|---|---|---|
+| `UNIFIED_GATEWAY_EXTENSION_MAX_FAILURES` | `3` | Consecutive hook failures before an extension instance is disabled for that process. |
+| `UNIFIED_GATEWAY_EXTENSIONS_RELOAD_INTERVAL_MS` | `15000` | How often each replica polls for a changed extension registry to hot-reload. |
+| `UNIFIED_GATEWAY_EXTENSIONS_MAX_CODE_BYTES` | `1000000` (1 MB) | Maximum size of an uploaded extension module's source. |
+| `UNIFIED_GATEWAY_EXTENSION_HOOK_TIMEOUT_MS` | `5000` | Per-hook wall-clock budget. `0` disables the timeout. An exceeded hook is aborted and counts as a failure. |
+
+## Observability (OpenTelemetry)
+
+| Variable | Default | Controls |
+|---|---|---|
+| `OTEL_ENABLED` | `false` | Master switch. Metrics/traces are otherwise not exported at all. |
+| `OTEL_SERVICE_NAME` | `unifiedgateway` | Service name attached to exported telemetry. |
+| `OTEL_METRIC_EXPORT_INTERVAL_MS` | `60000` | How often metrics are pushed to the collector. |
+| `OTEL_LOG_PAYLOADS` | `true` | Emits full request/response/error payloads as OTEL span events. Independent of `MAX_STRING_LENGTH_PROMPT_IN_DB`, which only truncates what's stored in Postgres — see [Security](/docs/security) before enabling this in a compliance-sensitive environment. |
+
+These are read by the gateway's own schema. Once `OTEL_ENABLED=true`, the exporters (`OTLPMetricExporter`,
+`OTLPTraceExporter`) also read the **standard** OpenTelemetry SDK environment variables directly —
+notably `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` — which are not gateway-specific
+and so aren't validated by the schema above. See [Observability](/docs/observability) for a working
+example.
+
+Boolean variables (`RESPONSES_STORE_DEFAULT`, `OTEL_ENABLED`, `OTEL_LOG_PAYLOADS`) accept
+`1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`, case-insensitively.
+
+## What to read next
+
+- [Setup](/docs/setup) — the minimal set to get running.
+- [Security](/docs/security) — implications of `CREDENTIALS_ENCRYPTION_KEY` and `OTEL_LOG_PAYLOADS`.
+- [Observability](/docs/observability) — OTEL setup end to end.
+- [Production checklist](/docs/production-checklist) — what to double-check before going live.

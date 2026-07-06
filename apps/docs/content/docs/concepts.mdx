@@ -59,7 +59,7 @@ Decoupling the client-facing name from the provider model is what makes the rest
 - **One control plane** — auth, [virtual-key](/docs/virtual-keys) scopes, budgets, rate limits,
   logging, and cost accounting all key off the public name, regardless of which provider served it.
 
-## How a request is served
+## How a request is served, briefly
 
 1. A client calls a **Public Endpoint** with a virtual or master key and a `model`.
 2. Auth resolves the key, checks the model is in scope, and applies rate limits.
@@ -71,12 +71,12 @@ Decoupling the client-facing name from the provider model is what makes the rest
 6. The canonical response is rendered back into the calling endpoint's contract and returned, with
    `x-request-id` and (for limited keys) `x-ratelimit-*` headers.
 
-Optional layers wrap this: an opt-in [response cache](/docs/caching) short-circuits step 4 on a hit,
-and [runtime extensions](/docs/extensions) can hook the canonical request, response, stream, image
-output, or errors.
+This is the short version. For the exact execution order — including where the response cache,
+parameter policy, extension hooks, and cost accounting each fit in — see [Architecture](/docs/architecture).
 
 ## Where to go next
 
+- [Architecture](/docs/architecture) — the same request, traced through every layer in precise order.
 - [Quickstart](/docs/quickstart) — do all of the above once, hands-on.
 - [Creating deployments](/docs/creating-deployments) — define public models over real providers.
 - [Glossary](/docs/glossary) — the exact, contract-level definition of every term here.

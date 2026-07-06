@@ -17,7 +17,7 @@ docker compose -f docker-compose.yml -f compose.local.yaml up -d
 
 This starts Postgres, Redis, the one-off migration job, the gateway (`127.0.0.1:4000`) and the docs
 (`127.0.0.1:3000`). The gateway talks to Postgres/Redis over the internal Compose network in
-plaintext, so there is no TLS and no [Bun TLS issue](/docs/known-errors).
+plaintext, so there is no TLS and no [Bun TLS issue](/docs/troubleshooting).
 
 ## Production notes
 

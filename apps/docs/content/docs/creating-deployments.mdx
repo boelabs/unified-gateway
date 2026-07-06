@@ -5,7 +5,8 @@ description: "Register provider deployments behind a public model."
 
 A **deployment** binds a **public name** (what clients use), an **adapter**, an **upstream model**,
 and a set of **credentials**. Several deployments with the same `publicModel` form a pool with load
-balancing and fallback.
+balancing and fallback. New to this? [First deployment](/docs/first-deployment) is the minimal path;
+this page is the full reference across every provider and operation type.
 
 Everything is done through the admin API with the **master key**:
 
@@ -210,62 +211,9 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
 #### Reasoning in custom models
 
 A custom model can declare **how** it controls reasoning with a `reasoning` block inside
-`catalogEntry.operations.text.generate`. For it to be valid, `capabilities.reasoning` **must** be
-`true`; if it is `false`, the gateway rejects a `reasoning` block. The client still uses the canonical
-knob (`reasoning.effort`); the gateway snaps it to `levels` and translates it to the upstream. Requests
-are **clamped, never rejected**: an out-of-range effort snaps into range, and `none` is honored when the
-model has an off switch or snaps to the floor when it does not. When the requested effort is adjusted,
-the request log records both values under `metadata.reasoning` (`requested`, `effective`, `clamped`) so
-the clamping is observable.
-
-| Field | Description |
-|---|---|
-| `kind` | `openai_effort` (emits `reasoning_effort`), `openai_body` (emits a provider-specific top-level field), or `chat_template_flag` (vLLM-style toggle in `chat_template_kwargs`). |
-| `levels` | The effort levels the model accepts, as points on the ladder `none < minimal < low < medium < high < xhigh`. Include `"none"` to declare a literal off switch; omit it for a model that **always reasons** (a `none` request then snaps to the lowest level). E.g. `["none","low","medium","high"]`, or `["none","high"]` for a binary toggle. There is no separate `canDisable` flag. |
-| `upstreamEffortMap` | `openai_effort` only: translates the canonical effort to the native `reasoning_effort` label. Keys = canonical efforts; they must be in `levels`. |
-| `bodyField`, `effortField` | `openai_body` only: `bodyField` defines the on/off top-level field; optional `effortField` defines where to write the scalar effort. |
-| `chatTemplateFlag` | `chat_template_flag` only: `{ param, onValue?, offValue? }`. See below. |
-
-**a) Standard effort with native label** (`upstreamEffortMap`): a provider that does use
-`reasoning_effort` but with its own vocabulary (e.g. `xhigh → "max"`):
-
-```jsonc
-"reasoning": { "kind": "openai_effort", "levels": ["none","low","high","xhigh"], "upstreamEffortMap": { "xhigh": "max" } }
-```
-
-**b) vLLM-style toggle** (`chat_template_flag`): thinking is enabled with a flag inside
-`chat_template_kwargs` (kimi `thinking`, Qwen `enable_thinking`, etc.), NOT with `reasoning_effort`.
-The canonical effort only decides on/off: active → `onValue` (default `true`), inactive → `offValue`
-(if omitted, the parameter is not emitted and the template default wins).
-
-```bash
-curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
-  "publicModel": "kimi-k2.6",
-  "provider": "openaicompatible",
-  "upstreamModel": "moonshotai/kimi-k2.6",
-  "credentials": { "apiKey": "x", "baseUrl": "https://integrate.api.nvidia.com/v1" },
-  "catalogEntry": {
-    "operations": {
-      "text.generate": {
-        "capabilities": { "tools": true, "vision": true, "reasoning": true, "structuredOutputs": false },
-        "maxInputTokens": 262144,
-        "maxOutputTokens": 65536,
-        "reasoning": {
-          "kind": "chat_template_flag",
-          "levels": ["none", "high"],
-          "chatTemplateFlag": { "param": "thinking", "offValue": false }
-        }
-      }
-    }
-  }
-}'
-```
-
-Resulting public API: `reasoning.effort` ∈ `none | high`. With `high` the gateway emits
-`chat_template_kwargs: { "thinking": true }`; with `none` (or when not requested) it emits
-`{ "thinking": false }` (via `offValue`; if you omit it, the flag is not emitted and the template
-default wins). The gateway wins over a `chat_template_kwargs.thinking` the client sends via
-`extra_body`, but preserves the other keys the client puts there.
+`catalogEntry.operations.text.generate` (requires `capabilities.reasoning: true`). Full field reference,
+all eight `kind`s, clamping semantics, and a worked `chat_template_flag` example:
+[Reasoning](/docs/reasoning).
 
 > **Vision:** with `capabilities.vision: true` the client passes images in the `content` array as
 > `type: "image_url"` (URL or base64) and the adapter forwards them as-is. The canonical contract
@@ -352,3 +300,10 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
   `publicModel` (the router balances and applies fallback).
 - Edit with `PATCH /admin/deployments/:id` (same fields; `catalogEntry`/`pricing` accept `null` to clear).
 - The semantics of per-deployment retries, `reason`, and chain lifecycle are in [fallbacks](/docs/fallbacks).
+
+## What to read next
+
+- [Providers](/docs/providers) — credentials and quirks for every built-in adapter.
+- [Routing](/docs/routing) — `weight`, `rpmLimit`, `tpmLimit` in effect once a pool has multiple deployments.
+- [Model catalog](/docs/model-catalog) — the full `catalogEntry`/`operations` schema.
+- [Reasoning](/docs/reasoning) — every `reasoning.kind` in depth.

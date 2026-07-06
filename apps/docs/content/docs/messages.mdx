@@ -1,0 +1,57 @@
+---
+title: "Messages"
+description: "POST /v1/messages — the Anthropic Messages contract, over the same canonical core."
+---
+
+```bash
+curl -X POST "$GATEWAY/v1/messages" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude",
+    "max_tokens": 1024,
+    "messages": [{ "role": "user", "content": "Say hi" }]
+  }'
+```
+
+The native Anthropic wire shape — `stop_sequences` instead of `stop`, `system` as a top-level field or
+message, `output_config.format` instead of `response_format` — rendered onto the same canonical request
+as [Chat completions](/docs/chat-completions) and [Responses](/docs/responses). You can request any
+provider through this contract, not just Anthropic models; the reverse also works (Anthropic models are
+reachable through Chat Completions and Responses too).
+
+## Prompt-caching breakpoints
+
+`cache_control: { "type": "ephemeral" }` on a system block, content block, or tool is preserved
+end-to-end as an opaque pass-through — the canonical core doesn't interpret it, only the Anthropic
+adapter emits it. Transports that don't support this concept (OpenAI, Google) simply ignore it rather
+than erroring.
+
+## Structured output
+
+`output_config.format` maps to the same canonical `responseFormat` as `response_format` elsewhere —
+`json_schema` requests schema-adherent output on models that declare `structuredOutputs: true`.
+
+## Reasoning
+
+Anthropic's `thinking` block is resolved from the same canonical `reasoning.effort`/`summary` as every
+other contract. Two distinct kinds exist in the catalog — `anthropic_adaptive` (the model picks its own
+depth, driven by `output_config.effort`) and `anthropic_budget` (an explicit `budget_tokens` per
+level) — see [Reasoning](/docs/reasoning) for the exact wire shape of each and which models use which.
+
+## Error shape
+
+Errors follow Anthropic's own envelope (`{"type": "error", "error": {"type": "...", "message": "..."}}`)
+on this endpoint specifically, even though the gateway's internal classification is identical across
+all three text contracts — see [Troubleshooting](/docs/troubleshooting) for the class-to-type mapping.
+
+## Streaming
+
+Same SSE mechanics as every other endpoint, rendered into Anthropic's own event names
+(`message_start`, `content_block_delta`, ...). See [Streaming](/docs/streaming).
+
+## What to read next
+
+- [Reasoning](/docs/reasoning) — `anthropic_adaptive` vs. `anthropic_budget` in depth.
+- [Chat completions](/docs/chat-completions) and [Responses](/docs/responses) — the other two text contracts.
+- [Providers → Anthropic](/docs/providers-anthropic) — credentials and adapter specifics.

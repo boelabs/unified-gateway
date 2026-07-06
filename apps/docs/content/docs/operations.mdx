@@ -1,12 +1,13 @@
 ---
 title: "Operations"
-description: "Deployment, health probes, migrations, and graceful shutdown."
+description: "Health probes, secrets, data lifecycle, backups, and shutdown."
 ---
 
-Operational runbook for running Unified Gateway in production: deploying, wiring health probes, rotating
-secrets, managing `request_logs` partitions, and shipping telemetry. If you are still getting the
+Operational runbook for running Unified Gateway in production: health probes, rotating secrets,
+managing `request_logs` partitions, backups, and graceful shutdown. If you are still getting the
 gateway running locally, start with the [Quickstart](/docs/quickstart) instead — this page assumes a
-real deployment.
+real deployment. For observability (logs, telemetry, request/usage queries) see
+[Observability](/docs/observability); for pricing and spend, see [Cost accounting](/docs/cost-accounting).
 
 ## Health and lifecycle
 
@@ -17,7 +18,7 @@ orchestrator.
 The app runs TypeScript directly on **Bun** — there is no build step. Run
 `bun run --filter @boelabs/unified-gateway db:migrate` as a one-off **before** rolling out new
 instances; migrations are generated from `schema.ts` with drizzle-kit and are forward-only — never
-edit an already-applied migration.
+edit an already-applied migration. See [Upgrades](/docs/upgrades) for the full rollout/rollback story.
 
 **Health probes** — two probes with different jobs; wire each to the matching orchestrator probe:
 
@@ -37,6 +38,9 @@ edit an already-applied migration.
 then closes Redis/Postgres and flushes OpenTelemetry. Give the
 container at least `SHUTDOWN_TIMEOUT_MS` to drain.
 
+**Scaling** — replicas are safe to run concurrently: the partition-maintenance and response-state GC
+background jobs below use a Postgres advisory lock, so only one replica executes each per cycle.
+
 ## Secrets
 
 Two secrets are critical. Store them in your secret manager (not in the image, not in git):
@@ -55,6 +59,8 @@ openssl rand -base64 48
 # CREDENTIALS_ENCRYPTION_KEY (32 bytes hex)
 openssl rand -hex 32
 ```
+
+See [Security](/docs/security) for what each one actually protects and the redaction guarantees around it.
 
 ### Rotating `MASTER_KEY`
 
@@ -110,7 +116,8 @@ maintenance per cycle (the drain's `DETACH`/`ATTACH` must not run concurrently).
 
 Expired `/v1/responses` state rows (written when `store=true`) are deleted automatically by an in-app
 job every `RESPONSE_STATE_GC_INTERVAL_MS`; an opportunistic prune on write traffic covers the gaps
-between ticks.
+between ticks. Retention is `RESPONSES_STATE_RETENTION_DAYS`. See [Responses](/docs/responses) for what
+gets stored and how to retrieve or delete it early.
 
 ## Backups
 
@@ -146,22 +153,14 @@ gunzip -c backup.sql.gz | docker compose exec -T postgres psql -U gateway -d uni
 > volume snapshot is only consistent if Postgres is stopped or the platform uses a consistent-snapshot
 > method.
 
-## Cost accounting
-
-`spend_cents` is updated in Postgres on every billed virtual-key request; Redis is the hot-path
-counter used for budget/limit enforcement. Pricing comes from the model catalog (or a deployment's
-`pricing` override); models without pricing are logged with zero cost.
-
-## Observability
-
-- **Logs:** structured JSON, one object per line, on stdout/stderr (see `src/logging/log.ts`). Ship
-  them to your log collector.
-- **Telemetry:** set `OTEL_ENABLED=true` and `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces and
-  metrics. `OTEL_LOG_PAYLOADS=true` attaches full request/response/error payloads to span events
-  (DB logs remain truncated by `MAX_STRING_LENGTH_PROMPT_IN_DB`).
-- **Request correlation:** every response carries `x-request-id` (accepts an inbound `x-request-id`).
-
 ## Dependency audit
 
 `bun audit --production` is expected to be clean for the production dependency tree, and CI enforces it
 at `--audit-level=high`.
+
+## What to read next
+
+- [Observability](/docs/observability) — logs, telemetry, and the `/admin/logs` and `/admin/usage` queries.
+- [Cost accounting](/docs/cost-accounting) — how pricing and spend actually work.
+- [Production checklist](/docs/production-checklist) — a condensed pre-launch checklist.
+- [Upgrades](/docs/upgrades) — rolling out a new version safely.

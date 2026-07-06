@@ -41,6 +41,11 @@ zero cost.
 - **Size cap.** Responses larger than 512 KB (typically big embedding batches) are served normally but
   **not** stored — the per-hit saving does not justify the Redis memory, and they rarely repeat
   identically.
+- **Not for streaming, tool calls, or stateful requests.** Eligibility requires a non-streamed request
+  with no tools and no server-side state (e.g. a `/v1/responses` call with `store: true`) — a streaming
+  request always goes live. See [Streaming](/docs/streaming).
+- **A hit is free.** It's logged with `cost: null` and never touches the virtual key's spend or TPM
+  counters — see [Cost accounting](/docs/cost-accounting).
 
 ## Invalidate
 

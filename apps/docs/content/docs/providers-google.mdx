@@ -1,0 +1,31 @@
+---
+title: "Google AI Studio"
+description: "Adapter key googleaistudio. Tool schema subset, embeddings routes, and image thinking."
+---
+
+```json
+{ "publicModel": "gemini", "provider": "googleaistudio", "upstreamModel": "gemini-3-pro", "credentials": { "apiKey": "..." } }
+```
+
+- **Credentials**: `apiKey` only.
+- **Default transport**: `generateContent` for text and image operations, `embedContent`/
+  `batchEmbedContents` for embeddings.
+- **Tool schemas are translated, not passed through.** Gemini's function `parameters` accept an OpenAPI
+  *subset*, not full JSON Schema — the adapter runs every tool's `parameters` through its own translator
+  before sending it upstream. Constructs outside that subset (e.g. some `oneOf`/`$ref` combinations) may
+  not translate cleanly; keep tool schemas simple if you see unexpected tool-call failures.
+- **Reasoning**: `gemini_level` (discrete `thinkingLevel`, with `xhigh` mapped to `high`) or
+  `gemini_budget` (raw `thinkingBudget` tokens), per model — see [Reasoning](/docs/reasoning).
+- **Embeddings** accept text input and float vectors only through this gateway — no tokenized input,
+  no `base64` encoding — regardless of what the catalog profile might otherwise allow.
+- **Image `quality` maps to native thinking** for Gemini image models: `auto` (or omitted) and `low` use
+  `thinkingLevel: minimal`; `high` uses `thinkingLevel: high`. Some image models expose only
+  `quality: auto`. See [Images](/docs/images).
+- Catalog: `src/adapters/google/catalog.json` (folder is `google`; adapter key is `googleaistudio` —
+  the one place today those two names don't match).
+
+## What to read next
+
+- [Reasoning](/docs/reasoning) — `gemini_level` / `gemini_budget` in detail.
+- [Embeddings](/docs/embeddings) — the reduced Google embedding contract.
+- [Images](/docs/images) — the quality-to-thinking mapping.
