@@ -32,11 +32,15 @@ test("admin mounts the new platform behind master authentication", async () => {
 		),
 	);
 	assert.ok(
+		body.data.operations.some((operation) => operation.id === "video.generate"),
+	);
+	assert.ok(
 		body.data.operations.every((operation) =>
 			[
 				"text.generate",
 				"image.generate",
 				"image.edit",
+				"video.generate",
 				"audio.transcribe",
 				"embedding.create",
 			].includes(operation.id),

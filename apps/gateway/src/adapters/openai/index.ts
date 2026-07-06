@@ -33,6 +33,8 @@ export const openaiAdapter = makeOpenAIStyleAdapter({
 	refineBadRequest,
 	imageTransports: ["images"],
 	defaultImageTransport: "images",
+	videoTransports: ["videos"],
+	defaultVideoTransport: "videos",
 	audioTranscriptions: true,
 	embeddings: true,
 });

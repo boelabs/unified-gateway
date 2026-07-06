@@ -3,6 +3,7 @@ import type { EmbeddingProfile } from "#core/embeddings.ts";
 import type { TextCapabilities } from "#core/reasoning.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
 import type { ImageModelProfile } from "#core/images.ts";
+import type { VideoModelProfile } from "#core/videos.ts";
 import type { OperationProfiles } from "./types.ts";
 import type { CallType } from "#core/callType.ts";
 
@@ -24,6 +25,20 @@ function mergeImageProfile(
 						...override?.arbitrarySize,
 					} as NonNullable<ImageModelProfile["arbitrarySize"]>,
 				}
+			: {}),
+	};
+}
+
+function mergeVideoProfile(
+	base: VideoModelProfile | undefined,
+	override: VideoModelProfile | undefined,
+): VideoModelProfile | undefined {
+	if (!base && !override) return undefined;
+	return {
+		...(base ?? {}),
+		...(override ?? {}),
+		...(base?.sizes || override?.sizes
+			? { sizes: { ...(base?.sizes ?? {}), ...(override?.sizes ?? {}) } }
 			: {}),
 	};
 }
@@ -52,6 +67,7 @@ export function profileToRuntimeMetadata(profile: {
 	const text = operations["text.generate"];
 	const imageGeneration = operations["image.generate"];
 	const imageEdit = operations["image.edit"];
+	const videoGeneration = operations["video.generate"];
 	const embedding = operations["embedding.create"];
 	const capabilities: Partial<TextCapabilities> | undefined =
 		text?.capabilities ??
@@ -62,8 +78,16 @@ export function profileToRuntimeMetadata(profile: {
 					reasoning: false,
 					structuredOutputs: false,
 				}
-			: undefined);
+			: videoGeneration
+				? {
+						tools: false,
+						vision: true,
+						reasoning: false,
+						structuredOutputs: false,
+					}
+				: undefined);
 	const image = mergeImageProfile(imageGeneration, imageEdit);
+	const video = mergeVideoProfile(videoGeneration, undefined);
 	return {
 		supportedCallTypes: profileSupportedCallTypes(operations),
 		operations: structuredClone(operations),
@@ -76,6 +100,7 @@ export function profileToRuntimeMetadata(profile: {
 			: {}),
 		...(text?.reasoning !== undefined ? { reasoning: text.reasoning } : {}),
 		...(image ? { image } : {}),
+		...(video ? { video } : {}),
 		...(embedding ? { embedding: embedding as EmbeddingProfile } : {}),
 		...(profile.pricing !== undefined ? { pricing: profile.pricing } : {}),
 	};

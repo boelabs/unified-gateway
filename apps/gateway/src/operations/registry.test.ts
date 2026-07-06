@@ -14,11 +14,13 @@ test("registry separates public operations from internal CallTypes", () => {
 			"text.generate",
 			"image.generate",
 			"image.edit",
+			"video.generate",
 			"audio.transcribe",
 			"embedding.create",
 		],
 	);
 	assert.equal(callTypeForOperation("image.generate"), "images.generations");
+	assert.equal(callTypeForOperation("video.generate"), "videos.generations");
 	assert.equal(callTypeForOperation("embedding.create"), "embeddings");
 	assert.equal(operationForCallType("chat")?.id, "text.generate");
 	assert.equal(

@@ -73,6 +73,11 @@ function addModalitiesForOperation(
 			input.add("image");
 			output.add("image");
 			break;
+		case "video.generate":
+			input.add("text");
+			input.add("image");
+			output.add("video");
+			break;
 		case "audio.transcribe":
 			input.add("audio");
 			input.add("file");
@@ -315,7 +320,7 @@ function wildcardModelId(c: Context<AppEnv>): {
 	return { model: decodeURIComponent(model), deployments };
 }
 
-/** GET /v1/models - public, OpenRouter-like discovery with OpenAI-compatible base fields. */
+/** GET /v1/models - public model discovery with OpenAI-compatible base fields. */
 export async function listModelsHandler(c: Context<AppEnv>): Promise<Response> {
 	const groups = await loadGroups();
 	const data = [...groups.values()]

@@ -84,6 +84,7 @@
 				"text.generate": { "$ref": "#/$defs/textGenerateProfile" },
 				"image.generate": { "$ref": "#/$defs/imageModelProfile" },
 				"image.edit": { "$ref": "#/$defs/imageModelProfile" },
+				"video.generate": { "$ref": "#/$defs/videoModelProfile" },
 				"audio.transcribe": { "$ref": "#/$defs/transcriptionProfile" },
 				"embedding.create": { "$ref": "#/$defs/embeddingProfile" }
 			},
@@ -107,7 +108,8 @@
 							"messages",
 							"images.generations",
 							"images.edits",
-							"audio.transcriptions"
+							"audio.transcriptions",
+							"videos"
 						]
 					},
 					"uniqueItems": true
@@ -321,6 +323,57 @@
 			"additionalProperties": false,
 			"properties": {
 				"thinkingLevel": { "enum": ["minimal", "low", "high"] }
+			}
+		},
+		"videoModelProfile": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"maxPromptChars": { "type": "integer", "minimum": 1 },
+				"durations": {
+					"type": "array",
+					"items": { "type": "string", "minLength": 1 },
+					"minItems": 1,
+					"uniqueItems": true
+				},
+				"qualities": {
+					"type": "array",
+					"items": {
+						"enum": ["standard", "hd", "low", "medium", "high", "auto"]
+					},
+					"minItems": 1,
+					"uniqueItems": true
+				},
+				"sizes": {
+					"type": "object",
+					"additionalProperties": { "$ref": "#/$defs/videoSizeMapping" }
+				},
+				"supportsImageUrl": { "type": "boolean" },
+				"supportsAudioUrl": { "type": "boolean" },
+				"supportsVideoUrl": { "type": "boolean" },
+				"supportsFileId": { "type": "boolean" },
+				"supportsFrameImages": { "type": "boolean" },
+				"supportsSeed": { "type": "boolean" },
+				"supportsGenerateAudio": { "type": "boolean" },
+				"maxInputReferences": { "type": "integer", "minimum": 1 },
+				"requiresDataUrlImageReference": { "type": "boolean" },
+				"maxReferenceBytes": { "type": "integer", "minimum": 1 },
+				"contentVariants": {
+					"type": "array",
+					"items": { "enum": ["video", "thumbnail", "spritesheet"] },
+					"minItems": 1,
+					"uniqueItems": true
+				},
+				"pollIntervalSeconds": { "type": "integer", "minimum": 1 }
+			}
+		},
+		"videoSizeMapping": {
+			"type": "object",
+			"additionalProperties": false,
+			"properties": {
+				"size": { "type": "string" },
+				"aspectRatio": { "type": "string" },
+				"resolution": { "type": "string" }
 			}
 		},
 		"transcriptionProfile": {

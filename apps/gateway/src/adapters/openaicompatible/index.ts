@@ -3,7 +3,7 @@ import type { ProviderModule } from "#adapters/types.ts";
 
 /**
  * Generic adapter for any API compatible with OpenAI Chat Completions
- * (xAI, Mistral, Groq, Together, OpenRouter, vLLM, Ollama, LM Studio...).
+ * (xAI, Mistral, Groq, Together, vLLM, Ollama, LM Studio...).
  *
  * Conservative for maximum compatibility: `baseUrl` is REQUIRED in credentials and it uses
  * `max_tokens` (not all accept `max_completion_tokens`). No OpenAI-only features.
@@ -16,6 +16,8 @@ export const openaicompatibleAdapter = makeOpenAIStyleAdapter({
 	maxTokensField: "max_tokens",
 	imageTransports: ["images", "chat_completions"],
 	defaultImageTransport: "images",
+	videoTransports: ["videos", "videos_async"],
+	defaultVideoTransport: "videos",
 	audioTranscriptions: true,
 	embeddings: true,
 });

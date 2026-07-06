@@ -123,6 +123,7 @@ export function resolveModelMetadata(
 		meta.maxOutputTokens = info.maxOutputTokens;
 	if (reasoning !== undefined) meta.reasoning = reasoning;
 	if (info?.image !== undefined) meta.image = info.image;
+	if (info?.video !== undefined) meta.video = info.video;
 	if (info?.embedding !== undefined) meta.embedding = info.embedding;
 	if (info?.operations !== undefined) meta.operations = info.operations;
 	return meta;

@@ -106,6 +106,37 @@ export const env = createEnv({
 		/** Default for `store` when the client omits it. true = OpenAI-compatible; set false for privacy-first. */
 		RESPONSES_STORE_DEFAULT: boolString.default(true),
 
+		OBJECT_STORAGE_BACKEND: z
+			.enum(["disabled", "local", "s3"])
+			.default("disabled"),
+		OBJECT_STORAGE_LOCAL_ROOT: z
+			.string()
+			.min(1)
+			.default(".source/object-storage"),
+		OBJECT_STORAGE_S3_BUCKET: z.string().min(1).optional(),
+		OBJECT_STORAGE_S3_ENDPOINT: z.url().optional(),
+		OBJECT_STORAGE_S3_REGION: z.string().min(1).default("auto"),
+		OBJECT_STORAGE_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+		OBJECT_STORAGE_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+		OBJECT_STORAGE_S3_FORCE_PATH_STYLE: boolString.default(false),
+
+		VIDEOS_ASSET_RETENTION_HOURS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(24),
+		VIDEO_JOB_POLL_INTERVAL_MS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(10_000),
+		VIDEO_JOB_POLL_BATCH_SIZE: z.coerce.number().int().positive().default(10),
+		VIDEO_JOB_MAX_RUNTIME_MINUTES: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(60),
+
 		OTEL_ENABLED: boolString.default(false),
 		OTEL_SERVICE_NAME: z.string().min(1).default("unifiedgateway"),
 		OTEL_METRIC_EXPORT_INTERVAL_MS: z.coerce

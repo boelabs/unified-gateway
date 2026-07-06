@@ -1,4 +1,5 @@
 import type { Adapter, AdapterContext, ChatHandler } from "./types.ts";
+import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
 import { GatewayError, type ErrorClass } from "#core/errors.ts";
 import { type BaseCreds, requireApiKeyCreds } from "./creds.ts";
@@ -6,7 +7,7 @@ import type { ReasoningControlKind } from "#core/reasoning.ts";
 import type { UpstreamTransport } from "#core/transport.ts";
 import { mapUpstreamHttpError } from "./upstreamError.ts";
 import type { ImageOperation } from "#core/images.ts";
-import { imageProfileFor } from "#catalog/types.ts";
+import { mergeExtraBody } from "#core/extraBody.ts";
 import { parseSSE } from "#core/sse.ts";
 
 import {
@@ -17,6 +18,15 @@ import {
 	parseOmniImageResponse,
 	buildOmniImageBody,
 } from "#contracts/openai/imagesTransport.ts";
+
+import {
+	type CanonicalVideoProviderJob,
+	type CanonicalVideoRequest,
+	type VideoUrlReference,
+	type VideoAssetVariant,
+	type VideoStatus,
+	resolveVideoSize,
+} from "#core/videos.ts";
 
 import {
 	responsesEventsToCanonicalChunks,
@@ -36,20 +46,22 @@ import {
 	buildOpenAIChatBody,
 } from "#contracts/openai/chatTransport.ts";
 
+import type {
+	TranscriptionHandler,
+	EmbeddingsHandler,
+	ImageHandler,
+	VideoHandler,
+	VideoJobRef,
+} from "./types.ts";
+
 import {
 	parseEmbeddingsResponse,
 	buildEmbeddingsBody,
 } from "#contracts/openai/embeddingsTransport.ts";
 
-import type {
-	TranscriptionHandler,
-	EmbeddingsHandler,
-	ImageHandler,
-} from "./types.ts";
-
 /**
  * Factory for OpenAI Chat Completions-style adapters. Serves both the real OpenAI API and any
- * compatible provider (xAI, Mistral, Groq, Together, OpenRouter, vLLM, Ollama...). The differences are
+ * compatible provider (xAI, Mistral, Groq, Together, vLLM, Ollama...). The differences are
  * parametrized; everything else is shared.
  */
 export interface OpenAIStyleConfig {
@@ -90,6 +102,12 @@ export interface OpenAIStyleConfig {
 	audioTranscriptions?: boolean;
 	/** The provider implements POST /embeddings. Absent = no embeddings. */
 	embeddings?: boolean;
+	/** Async video generation protocols this adapter implements. Absent = no videos. */
+	videoTransports?: readonly Extract<
+		UpstreamTransport,
+		"videos" | "videos_async"
+	>[];
+	defaultVideoTransport?: Extract<UpstreamTransport, "videos" | "videos_async">;
 }
 
 /**
@@ -156,6 +174,73 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 				? { refineBadRequest: config.refineBadRequest }
 				: {}),
 		});
+	}
+
+	async function parseHttpBody(res: Response): Promise<unknown> {
+		const text = await res.text();
+		try {
+			return JSON.parse(text);
+		} catch {
+			return text;
+		}
+	}
+
+	async function fetchJson(
+		req: {
+			method: string;
+			url: string;
+			headers: Record<string, string>;
+			body?: string;
+		},
+		ctx: AdapterContext,
+	): Promise<unknown> {
+		let res: Response;
+		try {
+			res = await fetch(req.url, {
+				method: req.method,
+				headers: req.headers,
+				...(req.body !== undefined ? { body: req.body } : {}),
+				...(ctx.signal ? { signal: ctx.signal } : {}),
+			});
+		} catch (err) {
+			throw mapError(err);
+		}
+		if (!res.ok) {
+			throw mapError({ status: res.status, body: await parseHttpBody(res) });
+		}
+		return parseHttpBody(res);
+	}
+
+	async function fetchContent(
+		url: string,
+		headers: Record<string, string>,
+		ctx: AdapterContext,
+	) {
+		let res: Response;
+		try {
+			res = await fetch(url, {
+				method: "GET",
+				headers,
+				...(ctx.signal ? { signal: ctx.signal } : {}),
+			});
+		} catch (err) {
+			throw mapError(err);
+		}
+		if (!res.ok) {
+			throw mapError({ status: res.status, body: await parseHttpBody(res) });
+		}
+		if (!res.body) {
+			throw new GatewayError({
+				class: "server",
+				message: `${config.label}: video content response had no body`,
+			});
+		}
+		const length = res.headers.get("content-length");
+		return {
+			body: res.body,
+			contentType: res.headers.get("content-type") ?? "video/mp4",
+			...(length ? { contentLength: Number(length) } : {}),
+		};
 	}
 
 	// Stream of the chat_completions transport (OpenAI chunks -> canonical).
@@ -297,6 +382,350 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 		};
 	}
 
+	function mapVideoStatus(
+		raw: unknown,
+		dialect: "videos" | "videos_async",
+	): VideoStatus {
+		const status = String(raw ?? "");
+		if (dialect === "videos_async") {
+			if (status === "pending") return "queued";
+			if (status === "completed") return "completed";
+			if (status === "failed" || status === "cancelled" || status === "expired")
+				return "failed";
+			// in_progress, plus any status this gateway does not know yet: keep polling; the
+			// job-runtime timeout is the safety net if it never terminates.
+			return "in_progress";
+		}
+		if (
+			status === "queued" ||
+			status === "in_progress" ||
+			status === "completed" ||
+			status === "failed"
+		) {
+			return status;
+		}
+		return "in_progress";
+	}
+
+	function normalizeProgress(status: VideoStatus, raw: unknown): number {
+		if (typeof raw === "number" && Number.isFinite(raw)) {
+			return Math.max(0, Math.min(100, Math.round(raw)));
+		}
+		switch (status) {
+			case "queued":
+				return 0;
+			case "in_progress":
+				return 50;
+			case "completed":
+			case "failed":
+				return 100;
+		}
+	}
+
+	function parseVideoJob(
+		raw: unknown,
+		dialect: "videos" | "videos_async",
+		fallbackJobId?: string,
+	): CanonicalVideoProviderJob {
+		const value = (raw ?? {}) as Record<string, unknown>;
+		const upstreamJobId =
+			typeof value.id === "string" && value.id ? value.id : fallbackJobId;
+		if (!upstreamJobId) {
+			throw new GatewayError({
+				class: "server",
+				message: `${config.label}: video response is missing id`,
+			});
+		}
+		const status = mapVideoStatus(value.status, dialect);
+		const error =
+			typeof value.error === "string"
+				? { message: value.error }
+				: value.error && typeof value.error === "object"
+					? (value.error as { code?: string | null; message?: string })
+					: undefined;
+		return {
+			upstreamJobId,
+			...(typeof value.generation_id === "string"
+				? { upstreamGenerationId: value.generation_id }
+				: {}),
+			...(typeof value.polling_url === "string"
+				? { upstreamPollingUrl: value.polling_url }
+				: {}),
+			status,
+			progress: normalizeProgress(status, value.progress),
+			...(error
+				? {
+						error: {
+							code:
+								error.code ??
+								(status === "failed" ? String(value.status) : null),
+							message: error.message ?? "Video generation failed",
+						},
+					}
+				: status === "failed"
+					? {
+							error: {
+								code:
+									typeof value.status === "string"
+										? value.status
+										: "video_failed",
+								message: "Video generation failed",
+							},
+						}
+					: {}),
+			...(value.usage && typeof value.usage === "object"
+				? { usage: value.usage as Record<string, unknown> }
+				: {}),
+			providerState: value,
+		};
+	}
+
+	function buildOpenAIVideoBody(
+		req: CanonicalVideoRequest,
+		ctx: AdapterContext,
+	): Record<string, unknown> {
+		const resolved = resolveVideoSize(req, videoProfileFor(ctx.meta));
+		const refs = req.inputReferences ?? [];
+		if (refs.length > 1) {
+			throw new GatewayError({
+				class: "bad_request",
+				message: `${config.label}: the videos transport accepts a single input reference`,
+				param: "input_references",
+			});
+		}
+		if (req.frameImages && req.frameImages.length > 0) {
+			throw new GatewayError({
+				class: "bad_request",
+				message: `${config.label}: the videos transport does not support frame_images`,
+				param: "frame_images",
+			});
+		}
+		const body: Record<string, unknown> = {
+			model: ctx.upstreamModel,
+			prompt: req.prompt,
+			...(req.seconds !== undefined ? { seconds: req.seconds } : {}),
+			...(resolved?.size !== undefined ? { size: resolved.size } : {}),
+			// Only reachable when the model profile declares support; the stock OpenAI
+			// Videos API accepts none of these three.
+			...(req.quality !== undefined ? { quality: req.quality } : {}),
+			...(req.seed !== undefined ? { seed: req.seed } : {}),
+			...(req.generateAudio !== undefined
+				? { generate_audio: req.generateAudio }
+				: {}),
+		};
+		const ref = refs[0];
+		if (ref) {
+			if (ref.type === "image_url") {
+				body.input_reference = { image_url: ref.url };
+			} else if (ref.type === "file_id") {
+				body.input_reference = { file_id: ref.fileId };
+			} else {
+				throw new GatewayError({
+					class: "bad_request",
+					message: `${config.label}: the videos transport only supports image references`,
+					param: "input_references",
+				});
+			}
+		}
+		return mergeExtraBody(body, req.extraBody, [
+			"model",
+			"prompt",
+			"input_reference",
+			"seconds",
+			"size",
+			"quality",
+			"seed",
+			"generate_audio",
+		]);
+	}
+
+	function buildAsyncVideosBody(
+		req: CanonicalVideoRequest,
+		ctx: AdapterContext,
+	): Record<string, unknown> {
+		const resolved = resolveVideoSize(req, videoProfileFor(ctx.meta));
+		const body: Record<string, unknown> = {
+			model: ctx.upstreamModel,
+			prompt: req.prompt,
+			...(req.seconds !== undefined ? { duration: Number(req.seconds) } : {}),
+			// Prefer the native aspect_ratio/resolution form when the profile maps to it;
+			// otherwise send exact pixel dimensions. The protocol treats the two forms as interchangeable.
+			...(resolved?.aspectRatio || resolved?.resolution
+				? {
+						...(resolved.aspectRatio
+							? { aspect_ratio: resolved.aspectRatio }
+							: {}),
+						...(resolved.resolution ? { resolution: resolved.resolution } : {}),
+					}
+				: resolved?.size !== undefined
+					? { size: resolved.size }
+					: {}),
+			...(req.seed !== undefined ? { seed: req.seed } : {}),
+			...(req.generateAudio !== undefined
+				? { generate_audio: req.generateAudio }
+				: {}),
+		};
+		const refs = req.inputReferences ?? [];
+		if (refs.some((ref) => ref.type === "file_id")) {
+			throw new GatewayError({
+				class: "bad_request",
+				message:
+					"The async videos transport does not support file_id references",
+				param: "input_references",
+			});
+		}
+		const urlRefs = refs.filter(
+			(ref): ref is VideoUrlReference => ref.type !== "file_id",
+		);
+		if (urlRefs.length > 0) {
+			body.input_references = urlRefs.map((ref) =>
+				ref.type === "image_url"
+					? { type: "image_url", image_url: { url: ref.url } }
+					: ref.type === "audio_url"
+						? { type: "audio_url", audio_url: { url: ref.url } }
+						: { type: "video_url", video_url: { url: ref.url } },
+			);
+		}
+		if (req.frameImages && req.frameImages.length > 0) {
+			body.frame_images = req.frameImages.map((frame) => ({
+				type: "image_url",
+				image_url: { url: frame.url },
+				frame_type: frame.frame === "first" ? "first_frame" : "last_frame",
+			}));
+		}
+		return mergeExtraBody(body, req.extraBody, [
+			"model",
+			"prompt",
+			"duration",
+			"size",
+			"aspect_ratio",
+			"resolution",
+			"seed",
+			"generate_audio",
+			"input_references",
+			"frame_images",
+		]);
+	}
+
+	const videoGeneration: VideoHandler = {
+		async submit(req, ctx) {
+			const c = resolveCreds(ctx);
+			if (ctx.transport === "videos_async") {
+				return parseVideoJob(
+					await fetchJson(
+						{
+							method: "POST",
+							url: `${c.base}/videos`,
+							headers: buildHeaders(c),
+							body: JSON.stringify(buildAsyncVideosBody(req, ctx)),
+						},
+						ctx,
+					),
+					"videos_async",
+				);
+			}
+			if (ctx.transport === "videos") {
+				return parseVideoJob(
+					await fetchJson(
+						{
+							method: "POST",
+							url: `${c.base}/videos`,
+							headers: buildHeaders(c),
+							body: JSON.stringify(buildOpenAIVideoBody(req, ctx)),
+						},
+						ctx,
+					),
+					"videos",
+				);
+			}
+			throw new GatewayError({
+				class: "server",
+				message: `${config.label}: transport "${ctx.transport}" cannot generate videos`,
+			});
+		},
+		async refresh(job, ctx) {
+			const c = resolveCreds(ctx);
+			if (ctx.transport === "videos_async") {
+				return parseVideoJob(
+					await fetchJson(
+						{
+							method: "GET",
+							url: `${c.base}/videos/${encodeURIComponent(job.upstreamJobId)}`,
+							headers: buildAuthHeaders(c),
+						},
+						ctx,
+					),
+					"videos_async",
+					job.upstreamJobId,
+				);
+			}
+			if (ctx.transport === "videos") {
+				return parseVideoJob(
+					await fetchJson(
+						{
+							method: "GET",
+							url: `${c.base}/videos/${encodeURIComponent(job.upstreamJobId)}`,
+							headers: buildAuthHeaders(c),
+						},
+						ctx,
+					),
+					"videos",
+					job.upstreamJobId,
+				);
+			}
+			throw new GatewayError({
+				class: "server",
+				message: `${config.label}: transport "${ctx.transport}" cannot refresh videos`,
+			});
+		},
+		async download(job: VideoJobRef, variant: VideoAssetVariant, ctx) {
+			const c = resolveCreds(ctx);
+			if (ctx.transport === "videos_async") {
+				if (variant !== "video") {
+					throw new GatewayError({
+						class: "not_found",
+						code: "video_variant_unavailable",
+						message: `The async videos transport does not provide ${variant}`,
+					});
+				}
+				return fetchContent(
+					`${c.base}/videos/${encodeURIComponent(job.upstreamJobId)}/content?index=0`,
+					buildAuthHeaders(c),
+					ctx,
+				);
+			}
+			if (ctx.transport === "videos") {
+				return fetchContent(
+					`${c.base}/videos/${encodeURIComponent(
+						job.upstreamJobId,
+					)}/content?variant=${encodeURIComponent(variant)}`,
+					buildAuthHeaders(c),
+					ctx,
+				);
+			}
+			throw new GatewayError({
+				class: "server",
+				message: `${config.label}: transport "${ctx.transport}" cannot download videos`,
+			});
+		},
+		async remove(job, ctx) {
+			// Only the OpenAI-style dialect exposes a delete endpoint.
+			if (ctx.transport !== "videos") return;
+			const c = resolveCreds(ctx);
+			await fetchJson(
+				{
+					method: "DELETE",
+					url: `${c.base}/videos/${encodeURIComponent(job.upstreamJobId)}`,
+					headers: buildAuthHeaders(c),
+				},
+				ctx,
+			);
+		},
+		mapError(_err, _ctx) {
+			return mapError(_err);
+		},
+	};
+
 	const audioTranscription: TranscriptionHandler = {
 		async buildRequest(req, ctx) {
 			const c = resolveCreds(ctx);
@@ -344,6 +773,7 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 	};
 
 	const imageTransports = config.imageTransports;
+	const videoTransports = config.videoTransports;
 	const chatTransports = config.supportedChatTransports ?? [
 		"chat_completions",
 		"responses",
@@ -360,6 +790,8 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 		supportedCallTypes.add("images.generations");
 		supportedCallTypes.add("images.edits");
 	}
+	if (videoTransports && videoTransports.length > 0)
+		supportedCallTypes.add("videos.generations");
 	if (config.audioTranscriptions)
 		supportedCallTypes.add("audio.transcriptions");
 	if (config.embeddings) supportedCallTypes.add("embeddings");
@@ -369,6 +801,14 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 			? {
 					supported: imageTransports,
 					default: config.defaultImageTransport ?? firstImageTransport,
+				}
+			: undefined;
+	const firstVideoTransport = videoTransports?.[0];
+	const videoTransportConfig =
+		videoTransports && firstVideoTransport
+			? {
+					supported: videoTransports,
+					default: config.defaultVideoTransport ?? firstVideoTransport,
 				}
 			: undefined;
 
@@ -393,6 +833,7 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 					imageEdit: makeImageHandler("edit"),
 				}
 			: {}),
+		...(videoTransportConfig ? { videoGeneration } : {}),
 		...(config.audioTranscriptions ? { audioTranscription } : {}),
 		...(config.embeddings ? { embeddings } : {}),
 		transports: {
@@ -401,6 +842,11 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 				? {
 						"images.generations": imageTransportConfig,
 						"images.edits": imageTransportConfig,
+					}
+				: {}),
+			...(videoTransportConfig
+				? {
+						"videos.generations": videoTransportConfig,
 					}
 				: {}),
 			...(config.audioTranscriptions

@@ -5,6 +5,7 @@ export const OPERATION_IDS = [
 	"text.generate",
 	"image.generate",
 	"image.edit",
+	"video.generate",
 	"audio.transcribe",
 	"embedding.create",
 ] as const;
@@ -13,7 +14,7 @@ export type OperationId = (typeof OPERATION_IDS)[number];
 
 export interface OperationDefinition {
 	id: OperationId;
-	family: "text" | "image" | "audio" | "embedding";
+	family: "text" | "image" | "video" | "audio" | "embedding";
 	label: string;
 	callType: CallType;
 	publicEndpoints: string[];
@@ -40,6 +41,17 @@ export const OPERATIONS: readonly OperationDefinition[] = [
 		label: "Image editing",
 		callType: "images.edits",
 		publicEndpoints: ["/v1/images/edits"],
+	},
+	{
+		id: "video.generate",
+		family: "video",
+		label: "Video generation",
+		callType: "videos.generations",
+		publicEndpoints: [
+			"/v1/videos",
+			"/v1/videos/{video_id}",
+			"/v1/videos/{video_id}/content",
+		],
 	},
 	{
 		id: "audio.transcribe",

@@ -223,7 +223,8 @@ all eight `kind`s, clamping semantics, and a worked `chat_template_flag` example
 
 > **Vision:** with `capabilities.vision: true` the client passes images in the `content` array as
 > `type: "image_url"` (URL or base64) and the adapter forwards them as-is. The canonical contract
-> covers images/audio/files, **not** `video_url`; video would require extending the parts model.
+> covers images/audio/files, **not** `video_url`; video generation uses the dedicated `/v1/videos`
+> contract.
 
 ### Custom image
 
@@ -242,6 +243,38 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
         "outputFormats": ["png"],
         "responseFormats": ["b64_json"],
         "sizes": { "1024x1024": {} }
+      }
+    }
+  }
+}'
+```
+
+### Custom video
+
+Video generation requires `durations` and `sizes`. Optional flags gate the rest of the request
+surface: `supportsAudioUrl`/`supportsVideoUrl` (multi-modal references), `supportsFrameImages`,
+`supportsSeed`, `supportsGenerateAudio`, `maxInputReferences`, and `qualities`. Parameters a profile
+does not declare are rejected with `unsupported_parameter` instead of being forwarded. OpenAI-compatible
+targets with an async job Videos API should set `transportOverrides.video.generate` to `videos_async`:
+
+```bash
+curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
+  "publicModel": "veo",
+  "adapterKey": "openaicompatible",
+  "upstreamModel": "vendor/video-model",
+  "credentials": { "apiKey": "sk-...", "baseUrl": "https://api.vendor.example/v1" },
+  "transportOverrides": { "video.generate": "videos_async" },
+  "catalogEntry": {
+    "operations": {
+      "video.generate": {
+        "maxPromptChars": 32000,
+        "durations": ["4", "6", "8"],
+        "supportsImageUrl": true,
+        "contentVariants": ["video"],
+        "sizes": {
+          "1280x720": { "aspectRatio": "16:9", "resolution": "720p" },
+          "720x1280": { "aspectRatio": "9:16", "resolution": "720p" }
+        }
       }
     }
   }
