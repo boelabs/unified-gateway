@@ -35,6 +35,7 @@ function candidate(): DeploymentCandidate {
 		},
 		adapter: {
 			key: "fake",
+			credentials: { required: [] },
 			supportedCallTypes: new Set(),
 			transports: {
 				"images.generations": {

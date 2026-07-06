@@ -6,7 +6,7 @@ import { Hono } from "hono";
 
 import "#adapters/index.ts";
 
-import { platformAdminApp } from "./platform.ts";
+import { createDeploymentSchema, platformAdminApp } from "./platform.ts";
 
 /** Mounts the admin app behind the OpenAI-compatible error handler, without pulling auth/env. */
 function adminAppWithErrors(): Hono {
@@ -33,6 +33,7 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 			}>;
 			adapters: Array<{
 				id: string;
+				credentials: { required: string[] };
 				supportedCallTypes: string[];
 				operations: Array<{
 					id: string;
@@ -61,6 +62,7 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 	for (const [adapterId, expectedDefault] of expectedAdapters) {
 		const adapter = body.data.adapters.find((item) => item.id === adapterId);
 		assert.ok(adapter, `adapter ${adapterId} is not registered`);
+		assert.ok(adapter.credentials.required.includes("apiKey"));
 		assert.ok(adapter.supportedCallTypes.includes("embeddings"));
 
 		const operation = adapter.operations.find(
@@ -72,6 +74,85 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 		assert.equal(operation?.defaultTransport, expectedDefault);
 		assert.ok(operation?.transports.includes(expectedDefault));
 	}
+});
+
+test("admin platform: rejects legacy provider field", async () => {
+	const app = adminAppWithErrors();
+	const parsed = createDeploymentSchema.safeParse({
+		publicModel: "x",
+		adapterKey: "openai",
+		provider: "openai",
+		upstreamModel: "gpt-image-2",
+		credentials: { apiKey: "k" },
+	});
+	assert.equal(parsed.success, false);
+	if (!parsed.success)
+		assert.match(
+			parsed.error.issues.map((issue) => issue.message).join("; "),
+			/provider/,
+		);
+
+	const response = await app.request("/deployments/resolve", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			publicModel: "x",
+			adapterKey: "openai",
+			provider: "openai",
+			upstreamModel: "gpt-image-2",
+		}),
+	});
+	assert.equal(response.status, 400);
+});
+
+test("admin platform: validates adapter credential requirements before DB writes", async () => {
+	const app = adminAppWithErrors();
+
+	const missingApiKey = await app.request("/deployments", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			publicModel: "x",
+			adapterKey: "openai",
+			upstreamModel: "gpt-image-2",
+			credentials: {},
+		}),
+	});
+	assert.equal(missingApiKey.status, 400);
+	const apiKeyJson = (await missingApiKey.json()) as {
+		error?: { param?: string };
+	};
+	assert.equal(apiKeyJson.error?.param, "credentials.apiKey");
+
+	const missingBaseUrl = await app.request("/deployments", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({
+			publicModel: "x",
+			adapterKey: "openaicompatible",
+			upstreamModel: "custom",
+			credentials: { apiKey: "k" },
+			catalogEntry: {
+				operations: {
+					"text.generate": {
+						capabilities: {
+							tools: false,
+							vision: false,
+							reasoning: false,
+							structuredOutputs: false,
+						},
+						maxInputTokens: 1024,
+						maxOutputTokens: 256,
+					},
+				},
+			},
+		}),
+	});
+	assert.equal(missingBaseUrl.status, 400);
+	const baseUrlJson = (await missingBaseUrl.json()) as {
+		error?: { param?: string };
+	};
+	assert.equal(baseUrlJson.error?.param, "credentials.baseUrl");
 });
 
 test("admin platform: rejects deployment metadata over the size limit", async () => {

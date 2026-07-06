@@ -55,14 +55,14 @@ export MASTER_KEY=replace-with-a-long-secret
 
 ## 2. Register a deployment
 
-A **deployment** binds a public model name to a provider, an upstream model, and credentials. Create
+A **deployment** binds a public model name to an adapter, an upstream model, and credentials. Create
 one with the master key — the provider API key goes inline and is encrypted at rest:
 
 ```bash
 curl -X POST $BASE/admin/deployments \
   -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
     "publicModel": "general",
-    "provider": "openai",
+    "adapterKey": "openai",
     "upstreamModel": "gpt-5.4",
     "credentials": { "apiKey": "sk-..." }
   }'

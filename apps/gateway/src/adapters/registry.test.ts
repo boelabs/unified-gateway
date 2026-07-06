@@ -27,6 +27,7 @@ test("registers and retrieves an adapter; validates CallTypes<->handlers", () =>
 	__resetRegistry();
 	const adapter: Adapter = {
 		key: "fake",
+		credentials: { required: [] },
 		supportedCallTypes: new Set(["chat"]),
 		chat: fakeChat,
 	};
@@ -40,6 +41,7 @@ test("rejects duplicates", () => {
 	__resetRegistry();
 	const adapter: Adapter = {
 		key: "dup",
+		credentials: { required: [] },
 		supportedCallTypes: new Set(["chat"]),
 		chat: fakeChat,
 	};
@@ -51,6 +53,7 @@ test("rejects adapter keys with separators or uppercase letters", () => {
 	__resetRegistry();
 	const bad: Adapter = {
 		key: "bad-key",
+		credentials: { required: [] },
 		supportedCallTypes: new Set(["chat"]),
 		chat: fakeChat,
 	};
@@ -61,6 +64,7 @@ test("rejects chat support declaration without handler implementation", () => {
 	__resetRegistry();
 	const broken: Adapter = {
 		key: "broken",
+		credentials: { required: [] },
 		supportedCallTypes: new Set(["chat"]),
 	};
 	assert.throws(() => registerAdapter(broken), /does not implement/);

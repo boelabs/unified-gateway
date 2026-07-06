@@ -611,6 +611,7 @@ const chat: ChatHandler = {
 
 export const anthropicAdapter: Adapter = {
 	key: "anthropic",
+	credentials: { required: ["apiKey"] },
 	supportedCallTypes: new Set(["chat"]),
 	chat,
 	reasoningKinds: new Set<ReasoningControlKind>([

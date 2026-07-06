@@ -47,7 +47,7 @@ variable (e.g. `http://localhost:4000`) and the bearer token in Bruno's auth UI.
 
 ## Typical flow to serve a model
 
-1. `POST /admin/deployments` — create a deployment: `publicModel` + `provider` + `upstreamModel` + the inline API key.
+1. `POST /admin/deployments` — create a deployment: `publicModel` + `adapterKey` + `upstreamModel` + inline credentials.
 2. `POST /admin/keys` — issue a virtual key with `allowedModels`.
 3. Call an inference endpoint with the public model name in `model`.
 
@@ -64,7 +64,7 @@ variable (e.g. `http://localhost:4000`) and the bearer token in Bruno's auth UI.
 | `POST /v1/images/generations`, `POST /v1/images/edits` | OpenAI Images | [Images](/docs/images) |
 | `POST /v1/embeddings` | OpenAI Embeddings | [Embeddings](/docs/embeddings) |
 | `POST /v1/audio/transcriptions` | OpenAI Audio | [Audio transcriptions](/docs/audio-transcriptions) |
-| `GET /v1/models`, `GET /v1/models/{model}`, `GET /v1/models/{model}/deployments` | OpenRouter-like discovery | [Model discovery](/docs/models-discovery) |
+| `GET /v1/models`, `GET /v1/models/{model}`, `GET /v1/models/{model}/deployments` | Model discovery | [Model discovery](/docs/models-discovery) |
 
 ## What to read next
 

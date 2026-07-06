@@ -374,6 +374,9 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 
 	return {
 		key: config.key,
+		credentials: {
+			required: config.defaultBaseUrl ? ["apiKey"] : ["apiKey", "baseUrl"],
+		},
 		supportedCallTypes,
 		chat,
 		// The chat_completions transport emits reasoning_effort (openai_effort), top-level thinking

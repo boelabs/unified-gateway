@@ -13,8 +13,7 @@ or the interactive spec (see [API guide](/docs/api-overview)).
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/operations` | Available operations and their transports, per adapter. |
-| `GET /admin/provider-presets` | Known provider presets (credential keys, default transports). |
+| `GET /admin/operations` | Available operations, required credentials, and transports per adapter. |
 | `POST /admin/deployments/resolve` | Dry-run: resolve effective capabilities/operations/transports for a body, without saving. |
 | `GET /admin/deployments` | List deployments. Query: `enabled`, `publicModel`, `q` (search name/prefix). |
 | `POST /admin/deployments` | Create a deployment (see [Creating deployments](/docs/creating-deployments)). |

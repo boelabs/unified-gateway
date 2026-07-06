@@ -12,8 +12,8 @@ different auth requirements:
 | `GET /v1/models/{model}` | None | The same aggregated shape, for one Public Model |
 | `GET /v1/models/{model}/deployments` | **Required** (`Bearer`/`x-api-key`) | Per-deployment detail: weight, limits, live metrics |
 
-The first two are deliberately unauthenticated, the same way OpenRouter's or OpenAI's own model listing
-is public — a client (or a human) needs to see what's available before it has a reason to authenticate.
+The first two are deliberately unauthenticated, the same way public provider model catalogs are public
+— a client (or a human) needs to see what's available before it has a reason to authenticate.
 The per-deployment endpoint is different: routing weight, rate limits, and live health/latency/
 throughput are **operator infrastructure detail**, not public model information, so it sits behind the
 same auth as inference.

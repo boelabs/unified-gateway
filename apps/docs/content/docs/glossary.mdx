@@ -45,12 +45,6 @@ per-request. See [Routing](/docs/routing).
 The exact identifier the adapter sends to the provider. It may differ from `publicModel`, and several
 upstream models or providers may serve the same Public Model.
 
-## Provider Preset
-
-A creation shortcut that resolves a `provider` to an adapter, required credentials, credential
-defaults, and `defaultTransportOverrides`. It lives in `src/providers/presets.ts`; it does not execute
-requests on its own.
-
 ## Adapter
 
 Code that implements canonical handlers and knows how to translate them to one or more upstream

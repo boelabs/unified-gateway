@@ -132,6 +132,9 @@ export interface EmbeddingsHandler {
  */
 export interface Adapter {
 	key: string;
+	credentials: {
+		required: readonly string[];
+	};
 	supportedCallTypes: ReadonlySet<CallType>;
 	chat?: ChatHandler;
 	imageGeneration?: ImageHandler;

@@ -31,12 +31,6 @@ import {
 } from "#profiles/schema.ts";
 
 import {
-	resolvePresetCredentials,
-	getProviderPreset,
-	PROVIDER_PRESETS,
-} from "#providers/presets.ts";
-
-import {
 	type OperationDefinition,
 	callTypeForOperation,
 	OPERATIONS,
@@ -108,8 +102,7 @@ function deploymentView(row: DeploymentRow) {
 export const createDeploymentSchema = z
 	.object({
 		publicModel: z.string().min(1).max(200),
-		provider: z.string().min(1).max(80).optional(),
-		adapterKey: adapterKeySchema.optional(),
+		adapterKey: adapterKeySchema,
 		upstreamModel: z.string().min(1).max(300),
 		credentials: z.record(z.string(), z.unknown()),
 		label: labelSchema.optional(),
@@ -127,8 +120,7 @@ export const createDeploymentSchema = z
 const resolveDeploymentSchema = z
 	.object({
 		publicModel: z.string().min(1).max(200),
-		provider: z.string().min(1).max(80).optional(),
-		adapterKey: adapterKeySchema.optional(),
+		adapterKey: adapterKeySchema,
 		upstreamModel: z.string().min(1).max(300),
 		catalogEntry: customCatalogEntrySchema.optional(),
 		pricing: pricingSchema.optional(),
@@ -157,44 +149,16 @@ export const updateDeploymentSchema = z
 	})
 	.strict();
 
-/** Resolves the adapter from a provider preset or an explicit adapterKey. */
-function resolveAdapterKey(
-	provider: string | undefined,
-	adapterKey: string | undefined,
-): string {
-	const preset = provider ? getProviderPreset(provider) : undefined;
-	const resolved = adapterKey ?? preset?.adapterKey;
-	if (!resolved) {
+/** Validates that the requested code adapter exists. */
+function resolveAdapterKey(adapterKey: string): string {
+	if (!getAdapter(adapterKey)) {
 		throw new GatewayError({
 			class: "bad_request",
-			message: "Provide a known `provider` or an explicit `adapterKey`",
-			param: "provider",
-		});
-	}
-	if (preset && adapterKey && adapterKey !== preset.adapterKey) {
-		throw new GatewayError({
-			class: "bad_request",
-			message: `Provider "${provider}" requires adapter "${preset.adapterKey}"`,
+			message: `Adapter "${adapterKey}" is not registered`,
 			param: "adapterKey",
 		});
 	}
-	if (!getAdapter(resolved)) {
-		throw new GatewayError({
-			class: "bad_request",
-			message: `Adapter "${resolved}" is not registered`,
-			param: "adapterKey",
-		});
-	}
-	return resolved;
-}
-
-/** Merges the preset's default transports with the operator's overrides. */
-function mergeTransportOverrides(
-	provider: string | undefined,
-	requested: Record<string, string> | undefined,
-) {
-	const preset = provider ? getProviderPreset(provider) : undefined;
-	return { ...(preset?.defaultTransportOverrides ?? {}), ...(requested ?? {}) };
+	return adapterKey;
 }
 
 export const platformAdminApp = new Hono<AppEnv>();
@@ -214,6 +178,7 @@ platformAdminApp.get("/operations", (c) =>
 		operations: OPERATIONS.map(publicOperationView),
 		adapters: listAdapters().map((adapter) => ({
 			id: adapter.key,
+			credentials: { required: [...adapter.credentials.required] },
 			supportedCallTypes: [...adapter.supportedCallTypes].sort(),
 			operations: OPERATIONS.flatMap((operation) => {
 				const callType = callTypeForOperation(operation.id);
@@ -232,21 +197,18 @@ platformAdminApp.get("/operations", (c) =>
 	}),
 );
 
-platformAdminApp.get("/provider-presets", (c) => ok(c, PROVIDER_PRESETS));
-
 /* ----------------------------------------------------------- deployments */
 
 platformAdminApp.post("/deployments/resolve", async (c) => {
 	const input = await parseJson(c, resolveDeploymentSchema);
-	const adapterKey = resolveAdapterKey(input.provider, input.adapterKey);
+	const adapterKey = resolveAdapterKey(input.adapterKey);
 	const previewInput: PreviewDeploymentInput = {
 		publicModel: input.publicModel,
 		adapterKey,
 		upstreamModel: input.upstreamModel,
-		transportOverrides: mergeTransportOverrides(
-			input.provider,
-			input.transportOverrides,
-		),
+		...(input.transportOverrides !== undefined
+			? { transportOverrides: input.transportOverrides }
+			: {}),
 		...(input.catalogEntry !== undefined
 			? { catalogEntry: input.catalogEntry as CatalogEntry }
 			: {}),
@@ -274,29 +236,15 @@ platformAdminApp.get("/deployments", async (c) => {
 
 platformAdminApp.post("/deployments", async (c) => {
 	const input = await parseJson(c, createDeploymentSchema);
-	const adapterKey = resolveAdapterKey(input.provider, input.adapterKey);
-	const preset = input.provider ? getProviderPreset(input.provider) : undefined;
-	const credentials = preset
-		? resolvePresetCredentials(preset, input.credentials)
-		: input.credentials;
-	for (const key of preset?.requiredCredentialKeys ?? []) {
-		if (typeof credentials[key] !== "string" || credentials[key] === "") {
-			throw new GatewayError({
-				class: "bad_request",
-				message: `Credential "${key}" is required`,
-				param: `credentials.${key}`,
-			});
-		}
-	}
+	const adapterKey = resolveAdapterKey(input.adapterKey);
 	const createInput: CreateDeploymentInput = {
 		publicModel: input.publicModel,
 		adapterKey,
 		upstreamModel: input.upstreamModel,
-		credentials,
-		transportOverrides: mergeTransportOverrides(
-			input.provider,
-			input.transportOverrides,
-		),
+		credentials: input.credentials,
+		...(input.transportOverrides !== undefined
+			? { transportOverrides: input.transportOverrides }
+			: {}),
 		...(input.label !== undefined ? { label: input.label } : {}),
 		...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		...(input.catalogEntry !== undefined

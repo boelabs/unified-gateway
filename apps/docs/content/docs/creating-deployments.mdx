@@ -24,27 +24,33 @@ Authorization: Bearer $MASTER_KEY
 | Field | Req. | Description |
 |---|---|---|
 | `publicModel` | yes | The model's public name; it is what the client puts in `"model"`. |
-| `provider` *or* `adapterKey` | yes | `provider` is a preset (resolves adapter + credentials + transportOverrides). Alternative: an explicit `adapterKey`. |
+| `adapterKey` | yes | The first-class adapter to execute (`openai`, `googleaistudio`, `openaicompatible`, etc.). |
 | `upstreamModel` | yes | The real id at the provider (catalog key, or the deployment name on Azure). |
-| `credentials` | yes | `{ apiKey, baseUrl?, ... }` depending on the preset (see table). Encrypted at rest. |
+| `credentials` | yes | `{ apiKey, baseUrl?, ... }` depending on the adapter (see table). Encrypted at rest. |
 | `catalogEntry` | custom only | Inline catalog entry for a model **not** present in the catalog. Uses the same shape as `catalog.json`; for catalog models it **must be omitted**. |
 | `pricing` | no | `{ inputCentsPerMTokens?, outputCentsPerMTokens?, cacheReadCentsPerMTokens? }`. |
-| `transportOverrides` | no | Per-operation transport (override; the preset already ships defaults). |
+| `transportOverrides` | no | Per-operation transport override. Defaults are inferred from the adapter. |
 | `label` | no | Human identifier to tell deployments of the same `publicModel` apart (e.g. which API key). Snapshotted into each request log so you can see *which* deployment served a request. `null` clears it. |
 | `metadata` | no | Free-form operator annotations (`team`, `environment`, key alias, rotation date, notes…). A JSON object up to 16 KiB; stored and returned verbatim. |
 | `enabled`, `weight`, `tpmLimit`, `rpmLimit` | no | Deployment state and limits. |
 
-### Provider presets
+### Adapter credential requirements
 
-| `provider` | adapter | required credentials |
-|---|---|---|
-| `openai` | `openai` | `apiKey` |
-| `googleaistudio` | `googleaistudio` | `apiKey` |
-| `anthropic` | `anthropic` | `apiKey` (`version` defaulted) |
-| `azureopenai` | `azureopenai` | `apiKey`, `baseUrl` |
-| `azurefoundry` | `azurefoundry` | `apiKey`, `baseUrl` |
-| `openrouter` | `openaicompatible` | `apiKey` (baseUrl defaulted) |
-| `openaicompatible` | `openaicompatible` | `apiKey`, `baseUrl` |
+| `adapterKey` | required credentials |
+|---|---|
+| `openai` | `apiKey` |
+| `googleaistudio` | `apiKey` |
+| `anthropic` | `apiKey` (`version` defaults in the adapter) |
+| `azureopenai` | `apiKey`, `baseUrl` |
+| `azurefoundry` | `apiKey`, `baseUrl` |
+| `deepseek` | `apiKey` |
+| `minimax` | `apiKey` |
+| `moonshot` | `apiKey` |
+| `zai` | `apiKey` |
+| `openaicompatible` | `apiKey`, `baseUrl` |
+
+`GET /admin/operations` returns the live adapter list, required credentials, operations, and
+transports.
 
 ## Catalog vs custom
 
@@ -66,7 +72,7 @@ Authorization: Bearer $MASTER_KEY
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "gpt-5.4",
-  "provider": "openai",
+  "adapterKey": "openai",
   "upstreamModel": "gpt-5.4",
   "credentials": { "apiKey": "sk-..." },
   "label": "OpenAI — billing team key",
@@ -84,7 +90,7 @@ the `label` also appears in each request log (`metadata.deploymentLabel`, and pe
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "image-default",
-  "provider": "openai",
+  "adapterKey": "openai",
   "upstreamModel": "gpt-image-1",
   "credentials": { "apiKey": "sk-..." }
 }'
@@ -99,7 +105,7 @@ OpenAI:
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "embed",
-  "provider": "openai",
+  "adapterKey": "openai",
   "upstreamModel": "text-embedding-3-small",
   "credentials": { "apiKey": "sk-..." }
 }'
@@ -110,7 +116,7 @@ Google AI Studio:
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "embed",
-  "provider": "googleaistudio",
+  "adapterKey": "googleaistudio",
   "upstreamModel": "gemini-embedding-001",
   "credentials": { "apiKey": "AIza..." }
 }'
@@ -121,7 +127,7 @@ Azure OpenAI v1:
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "embed",
-  "provider": "azureopenai",
+  "adapterKey": "azureopenai",
   "upstreamModel": "text-embedding-3-small",
   "credentials": {
     "apiKey": "...",
@@ -151,7 +157,7 @@ a batch. Google accepts text and `encoding_format: "float"` in this gateway; pre
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "transcribe",
-  "provider": "openai",
+  "adapterKey": "openai",
   "upstreamModel": "gpt-4o-transcribe",
   "credentials": { "apiKey": "sk-..." }
 }'
@@ -169,7 +175,7 @@ more recent one):
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "transcribe",
-  "provider": "azureopenai",
+  "adapterKey": "azureopenai",
   "upstreamModel": "my-transcribe-deployment",
   "credentials": {
     "apiKey": "...",
@@ -193,7 +199,7 @@ entry inside `models` in any `catalog.json`; only include the operations the mod
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "llama-local",
-  "provider": "openaicompatible",
+  "adapterKey": "openaicompatible",
   "upstreamModel": "llama-3.3-70b",
   "credentials": { "apiKey": "x", "baseUrl": "http://localhost:8000/v1" },
   "catalogEntry": {
@@ -226,7 +232,7 @@ Image operations require `outputFormats`, `responseFormats`, and `sizes` (or `ar
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "img-local",
-  "provider": "openaicompatible",
+  "adapterKey": "openaicompatible",
   "upstreamModel": "sdxl",
   "credentials": { "apiKey": "x", "baseUrl": "http://localhost:8000/v1" },
   "catalogEntry": {
@@ -249,7 +255,7 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "transcribe-local",
-  "provider": "openaicompatible",
+  "adapterKey": "openaicompatible",
   "upstreamModel": "custom-transcribe",
   "credentials": { "apiKey": "x", "baseUrl": "http://localhost:8000/v1" },
   "catalogEntry": {
@@ -272,7 +278,7 @@ For OpenAI-compatible providers without a built-in catalog, declare `embedding.c
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "embed-local",
-  "provider": "openaicompatible",
+  "adapterKey": "openaicompatible",
   "upstreamModel": "my-embedding-model",
   "credentials": { "apiKey": "x", "baseUrl": "http://localhost:8000/v1" },
   "catalogEntry": {

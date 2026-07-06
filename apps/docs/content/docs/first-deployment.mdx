@@ -5,7 +5,7 @@ description: "The minimal path: one catalog model, one provider, verified and te
 
 The full [Creating deployments](/docs/creating-deployments) guide covers every provider, custom
 models, and every operation type. This page is the minimal path for your very first one: a known
-model, from a provider with a `provider` preset, verified before you save it.
+model from a first-class adapter, verified before you save it.
 
 ## 1. Pick a catalog model
 
@@ -25,7 +25,7 @@ curl -X POST "$GATEWAY/admin/deployments/resolve" \
   -H "Content-Type: application/json" \
   -d '{
     "publicModel": "general",
-    "provider": "openai",
+    "adapterKey": "openai",
     "upstreamModel": "gpt-5.5",
     "credentials": { "apiKey": "sk-..." }
   }'
@@ -46,7 +46,7 @@ curl -X POST "$GATEWAY/admin/deployments" \
   -H "Content-Type: application/json" \
   -d '{
     "publicModel": "general",
-    "provider": "openai",
+    "adapterKey": "openai",
     "upstreamModel": "gpt-5.5",
     "credentials": { "apiKey": "sk-..." }
   }'

@@ -396,7 +396,7 @@ export function buildOpenApiDocument() {
 					security: [],
 					summary: "List public models (unauthenticated)",
 					description:
-						"OpenAI-compatible base fields plus OpenRouter-like capability metadata aggregated from enabled deployments. Does not expose deployment labels, credentials, or upstream model ids.",
+						"OpenAI-compatible base fields plus capability metadata aggregated from enabled deployments. Does not expose deployment labels, credentials, or upstream model ids.",
 					responses: {
 						"200": {
 							description:
@@ -434,7 +434,7 @@ export function buildOpenApiDocument() {
 					security: [],
 					summary: "List redacted deployments for a public model",
 					description:
-						"OpenRouter-like endpoint data for each enabled deployment. Public response redacts database ids, operator labels, credentials, metadata, and upstream model ids.",
+						"Redacted endpoint data for each enabled deployment. Public response redacts database ids, operator labels, credentials, metadata, and upstream model ids.",
 					parameters: [
 						{
 							name: "model",
@@ -465,28 +465,14 @@ export function buildOpenApiDocument() {
 					},
 				},
 			},
-			"/admin/provider-presets": {
-				get: {
-					tags: ["Admin"],
-					operationId: "listProviderPresets",
-					summary:
-						"List provider presets (OpenAI, Azure OpenAI/Foundry, Google, Anthropic, OpenRouter, compatibles)",
-					description:
-						"Each preset resolves the code adapter, required credential keys, defaults (for example baseUrl), and the per-operation transport. They are used when creating a deployment with `provider`.",
-					responses: {
-						"200": { description: "Provider presets without credentials" },
-						"401": errorResponse,
-					},
-				},
-			},
 			"/admin/deployments/resolve": {
 				post: {
 					tags: ["Admin"],
 					operationId: "resolveDeployment",
 					summary: "Resolve profile, operations, and transports without saving",
 					description:
-						"Same body as POST /admin/deployments (credentials are accepted and ignored).",
-					requestBody: jsonBody(c.CreateDeployment),
+						"Validates adapter, catalog/custom model metadata, operation profiles, and transports without saving. Credentials are accepted for body reuse and ignored.",
+					requestBody: jsonBody(c.ResolveDeployment),
 					responses: {
 						"200": { description: "Effective deployment configuration" },
 						"400": errorResponse,
@@ -517,12 +503,12 @@ export function buildOpenApiDocument() {
 					operationId: "createDeployment",
 					summary: "Create a deployment with the API key inline",
 					description:
-						"Creates a deployment: public name (`publicModel`) + exact upstream model + inline credentials. `provider` (preset) resolves the adapter, required keys, and default transports; an explicit `adapterKey` can be provided instead. Multiple deployments with the same `publicModel` form a balanced pool.",
+						"Creates a deployment: public name (`publicModel`) + adapter + exact upstream model + inline credentials. Multiple deployments with the same `publicModel` form a balanced pool.",
 					requestBody: jsonBody(c.CreateDeployment, {
 						gptImage: {
 							value: {
 								publicModel: "gpt-image",
-								provider: "openai",
+								adapterKey: "openai",
 								upstreamModel: "gpt-image-2",
 								credentials: { apiKey: "sk-..." },
 							},

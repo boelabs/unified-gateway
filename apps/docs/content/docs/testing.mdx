@@ -5,7 +5,7 @@ description: "Unit and integration testing strategy."
 
 Tests are designed to be **hermetic with respect to providers**:
 
-- They do not need real credentials for OpenAI, Google, Azure, OpenRouter, etc.
+- They do not need real credentials for OpenAI, Google, Azure, aggregators, or any other provider.
 - `bun run --filter @boelabs/unified-gateway test`, `bun run --filter @boelabs/unified-gateway test:unit`, and `bun run --filter @boelabs/unified-gateway test:integration` import `apps/gateway/tests/support/noRealFetch.ts`, which blocks any real `fetch`.
 - If a test needs to simulate an upstream, it must use `withStubbedFetch()` from `tests/support/fetch.ts`.
 

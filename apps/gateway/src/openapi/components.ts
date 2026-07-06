@@ -394,20 +394,16 @@ export const CreateDeployment = z
 		publicModel: z
 			.string()
 			.meta({ description: "Public alias sent as model in /v1." }),
-		provider: z.string().optional().meta({
+		adapterKey: z.string().meta({
 			description:
-				"Known preset (openai, googleaistudio, anthropic, openrouter, openaicompatible).",
+				"Code adapter key (for example openai, googleaistudio, anthropic, openaicompatible).",
 		}),
-		adapterKey: z
-			.string()
-			.optional()
-			.meta({ description: "Explicit adapter; alternative to provider." }),
 		upstreamModel: z
 			.string()
 			.meta({ description: "Exact ID; preserves slash namespaces." }),
 		credentials: z.record(z.string(), z.unknown()).meta({
 			description:
-				"Inline API key (e.g. { apiKey }). Encrypted; never returned.",
+				"Inline provider credentials. Required keys are exposed by GET /admin/operations under adapter.credentials.required. Encrypted; never returned.",
 		}),
 		label: nullableString.optional().meta({
 			description:
@@ -434,6 +430,44 @@ export const CreateDeployment = z
 		rpmLimit: nullableInteger.optional(),
 	})
 	.meta({ id: "CreateDeployment" });
+
+export const ResolveDeployment = z
+	.object({
+		publicModel: z
+			.string()
+			.meta({ description: "Public alias sent as model in /v1." }),
+		adapterKey: z.string().meta({
+			description:
+				"Code adapter key (for example openai, googleaistudio, anthropic, openaicompatible).",
+		}),
+		upstreamModel: z
+			.string()
+			.meta({ description: "Exact ID; preserves slash namespaces." }),
+		catalogEntry: CatalogEntry.optional().meta({
+			description:
+				"REQUIRED if the model is not in the catalog (custom); FORBIDDEN if it is. 1:1 entry with catalog.json.",
+		}),
+		pricing: pricing.optional().meta({
+			description: "Operator pricing for cost calculation (optional).",
+		}),
+		transportOverrides: TransportOverrides.optional().meta({
+			description:
+				"Per-operation transport override. Usually inferred from the adapter; rarely needed.",
+		}),
+		credentials: z.record(z.string(), z.unknown()).optional().meta({
+			description:
+				"Accepted for body reuse with POST /admin/deployments, but ignored by resolve.",
+		}),
+		label: nullableString.optional().meta({
+			description:
+				"Accepted for body reuse with POST /admin/deployments, but ignored by resolve.",
+		}),
+		metadata: z.record(z.string(), z.unknown()).optional().meta({
+			description:
+				"Accepted for body reuse with POST /admin/deployments, but ignored by resolve.",
+		}),
+	})
+	.meta({ id: "ResolveDeployment" });
 
 export const UpdateDeployment = z
 	.object({

@@ -44,18 +44,16 @@ test("admin mounts the new platform behind master authentication", async () => {
 	);
 });
 
-test("admin platform: resolves Azure presets against their independent catalogs", async () => {
+test("admin platform: resolves Azure adapters against their independent catalogs without credentials", async () => {
 	for (const input of [
 		{
-			provider: "azureopenai",
-			upstreamModel: "gpt-5.4",
 			adapterKey: "azureopenai",
+			upstreamModel: "gpt-5.4",
 			transport: "responses",
 		},
 		{
-			provider: "azurefoundry",
-			upstreamModel: "DeepSeek-V3.1",
 			adapterKey: "azurefoundry",
+			upstreamModel: "DeepSeek-V3.1",
 			transport: "chat_completions",
 		},
 	]) {
@@ -63,16 +61,12 @@ test("admin platform: resolves Azure presets against their independent catalogs"
 			method: "POST",
 			headers: { "content-type": "application/json" },
 			body: JSON.stringify({
-				publicModel: `test-${input.provider}`,
-				provider: input.provider,
+				publicModel: `test-${input.adapterKey}`,
+				adapterKey: input.adapterKey,
 				upstreamModel: input.upstreamModel,
-				credentials: {
-					apiKey: "ignored",
-					baseUrl: "https://resource.openai.azure.com",
-				},
 			}),
 		});
-		assert.equal(response.status, 200, input.provider);
+		assert.equal(response.status, 200, input.adapterKey);
 		const body = (await response.json()) as {
 			data: {
 				source: string;
@@ -94,7 +88,7 @@ test("admin platform: catalog model with inline api key (without catalogEntry) w
 }, async () => {
 	const input = {
 		publicModel: `gpt-image-${randomUUID()}`,
-		provider: "openai",
+		adapterKey: "openai",
 		upstreamModel: "gpt-image-2",
 		credentials: { apiKey: "secret-http-key" },
 	};
@@ -153,7 +147,7 @@ test("admin platform: deployment label and metadata round-trip through create, g
 }, async () => {
 	const input = {
 		publicModel: `labeled-${randomUUID()}`,
-		provider: "openai",
+		adapterKey: "openai",
 		upstreamModel: "gpt-image-2",
 		credentials: { apiKey: "secret-key" },
 		label: "OpenAI - billing team key",
@@ -197,6 +191,16 @@ test("admin platform: deployment label and metadata round-trip through create, g
 		};
 		assert.equal(patched.data.label, "OpenAI - renamed");
 		assert.deepEqual(patched.data.metadata, {});
+
+		const badCredentialsPatch = await platformTestApp.request(
+			`/deployments/${deploymentId}`,
+			{
+				method: "PATCH",
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({ credentials: {} }),
+			},
+		);
+		assert.equal(badCredentialsPatch.status, 400);
 	} finally {
 		if (deploymentId)
 			await platformTestApp.request(`/deployments/${deploymentId}`, {

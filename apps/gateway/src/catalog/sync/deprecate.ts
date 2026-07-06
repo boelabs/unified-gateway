@@ -1,8 +1,8 @@
 import type { CatalogEntry } from "#catalog/types.ts";
-import { confirmedKey } from "./history.ts";
+import { normalizeTag } from "./providerIdentity.ts";
 import type { SourceFetchResult } from "./types.ts";
 import type { MatchedCandidate } from "./match.ts";
-import { normalizeTag } from "./providerIdentity.ts";
+import { confirmedKey } from "./history.ts";
 
 export interface DeprecationCandidate {
 	adapterKey: string;
