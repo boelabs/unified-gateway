@@ -252,6 +252,7 @@ const textGenerateProfileSchema = z
 					"images.generations",
 					"images.edits",
 					"audio.transcriptions",
+					"videos",
 				]),
 			)
 			.optional(),
@@ -270,6 +271,44 @@ const transcriptionOperationProfileSchema = z
 		supportsStreaming: z.boolean().optional(),
 		supportsTimestampGranularities: z.boolean().optional(),
 		maxFileBytes: z.int().positive().optional(),
+	})
+	.strict();
+
+const videoOperationProfileSchema = z
+	.object({
+		maxPromptChars: z.int().positive().optional(),
+		durations: z.array(z.string().min(1)).min(1).optional(),
+		qualities: z
+			.array(z.enum(["standard", "hd", "low", "medium", "high", "auto"]))
+			.min(1)
+			.optional(),
+		sizes: z
+			.record(
+				z.string(),
+				z
+					.object({
+						size: z.string().optional(),
+						aspectRatio: z.string().optional(),
+						resolution: z.string().optional(),
+					})
+					.strict(),
+			)
+			.optional(),
+		supportsImageUrl: z.boolean().optional(),
+		supportsAudioUrl: z.boolean().optional(),
+		supportsVideoUrl: z.boolean().optional(),
+		supportsFileId: z.boolean().optional(),
+		supportsFrameImages: z.boolean().optional(),
+		supportsSeed: z.boolean().optional(),
+		supportsGenerateAudio: z.boolean().optional(),
+		maxInputReferences: z.int().positive().optional(),
+		requiresDataUrlImageReference: z.boolean().optional(),
+		maxReferenceBytes: z.int().positive().optional(),
+		contentVariants: z
+			.array(z.enum(["video", "thumbnail", "spritesheet"]))
+			.min(1)
+			.optional(),
+		pollIntervalSeconds: z.int().positive().optional(),
 	})
 	.strict();
 
@@ -322,6 +361,7 @@ export const operationProfilesSchema = z
 		"text.generate": textGenerateProfileSchema.optional(),
 		"image.generate": imageOperationProfileSchema.optional(),
 		"image.edit": imageOperationProfileSchema.optional(),
+		"video.generate": videoOperationProfileSchema.optional(),
 		"audio.transcribe": transcriptionOperationProfileSchema.optional(),
 		"embedding.create": embeddingOperationProfileSchema.optional(),
 	})
@@ -374,6 +414,29 @@ function validateImageOperationRequirements(
 	}
 }
 
+function validateVideoOperationRequirements(
+	value: z.infer<typeof operationProfilesSchema>,
+	ctx: z.RefinementCtx,
+	pathPrefix: Array<string | number> = [],
+): void {
+	const entry = value["video.generate"];
+	if (!entry) return;
+	if (!entry.durations || entry.durations.length === 0) {
+		ctx.addIssue({
+			code: "custom",
+			path: [...pathPrefix, "video.generate", "durations"],
+			message: "required for video operations",
+		});
+	}
+	if (!entry.sizes || Object.keys(entry.sizes).length === 0) {
+		ctx.addIssue({
+			code: "custom",
+			path: [...pathPrefix, "video.generate", "sizes"],
+			message: "required for video operations",
+		});
+	}
+}
+
 export const customCatalogEntrySchema = catalogEntrySchema.superRefine(
 	(value, ctx) => {
 		const text = value.operations["text.generate"];
@@ -403,6 +466,7 @@ export const customCatalogEntrySchema = catalogEntrySchema.superRefine(
 			}
 		}
 		validateImageOperationRequirements(value.operations, ctx, ["operations"]);
+		validateVideoOperationRequirements(value.operations, ctx, ["operations"]);
 	},
 );
 

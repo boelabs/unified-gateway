@@ -11,6 +11,64 @@
 		]
 	},
 	"models": {
+		"sora-2": {
+			"deprecated": true,
+			"operations": {
+				"video.generate": {
+					"maxPromptChars": 32000,
+					"durations": ["4", "8", "12"],
+					"supportsImageUrl": true,
+					"supportsFileId": true,
+					"contentVariants": ["video", "thumbnail", "spritesheet"],
+					"pollIntervalSeconds": 5,
+					"sizes": {
+						"720x1280": {
+							"size": "720x1280"
+						},
+						"1280x720": {
+							"size": "1280x720"
+						},
+						"1024x1792": {
+							"size": "1024x1792"
+						},
+						"1792x1024": {
+							"size": "1792x1024"
+						}
+					},
+					"maxInputReferences": 1
+				}
+			},
+			"notes": "OpenAI Videos/Sora 2 API compatibility profile. OpenAI docs currently mark this API deprecated with shutdown scheduled for 2026-09-24."
+		},
+		"sora-2-pro": {
+			"deprecated": true,
+			"operations": {
+				"video.generate": {
+					"maxPromptChars": 32000,
+					"durations": ["4", "8", "12"],
+					"supportsImageUrl": true,
+					"supportsFileId": true,
+					"contentVariants": ["video", "thumbnail", "spritesheet"],
+					"pollIntervalSeconds": 5,
+					"sizes": {
+						"720x1280": {
+							"size": "720x1280"
+						},
+						"1280x720": {
+							"size": "1280x720"
+						},
+						"1024x1792": {
+							"size": "1024x1792"
+						},
+						"1792x1024": {
+							"size": "1792x1024"
+						}
+					},
+					"maxInputReferences": 1
+				}
+			},
+			"notes": "OpenAI Videos/Sora 2 API compatibility profile. OpenAI docs currently mark this API deprecated with shutdown scheduled for 2026-09-24."
+		},
 		"text-embedding-3-large": {
 			"operations": {
 				"embedding.create": {

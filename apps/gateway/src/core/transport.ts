@@ -9,6 +9,10 @@
  *   - audio_transcriptions: OpenAI Audio API (/audio/transcriptions, multipart)
  *   - embeddings:       OpenAI-compatible Embeddings API (/embeddings)
  *   - embed_content:    Google Gemini Embeddings API (:embedContent/:batchEmbedContents)
+ *   - videos:           OpenAI-compatible Videos API (/videos)
+ *   - videos_async:     Async job Videos API (POST /videos -> 202 + polling_url, GET /videos/{job},
+ *                       GET /videos/{job}/content?index=N)
+ *   - generate_videos:  Google Veo long-running video generation (:predictLongRunning)
  */
 export type UpstreamTransport =
 	| "chat_completions"
@@ -18,7 +22,10 @@ export type UpstreamTransport =
 	| "images"
 	| "audio_transcriptions"
 	| "embeddings"
-	| "embed_content";
+	| "embed_content"
+	| "videos"
+	| "videos_async"
+	| "generate_videos";
 
 const UPSTREAM_TRANSPORTS: readonly UpstreamTransport[] = [
 	"chat_completions",
@@ -29,6 +36,9 @@ const UPSTREAM_TRANSPORTS: readonly UpstreamTransport[] = [
 	"audio_transcriptions",
 	"embeddings",
 	"embed_content",
+	"videos",
+	"videos_async",
+	"generate_videos",
 ] as const;
 
 export function isUpstreamTransport(

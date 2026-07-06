@@ -23,6 +23,7 @@
 		"responses",
 		"messages",
 		"images",
+		"videos",
 		"embeddings",
 		"audio-transcriptions",
 		"streaming",

@@ -9,13 +9,30 @@ services:
     ports:
       - "127.0.0.1:6379:6379"
 
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-gateway}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-gateway-password}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+
   gateway:
     environment:
       MASTER_KEY: ${MASTER_KEY:-dev-master-key-change-me}
       CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
+      OBJECT_STORAGE_BACKEND: ${OBJECT_STORAGE_BACKEND:-local}
+      OBJECT_STORAGE_LOCAL_ROOT: ${OBJECT_STORAGE_LOCAL_ROOT:-.source/object-storage}
     ports:
       - "127.0.0.1:4000:4000"
 
   docs:
     ports:
       - "127.0.0.1:3000:3000"
+
+volumes:
+  miniodata:

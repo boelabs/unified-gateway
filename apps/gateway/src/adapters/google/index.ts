@@ -1,11 +1,11 @@
 import { summaryVisible, toUpstreamReasoningEffort } from "#core/reasoning.ts";
 import { mergeExtraBody, mergeExtraBodyDeep } from "#core/extraBody.ts";
 import { type BaseCreds, requireApiKeyCreds } from "#adapters/creds.ts";
+import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
 import { mapUpstreamHttpError } from "#adapters/upstreamError.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
 import { resolveAdapterReasoning } from "#adapters/reasoning.ts";
 import type { ReasoningControlKind } from "#core/reasoning.ts";
-import { imageProfileFor } from "#catalog/types.ts";
 import { GatewayError } from "#core/errors.ts";
 import { toGeminiSchema } from "./schema.ts";
 import { readFile } from "node:fs/promises";
@@ -22,10 +22,20 @@ import type {
 	CanonicalMessage,
 } from "#core/canonical.ts";
 
+import {
+	type CanonicalVideoProviderJob,
+	type CanonicalVideoRequest,
+	type VideoAssetVariant,
+	type VideoUrlReference,
+	type VideoStatus,
+	resolveVideoSize,
+} from "#core/videos.ts";
+
 import type {
 	EmbeddingsHandler,
 	AdapterContext,
 	ProviderModule,
+	VideoHandler,
 	ImageHandler,
 	ChatHandler,
 	Adapter,
@@ -774,6 +784,383 @@ const imageHandler: ImageHandler = {
 	},
 };
 
+function googleVideoParameters(
+	req: CanonicalVideoRequest,
+	ctx: AdapterContext,
+): Record<string, unknown> {
+	const resolved = resolveVideoSize(req, videoProfileFor(ctx.meta));
+	const seconds = req.seconds !== undefined ? Number(req.seconds) : undefined;
+	const parameters: Record<string, unknown> = {
+		...(seconds !== undefined && Number.isFinite(seconds)
+			? { durationSeconds: seconds }
+			: {}),
+		...(resolved?.aspectRatio ? { aspectRatio: resolved.aspectRatio } : {}),
+		...(resolved?.resolution ? { resolution: resolved.resolution } : {}),
+		...(req.seed !== undefined ? { seed: req.seed } : {}),
+		...(req.generateAudio !== undefined
+			? { generateAudio: req.generateAudio }
+			: {}),
+	};
+	return mergeExtraBody(parameters, req.extraBody, [
+		"durationSeconds",
+		"aspectRatio",
+		"resolution",
+		"seed",
+		"generateAudio",
+	]);
+}
+
+function googleVideoInline(
+	url: string,
+	param: string,
+	mediaType: "image" | "video",
+): {
+	mimeType: string;
+	data: string;
+} {
+	const inline = dataUrlToInline(url);
+	if (!inline?.mimeType.startsWith(`${mediaType}/`)) {
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Google Veo transport requires ${mediaType} references as data:${mediaType}/... base64 URLs`,
+			param,
+		});
+	}
+	return inline;
+}
+
+function googleReferenceImages(refs: VideoUrlReference[]): Array<{
+	image: { inlineData: { mimeType: string; data: string } };
+	referenceType: "asset";
+}> {
+	return refs.map((ref) => ({
+		image: {
+			inlineData: googleVideoInline(ref.url, "input_references", "image"),
+		},
+		referenceType: "asset",
+	}));
+}
+
+function assertGoogleVideoDuration(
+	req: CanonicalVideoRequest,
+	ctx: AdapterContext,
+	hasReferenceImages: boolean,
+	hasVideoExtension: boolean,
+): void {
+	const seconds = req.seconds !== undefined ? Number(req.seconds) : undefined;
+	if (seconds === undefined || seconds === 8) return;
+	const resolution = resolveVideoSize(
+		req,
+		videoProfileFor(ctx.meta),
+	)?.resolution;
+	const highResolution =
+		resolution === "1080p" || resolution?.toLowerCase() === "4k";
+	if (!highResolution && !hasReferenceImages && !hasVideoExtension) return;
+	throw new GatewayError({
+		class: "bad_request",
+		code: "unsupported_parameter",
+		param: "duration",
+		message:
+			"Google Veo requires an 8 second duration for 1080p/4K, reference images, and video extension.",
+		publicMessage:
+			"Google Veo requires an 8 second duration for 1080p/4K, reference images, and video extension.",
+	});
+}
+
+function googleVideoBody(
+	req: CanonicalVideoRequest,
+	ctx: AdapterContext,
+): Record<string, unknown> {
+	const instance: Record<string, unknown> = { prompt: req.prompt };
+	const refs = req.inputReferences ?? [];
+	const imageRefs: VideoUrlReference[] = [];
+	const videoRefs: VideoUrlReference[] = [];
+	for (const ref of refs) {
+		if (ref.type === "image_url") {
+			imageRefs.push(ref);
+			continue;
+		}
+		if (ref.type === "video_url") {
+			videoRefs.push(ref);
+			continue;
+		}
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Google Veo transport does not support ${ref.type === "file_id" ? "file_id" : ref.type} references`,
+			param: "input_references",
+		});
+	}
+	if (
+		videoRefs.length > 1 ||
+		(videoRefs.length === 1 && imageRefs.length > 0)
+	) {
+		throw new GatewayError({
+			class: "bad_request",
+			message:
+				"Google Veo transport accepts either one video reference or image references, not both",
+			param: "input_references",
+		});
+	}
+	if (videoRefs.length === 1 && (req.frameImages?.length ?? 0) > 0) {
+		throw new GatewayError({
+			class: "bad_request",
+			message:
+				"Google Veo transport cannot combine video extension with frame images",
+			param: "frame_images",
+		});
+	}
+	if (imageRefs.length > 1 && (req.frameImages?.length ?? 0) > 0) {
+		throw new GatewayError({
+			class: "bad_request",
+			message:
+				"Google Veo transport cannot combine reference images with frame images",
+			param: "frame_images",
+		});
+	}
+	const videoRef = videoRefs[0];
+	if (videoRef) {
+		instance.video = {
+			inlineData: googleVideoInline(videoRef.url, "input_references", "video"),
+		};
+	} else if (imageRefs.length === 1) {
+		instance.image = {
+			inlineData: googleVideoInline(
+				imageRefs[0]!.url,
+				"input_references",
+				"image",
+			),
+		};
+	} else if (imageRefs.length > 1) {
+		instance.referenceImages = googleReferenceImages(imageRefs);
+	}
+	assertGoogleVideoDuration(
+		req,
+		ctx,
+		imageRefs.length > 1,
+		videoRef !== undefined,
+	);
+	for (const frame of req.frameImages ?? []) {
+		const target = frame.frame === "first" ? "image" : "lastFrame";
+		if (instance[target] !== undefined) {
+			throw new GatewayError({
+				class: "bad_request",
+				message:
+					frame.frame === "first"
+						? "Google Veo transport accepts a single first frame (image reference or first_frame image)"
+						: "Google Veo transport accepts a single last_frame image",
+				param: "frame_images",
+			});
+		}
+		instance[target] = {
+			inlineData: googleVideoInline(frame.url, "frame_images", "image"),
+		};
+	}
+	const parameters = googleVideoParameters(req, ctx);
+	return {
+		instances: [instance],
+		...(Object.keys(parameters).length > 0 ? { parameters } : {}),
+	};
+}
+
+async function parseJsonResponse(res: Response): Promise<unknown> {
+	const text = await res.text();
+	try {
+		return JSON.parse(text);
+	} catch {
+		return text;
+	}
+}
+
+async function googleFetchJson(
+	url: string,
+	init: RequestInit,
+): Promise<unknown> {
+	let res: Response;
+	try {
+		res = await fetch(url, init);
+	} catch (err) {
+		throw mapGoogleError(err);
+	}
+	if (!res.ok) {
+		throw mapGoogleError({
+			status: res.status,
+			body: await parseJsonResponse(res),
+		});
+	}
+	return parseJsonResponse(res);
+}
+
+function googleVideoUri(raw: Record<string, unknown>): string | undefined {
+	const response = raw.response as Record<string, unknown> | undefined;
+	const generateVideoResponse = response?.generateVideoResponse as
+		| Record<string, unknown>
+		| undefined;
+	const samples = generateVideoResponse?.generatedSamples as
+		| Array<Record<string, unknown>>
+		| undefined;
+	const sampleVideo = samples?.[0]?.video as
+		| Record<string, unknown>
+		| undefined;
+	if (typeof sampleVideo?.uri === "string") return sampleVideo.uri;
+
+	const generatedVideos = response?.generatedVideos as
+		| Array<Record<string, unknown>>
+		| undefined;
+	const video = generatedVideos?.[0]?.video as
+		| Record<string, unknown>
+		| undefined;
+	if (typeof video?.uri === "string") return video.uri;
+	return undefined;
+}
+
+function parseGoogleVideoJob(
+	raw: unknown,
+	fallbackJobId?: string,
+): CanonicalVideoProviderJob {
+	const value = (raw ?? {}) as Record<string, unknown>;
+	const upstreamJobId =
+		typeof value.name === "string" && value.name ? value.name : fallbackJobId;
+	if (!upstreamJobId) {
+		throw new GatewayError({
+			class: "server",
+			message: "Google Veo response is missing operation name",
+		});
+	}
+	let status: VideoStatus = "in_progress";
+	let progress = 50;
+	if (value.done !== true) {
+		status = "queued";
+		progress = 0;
+	} else if (value.error) {
+		status = "failed";
+		progress = 100;
+	} else {
+		status = "completed";
+		progress = 100;
+	}
+	const error = value.error as
+		| { code?: unknown; message?: unknown; status?: unknown }
+		| undefined;
+	return {
+		upstreamJobId,
+		status,
+		progress,
+		...(error
+			? {
+					error: {
+						code:
+							typeof error.status === "string"
+								? error.status
+								: typeof error.code === "number"
+									? String(error.code)
+									: null,
+						message:
+							typeof error.message === "string"
+								? error.message
+								: "Video generation failed",
+					},
+				}
+			: {}),
+		providerState: {
+			...value,
+			...(googleVideoUri(value) ? { videoUri: googleVideoUri(value) } : {}),
+		},
+	};
+}
+
+const videoGeneration: VideoHandler = {
+	async submit(req, ctx) {
+		if (ctx.transport !== "generate_videos") {
+			throw new GatewayError({
+				class: "server",
+				message: `Google: transport "${ctx.transport}" cannot generate videos`,
+			});
+		}
+		const c = creds(ctx);
+		const base = (c.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
+		return parseGoogleVideoJob(
+			await googleFetchJson(
+				`${base}/models/${encodeURIComponent(ctx.upstreamModel)}:predictLongRunning`,
+				{
+					method: "POST",
+					headers: {
+						"content-type": "application/json",
+						"x-goog-api-key": c.apiKey,
+						...(c.headers ?? {}),
+					},
+					body: JSON.stringify(googleVideoBody(req, ctx)),
+					...(ctx.signal ? { signal: ctx.signal } : {}),
+				},
+			),
+		);
+	},
+	async refresh(job, ctx) {
+		const c = creds(ctx);
+		const base = (c.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
+		return parseGoogleVideoJob(
+			await googleFetchJson(`${base}/${job.upstreamJobId}`, {
+				method: "GET",
+				headers: {
+					"x-goog-api-key": c.apiKey,
+					...(c.headers ?? {}),
+				},
+				...(ctx.signal ? { signal: ctx.signal } : {}),
+			}),
+			job.upstreamJobId,
+		);
+	},
+	async download(job, variant: VideoAssetVariant, ctx) {
+		if (variant !== "video") {
+			throw new GatewayError({
+				class: "not_found",
+				code: "video_variant_unavailable",
+				message: `Google Veo transport does not provide ${variant}`,
+			});
+		}
+		const uri = (job.providerState as { videoUri?: unknown } | null | undefined)
+			?.videoUri;
+		if (typeof uri !== "string" || !uri) {
+			throw new GatewayError({
+				class: "not_found",
+				code: "video_content_unavailable",
+				message:
+					"Google Veo operation does not contain a downloadable video URI",
+			});
+		}
+		const c = creds(ctx);
+		let res: Response;
+		try {
+			res = await fetch(uri, {
+				headers: { "x-goog-api-key": c.apiKey, ...(c.headers ?? {}) },
+				...(ctx.signal ? { signal: ctx.signal } : {}),
+			});
+		} catch (err) {
+			throw mapGoogleError(err);
+		}
+		if (!res.ok) {
+			throw mapGoogleError({
+				status: res.status,
+				body: await parseJsonResponse(res),
+			});
+		}
+		if (!res.body) {
+			throw new GatewayError({
+				class: "server",
+				message: "Google Veo content response had no body",
+			});
+		}
+		const length = res.headers.get("content-length");
+		return {
+			body: res.body,
+			contentType: res.headers.get("content-type") ?? "video/mp4",
+			...(length ? { contentLength: Number(length) } : {}),
+		};
+	},
+	mapError(err) {
+		return mapGoogleError(err);
+	},
+};
+
 const embeddings: EmbeddingsHandler = {
 	buildRequest(req, ctx) {
 		if (ctx.transport !== "embed_content") {
@@ -813,11 +1200,13 @@ export const googleAdapter: Adapter = {
 		"chat",
 		"images.generations",
 		"images.edits",
+		"videos.generations",
 		"embeddings",
 	]),
 	chat,
 	imageGeneration: imageHandler,
 	imageEdit: imageHandler,
+	videoGeneration,
 	embeddings,
 	reasoningKinds: new Set<ReasoningControlKind>([
 		"gemini_level",
@@ -832,6 +1221,10 @@ export const googleAdapter: Adapter = {
 		"images.edits": {
 			supported: ["generate_content"],
 			default: "generate_content",
+		},
+		"videos.generations": {
+			supported: ["generate_videos"],
+			default: "generate_videos",
 		},
 		embeddings: {
 			supported: ["embed_content"],

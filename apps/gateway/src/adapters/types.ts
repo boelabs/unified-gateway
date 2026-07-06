@@ -11,6 +11,13 @@ import type {
 } from "#core/audio.ts";
 
 import type {
+	CanonicalVideoProviderJob,
+	CanonicalVideoRequest,
+	CanonicalVideoContent,
+	VideoAssetVariant,
+} from "#core/videos.ts";
+
+import type {
 	CanonicalChatStreamChunk,
 	CanonicalChatResponse,
 	CanonicalChatRequest,
@@ -123,6 +130,33 @@ export interface EmbeddingsHandler {
 	mapError(err: unknown, ctx: AdapterContext): GatewayError;
 }
 
+export interface VideoJobRef {
+	upstreamJobId: string;
+	upstreamGenerationId?: string | null;
+	upstreamPollingUrl?: string | null;
+	providerState?: Record<string, unknown> | null;
+}
+
+/** An adapter's async video-generation handler. */
+export interface VideoHandler {
+	submit(
+		req: CanonicalVideoRequest,
+		ctx: AdapterContext,
+	): Promise<CanonicalVideoProviderJob>;
+	refresh(
+		job: VideoJobRef,
+		ctx: AdapterContext,
+	): Promise<CanonicalVideoProviderJob>;
+	download(
+		job: VideoJobRef,
+		variant: VideoAssetVariant,
+		ctx: AdapterContext,
+	): Promise<CanonicalVideoContent>;
+	/** Best-effort upstream delete/cancel. Absent when the provider has no such endpoint. */
+	remove?(job: VideoJobRef, ctx: AdapterContext): Promise<void>;
+	mapError(err: unknown, ctx: AdapterContext): GatewayError;
+}
+
 /**
  * An adapter implements one or more upstream protocols. It is registered in code.
  *
@@ -139,6 +173,7 @@ export interface Adapter {
 	chat?: ChatHandler;
 	imageGeneration?: ImageHandler;
 	imageEdit?: ImageHandler;
+	videoGeneration?: VideoHandler;
 	audioTranscription?: TranscriptionHandler;
 	embeddings?: EmbeddingsHandler;
 	/** Upstream transports per CallType. */

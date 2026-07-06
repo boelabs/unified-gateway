@@ -61,7 +61,8 @@ the gateway itself manages — you can't use `extra_body` to smuggle in an overr
 
 `content` accepts multi-part arrays: `{"type": "image_url", "image_url": {"url": "..."}}` (URL or
 base64 data URL) on `vision: true` models, plus audio and file parts on models whose catalog profile
-declares support. There is no `video_url` part today.
+declares support. Video generation is exposed through the dedicated `/v1/videos` API, not a
+`video_url` chat part.
 
 ## Streaming
 

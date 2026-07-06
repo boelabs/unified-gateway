@@ -107,7 +107,7 @@ export type CanonicalImageStreamEvent =
 	  };
 
 interface ImageSizeMapping {
-	/** Native fields for image-config transports (Gemini/OpenRouter). */
+	/** Native fields for image-config transports. */
 	aspectRatio?: string;
 	imageSize?: string;
 }

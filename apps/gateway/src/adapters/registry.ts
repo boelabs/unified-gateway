@@ -13,6 +13,7 @@ const HANDLER_KEY: Partial<Record<CallType, keyof Adapter>> = {
 	chat: "chat",
 	"images.generations": "imageGeneration",
 	"images.edits": "imageEdit",
+	"videos.generations": "videoGeneration",
 	"audio.transcriptions": "audioTranscription",
 	embeddings: "embeddings",
 };

@@ -26,8 +26,17 @@ import { transcriptionsHandler } from "./endpoints/audio.ts";
 import { messagesHandler } from "./endpoints/messages.ts";
 import { authMiddleware } from "./auth/middleware.ts";
 import { startTelemetry } from "./telemetry/index.ts";
+import { startVideoJobs } from "./videos/jobs.ts";
 import type { AppEnv } from "./auth/types.ts";
 import { adminApp } from "./admin/index.ts";
+
+import {
+	videoRetrieveHandler,
+	videoContentHandler,
+	videoDeleteHandler,
+	videoCreateHandler,
+	videoListHandler,
+} from "./endpoints/videos.ts";
 
 import {
 	listResponseInputItemsHandler,
@@ -71,6 +80,7 @@ const app = new Hono<AppEnv>();
 const stopPartitions = startRequestLogPartitionJob();
 const stopResponseStateGc = startResponseStateGcJob();
 const stopExtensionReload = startExtensionReloadJob();
+const stopVideoJobs = startVideoJobs();
 
 app.use("*", requestContextMiddleware());
 app.use("*", logger());
@@ -174,7 +184,7 @@ async function readiness(c: Context) {
 app.get("/health/ready", readiness);
 app.get("/health", readiness);
 
-// Public model discovery. Intentionally unauthenticated, like OpenAI/OpenRouter model catalogs.
+// Public model discovery. Intentionally unauthenticated, like public provider model catalogs.
 app.get("/v1/models", listModelsHandler);
 app.get("/v1/models/*", modelsWildcardHandler);
 
@@ -191,6 +201,11 @@ app.get("/v1/responses/:id/input_items", listResponseInputItemsHandler);
 app.post("/v1/messages", messagesHandler);
 app.post("/v1/images/generations", imageGenerationsHandler);
 app.post("/v1/images/edits", imageEditsHandler);
+app.post("/v1/videos", videoCreateHandler);
+app.get("/v1/videos", videoListHandler);
+app.get("/v1/videos/:id/content", videoContentHandler);
+app.get("/v1/videos/:id", videoRetrieveHandler);
+app.delete("/v1/videos/:id", videoDeleteHandler);
 app.post("/v1/audio/transcriptions", transcriptionsHandler);
 app.post("/v1/embeddings", embeddingsHandler);
 
@@ -200,5 +215,10 @@ const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
 
 installGracefulShutdown({
 	server,
-	stopJobs: [stopPartitions, stopResponseStateGc, stopExtensionReload],
+	stopJobs: [
+		stopPartitions,
+		stopResponseStateGc,
+		stopExtensionReload,
+		stopVideoJobs,
+	],
 });

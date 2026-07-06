@@ -7,6 +7,7 @@ const CALL_TYPES = [
 	"chat",
 	"images.generations",
 	"images.edits",
+	"videos.generations",
 	"audio.transcriptions",
 	"embeddings",
 ] as const;

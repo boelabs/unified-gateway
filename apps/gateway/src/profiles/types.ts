@@ -4,6 +4,7 @@ import type { EmbeddingProfile } from "#core/embeddings.ts";
 import type { TranscriptionProfile } from "#core/audio.ts";
 import type { OperationId } from "#operations/registry.ts";
 import type { ImageModelProfile } from "#core/images.ts";
+import type { VideoModelProfile } from "#core/videos.ts";
 
 interface TextGenerateProfile {
 	// Client contract.
@@ -39,6 +40,7 @@ interface TextGenerateProfile {
 		| "images.generations"
 		| "images.edits"
 		| "audio.transcriptions"
+		| "videos"
 	>;
 	parameters?: ParameterSupportMap;
 	// ── Gateway behavior: how the reasoning control is translated to the provider ──
@@ -49,6 +51,7 @@ export interface OperationProfiles {
 	"text.generate"?: TextGenerateProfile;
 	"image.generate"?: ImageModelProfile;
 	"image.edit"?: ImageModelProfile;
+	"video.generate"?: VideoModelProfile;
 	"audio.transcribe"?: TranscriptionProfile;
 	"embedding.create"?: EmbeddingProfile;
 }

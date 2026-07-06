@@ -358,12 +358,162 @@ export const ImagesResponse = z
 	})
 	.meta({ id: "ImagesResponse" });
 
+/* -------------------------------------------------------------------- videos */
+
+export const VideoInputReference = z
+	.object({
+		image_url: z.union([z.string(), z.object({ url: z.string() })]).optional(),
+		file_id: z.string().optional(),
+	})
+	.meta({
+		id: "VideoInputReference",
+		description:
+			"OpenAI-compatible single reference: exactly one of image_url or file_id.",
+	});
+
+const videoUrlPart = (type: string, field: string) =>
+	z.object({
+		type: z.literal(type),
+		[field]: z.object({ url: z.string() }),
+	});
+
+export const VideoInputReferencePart = z
+	.union([
+		videoUrlPart("image_url", "image_url"),
+		videoUrlPart("audio_url", "audio_url"),
+		videoUrlPart("video_url", "video_url"),
+	])
+	.meta({
+		id: "VideoInputReferencePart",
+		description:
+			"A reference asset guiding generation. Audio/video references are only honored by providers that support them.",
+	});
+
+export const VideoFrameImage = z
+	.object({
+		type: z.literal("image_url"),
+		image_url: z.object({ url: z.string() }),
+		frame_type: z.enum(["first_frame", "last_frame"]),
+	})
+	.meta({ id: "VideoFrameImage" });
+
+export const VideoCreateRequest = loose(
+	{
+		model: z.string().meta({ description: "public model" }),
+		prompt: z.string().min(1).max(32000),
+		input_reference: z
+			.union([VideoInputReference, z.null()])
+			.optional()
+			.meta({ description: "Mutually exclusive with input_references." }),
+		input_references: z
+			.union([z.array(VideoInputReferencePart), z.null()])
+			.optional(),
+		frame_images: z.union([z.array(VideoFrameImage), z.null()]).optional(),
+		seconds: z
+			.union([z.string(), z.int(), z.null()])
+			.optional()
+			.meta({ description: "Mutually exclusive with duration." }),
+		duration: z
+			.union([z.int().positive(), z.null()])
+			.optional()
+			.meta({ description: "Duration in seconds." }),
+		size: z
+			.union([z.string().regex(/^[1-9][0-9]*x[1-9][0-9]*$/), z.null()])
+			.optional()
+			.meta({
+				description: "Interchangeable with aspect_ratio + resolution.",
+			}),
+		aspect_ratio: nullableEnum([
+			"16:9",
+			"9:16",
+			"1:1",
+			"4:3",
+			"3:4",
+			"3:2",
+			"2:3",
+			"21:9",
+			"9:21",
+		]).optional(),
+		resolution: nullableEnum([
+			"480p",
+			"720p",
+			"1080p",
+			"1K",
+			"2K",
+			"4K",
+		]).optional(),
+		seed: z.union([z.int(), z.null()]).optional(),
+		generate_audio: z.union([z.boolean(), z.null()]).optional(),
+		quality: nullableEnum([
+			"standard",
+			"hd",
+			"low",
+			"medium",
+			"high",
+			"auto",
+		]).optional(),
+		user: nullableString
+			.optional()
+			.meta({ description: "Gateway-side attribution; never sent upstream." }),
+		extra_body: z.record(z.string(), z.unknown()).optional(),
+	},
+	{ id: "VideoCreateRequest" },
+);
+
+export const VideoObject = z
+	.object({
+		id: z.string(),
+		object: z.literal("video"),
+		created_at: nullableInteger,
+		completed_at: nullableInteger,
+		expires_at: nullableInteger,
+		model: z.string(),
+		status: z.enum(["queued", "in_progress", "completed", "failed"]),
+		progress: z.int().min(0).max(100),
+		prompt: z.string(),
+		error: z
+			.union([
+				z.object({
+					code: nullableString.optional(),
+					message: z.string(),
+				}),
+				z.null(),
+			])
+			.optional(),
+		remixed_from_video_id: nullableString.optional(),
+		seconds: z.string().optional(),
+		size: z.string().optional(),
+		quality: z
+			.enum(["standard", "hd", "low", "medium", "high", "auto"])
+			.optional(),
+	})
+	.meta({ id: "VideoObject" });
+
+export const VideoListResponse = z
+	.object({
+		object: z.literal("list"),
+		data: z.array(VideoObject),
+		first_id: nullableString,
+		last_id: nullableString,
+		has_more: z.boolean(),
+	})
+	.meta({ id: "VideoListResponse" });
+
+export const VideoDeleted = z
+	.object({
+		id: z.string(),
+		object: z.literal("video.deleted"),
+		deleted: z.boolean(),
+	})
+	.meta({ id: "VideoDeleted" });
+
 /* --------------------------------------------------------- deployments/config */
 
 const operationNames = [
 	"text.generate",
 	"image.generate",
 	"image.edit",
+	"video.generate",
 	"audio.transcribe",
 	"embedding.create",
 ] as const;
@@ -373,7 +523,7 @@ export const TransportOverrides = z
 	.meta({
 		id: "TransportOverrides",
 		description:
-			"Advanced operation-to-transport override. Defaults normally come from the connection.",
+			"Advanced operation-to-transport override. Defaults normally come from the adapter.",
 	});
 
 export const OperationProfiles = z

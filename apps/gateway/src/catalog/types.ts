@@ -4,6 +4,7 @@ import type { EmbeddingProfile } from "#core/embeddings.ts";
 import type { TranscriptionProfile } from "#core/audio.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
 import type { ImageModelProfile } from "#core/images.ts";
+import type { VideoModelProfile } from "#core/videos.ts";
 import type { CallType } from "#core/callType.ts";
 
 /**
@@ -39,6 +40,7 @@ export interface ResolvedModelMetadata {
 	capabilities: TextCapabilities;
 	supportedCallTypes?: CallType[];
 	image?: ImageModelProfile;
+	video?: VideoModelProfile;
 	embedding?: EmbeddingProfile;
 	operations?: OperationProfiles;
 	pricing?: RuntimeModelMetadata["pricing"];
@@ -65,6 +67,15 @@ export function transcriptionProfileFor(
 	return meta.operations?.["audio.transcribe"] as
 		| TranscriptionProfile
 		| undefined;
+}
+
+export function videoProfileFor(
+	meta: ResolvedModelMetadata,
+): VideoModelProfile | undefined {
+	return (
+		(meta.operations?.["video.generate"] as VideoModelProfile | undefined) ??
+		meta.video
+	);
 }
 
 export function embeddingProfileFor(

@@ -8,17 +8,20 @@ description: "Adapter key openai. Credentials, transport, and quirks."
 ```
 
 - **Credentials**: `apiKey` only.
-- **Default transport**: Responses API for text, `images` for image generate/edit,
-  `embeddings` for embeddings. `transportOverrides` can pin `text.generate` to `chat_completions`
+- **Default transport**: Responses API for text, `images` for image generate/edit, `videos` for video
+  generation, and `embeddings` for embeddings. `transportOverrides` can pin `text.generate` to `chat_completions`
   if you need the older contract's exact behavior for a specific deployment.
 - **Reasoning**: `openai_effort` (`reasoning_effort`) on reasoning-family models. `-chat` suffixed
   variants (e.g. `gpt-5.2-chat`) are non-reasoning — the real API rejects `reasoning_effort` on them,
   and the catalog declares them without a `reasoning` spec accordingly.
 - **Images**: `gpt-image-*` models; always returns `b64_json` regardless of requested
   `response_format` (see [Images](/docs/images)).
+- **Videos**: Sora profiles are included for OpenAI-shaped compatibility, but OpenAI's current docs
+  mark the Sora 2 Videos API deprecated with shutdown scheduled for September 24, 2026.
 - Catalog: `src/adapters/openai/catalog.json`.
 
 ## What to read next
 
 - [Creating deployments](/docs/creating-deployments) — the full request shape.
 - [Reasoning](/docs/reasoning) — the `openai_effort` kind in detail.
+- [Videos](/docs/videos) — the async video lifecycle.

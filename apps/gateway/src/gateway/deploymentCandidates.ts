@@ -7,6 +7,7 @@ import {
 	transcriptionProfileFor,
 	embeddingProfileFor,
 	imageProfileFor,
+	videoProfileFor,
 } from "#catalog/types.ts";
 
 import {
@@ -56,6 +57,7 @@ export async function listDeploymentCandidates(
 				continue;
 			if (callType === "images.edits" && !imageProfileFor(meta, "edit"))
 				continue;
+			if (callType === "videos.generations" && !videoProfileFor(meta)) continue;
 			if (callType === "audio.transcriptions" && !transcriptionProfileFor(meta))
 				continue;
 			if (callType === "embeddings" && !embeddingProfileFor(meta)) continue;

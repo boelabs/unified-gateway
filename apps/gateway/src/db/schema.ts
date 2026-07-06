@@ -2,6 +2,7 @@ import type { OperationProfiles, TransportOverrides } from "#profiles/types.ts";
 import type { TextCapabilities, ReasoningSpec } from "#core/reasoning.ts";
 import type { EmbeddingProfile } from "#core/embeddings.ts";
 import type { ImageModelProfile } from "#core/images.ts";
+import type { VideoModelProfile } from "#core/videos.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
 import type { CallType } from "#core/callType.ts";
 import type { EncEnvelope } from "./crypto.ts";
@@ -60,6 +61,20 @@ export const extensionArtifactStatusEnum = pgEnum("extension_artifact_status", [
 	"archived",
 ]);
 
+export const videoStatusEnum = pgEnum("video_status", [
+	"queued",
+	"in_progress",
+	"completed",
+	"failed",
+	"deleted",
+]);
+
+export const videoAssetVariantEnum = pgEnum("video_asset_variant", [
+	"video",
+	"thumbnail",
+	"spritesheet",
+]);
+
 /* ----------------------------------------------------------------- types */
 
 /** Model metadata: pricing, limits, supported modalities. Used by the cost calc. */
@@ -94,6 +109,8 @@ export interface RuntimeModelMetadata {
 	supportedCallTypes?: CallType[];
 	/** Image profile flattened for runtime compatibility. */
 	image?: ImageModelProfile;
+	/** Video profile flattened for runtime compatibility. */
+	video?: VideoModelProfile;
 	/** Embeddings profile flattened for runtime compatibility. */
 	embedding?: EmbeddingProfile;
 	/** Per-operation profiles of the new admin model. */
@@ -350,6 +367,91 @@ export const responseStates = pgTable(
 			"response_states_adapter_key_format",
 			sql`${t.adapterKey} IS NULL OR ${t.adapterKey} ~ '^[a-z0-9]+$'`,
 		),
+	],
+);
+
+/* -------------------------------------------------------------- video_jobs */
+
+export const videoJobs = pgTable(
+	"video_jobs",
+	{
+		id: text("id").primaryKey(),
+		virtualKeyId: uuid("virtual_key_id"),
+		publicModel: text("public_model").notNull(),
+		deploymentId: uuid("deployment_id"),
+		adapterKey: text("adapter_key").notNull(),
+		upstreamModel: text("upstream_model").notNull(),
+		upstreamJobId: text("upstream_job_id").notNull(),
+		upstreamGenerationId: text("upstream_generation_id"),
+		upstreamPollingUrl: text("upstream_polling_url"),
+		providerState: jsonb("provider_state")
+			.$type<Record<string, unknown>>()
+			.notNull()
+			.default({}),
+		request: jsonb("request").$type<Record<string, unknown>>().notNull(),
+		prompt: text("prompt").notNull(),
+		seconds: text("seconds"),
+		size: text("size"),
+		quality: text("quality"),
+		status: videoStatusEnum("status").notNull().default("queued"),
+		progress: integer("progress").notNull().default(0),
+		error: jsonb("error").$type<Record<string, unknown>>(),
+		usage: jsonb("usage").$type<Record<string, unknown>>(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		updatedAt: timestamp("updated_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		completedAt: timestamp("completed_at", { withTimezone: true }),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+		lastPolledAt: timestamp("last_polled_at", { withTimezone: true }),
+		nextPollAt: timestamp("next_poll_at", { withTimezone: true }),
+	},
+	(t) => [
+		index("video_jobs_virtual_key_created_idx").on(t.virtualKeyId, t.createdAt),
+		index("video_jobs_public_model_idx").on(t.publicModel),
+		index("video_jobs_deployment_idx").on(t.deploymentId),
+		index("video_jobs_status_poll_idx").on(t.status, t.nextPollAt),
+		index("video_jobs_expires_at_idx").on(t.expiresAt),
+		check(
+			"video_jobs_adapter_key_format",
+			sql`${t.adapterKey} ~ '^[a-z0-9]+$'`,
+		),
+		check(
+			"video_jobs_progress_range",
+			sql`${t.progress} >= 0 AND ${t.progress} <= 100`,
+		),
+	],
+);
+
+/* ------------------------------------------------------------- video_assets */
+
+export const videoAssets = pgTable(
+	"video_assets",
+	{
+		id: uuid("id").defaultRandom().primaryKey(),
+		videoId: text("video_id")
+			.notNull()
+			.references(() => videoJobs.id, { onDelete: "cascade" }),
+		variant: videoAssetVariantEnum("variant").notNull(),
+		objectKey: text("object_key").notNull(),
+		storageBackend: text("storage_backend").notNull(),
+		contentType: text("content_type").notNull(),
+		contentLength: integer("content_length"),
+		etag: text("etag"),
+		sha256: text("sha256"),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		deletedAt: timestamp("deleted_at", { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex("video_assets_video_variant_idx").on(t.videoId, t.variant),
+		index("video_assets_expires_at_idx").on(t.expiresAt),
+		index("video_assets_deleted_at_idx").on(t.deletedAt),
 	],
 );
 

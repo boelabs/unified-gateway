@@ -42,7 +42,7 @@ export function buildOpenApiDocument() {
 				"?api_key=<key> query parameter (for browser EventSource clients). The master key is " +
 				"required for /admin/*.\n\n" +
 				"RESPONSE CONVENTIONS:\n" +
-				"- Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/embeddings, " +
+				"- Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, " +
 				"/v1/models): exact OpenAI/OpenResponses contracts.\n" +
 				'- Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], ' +
 				'"pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.\n\n' +
@@ -80,6 +80,13 @@ export function buildOpenApiDocument() {
 					required: true,
 					schema: { type: "string" },
 					description: "OpenResponses response id (resp_...)",
+				},
+				VideoIdPath: {
+					name: "id",
+					in: "path",
+					required: true,
+					schema: { type: "string" },
+					description: "Gateway video id (video_...)",
 				},
 				Limit: {
 					name: "limit",
@@ -387,6 +394,140 @@ export function buildOpenApiDocument() {
 						"401": errorResponse,
 						"403": errorResponse,
 						"429": errorResponse,
+					},
+				},
+			},
+			"/v1/videos": {
+				post: {
+					operationId: "createVideo",
+					tags: ["Inference"],
+					summary: "Create a video generation job",
+					description:
+						"Async video creation. The gateway routes submission to a video-capable deployment, stores local metadata, polls the upstream job, and persists completed video bytes in object storage for 24 hours. Accepts OpenAI-style aliases (seconds, size, input_reference).",
+					requestBody: jsonBody(c.VideoCreateRequest, {
+						native: {
+							value: {
+								model: "veo",
+								prompt: "A serene mountain landscape at sunset",
+								duration: 8,
+								aspect_ratio: "16:9",
+								resolution: "720p",
+							},
+						},
+						openaiCompatible: {
+							value: {
+								model: "sora",
+								prompt: "A serene mountain landscape at sunset",
+								seconds: "8",
+								size: "1280x720",
+							},
+						},
+					}),
+					responses: {
+						"200": {
+							description: "Video object",
+							content: { "application/json": { schema: c.VideoObject } },
+						},
+						"400": errorResponse,
+						"401": errorResponse,
+						"403": errorResponse,
+						"429": errorResponse,
+						"503": errorResponse,
+					},
+				},
+				get: {
+					operationId: "listVideos",
+					tags: ["Inference"],
+					summary: "List videos",
+					parameters: [
+						{
+							name: "after",
+							in: "query",
+							required: false,
+							schema: { type: "string" },
+						},
+						{
+							name: "limit",
+							in: "query",
+							required: false,
+							schema: { type: "integer", minimum: 0, maximum: 100 },
+						},
+						{
+							name: "order",
+							in: "query",
+							required: false,
+							schema: { type: "string", enum: ["asc", "desc"] },
+						},
+					],
+					responses: {
+						"200": {
+							description: "Video list",
+							content: { "application/json": { schema: c.VideoListResponse } },
+						},
+						"401": errorResponse,
+					},
+				},
+			},
+			"/v1/videos/{id}": {
+				get: {
+					operationId: "retrieveVideo",
+					tags: ["Inference"],
+					summary: "Retrieve a video",
+					parameters: [{ $ref: "#/components/parameters/VideoIdPath" }],
+					responses: {
+						"200": {
+							description: "Video object",
+							content: { "application/json": { schema: c.VideoObject } },
+						},
+						"401": errorResponse,
+						"404": errorResponse,
+					},
+				},
+				delete: {
+					operationId: "deleteVideo",
+					tags: ["Inference"],
+					summary: "Delete a video and its stored assets",
+					parameters: [{ $ref: "#/components/parameters/VideoIdPath" }],
+					responses: {
+						"200": {
+							description: "Deleted video marker",
+							content: { "application/json": { schema: c.VideoDeleted } },
+						},
+						"401": errorResponse,
+						"404": errorResponse,
+					},
+				},
+			},
+			"/v1/videos/{id}/content": {
+				get: {
+					operationId: "downloadVideoContent",
+					tags: ["Inference"],
+					summary: "Download generated video content",
+					parameters: [
+						{ $ref: "#/components/parameters/VideoIdPath" },
+						{
+							name: "variant",
+							in: "query",
+							required: false,
+							schema: {
+								type: "string",
+								enum: ["video", "thumbnail", "spritesheet"],
+								default: "video",
+							},
+						},
+					],
+					responses: {
+						"200": {
+							description: "Video or preview bytes",
+							content: {
+								"video/mp4": { schema: { type: "string", format: "binary" } },
+							},
+						},
+						"206": { description: "Partial content for byte-range requests" },
+						"400": errorResponse,
+						"401": errorResponse,
+						"404": errorResponse,
+						"409": errorResponse,
 					},
 				},
 			},

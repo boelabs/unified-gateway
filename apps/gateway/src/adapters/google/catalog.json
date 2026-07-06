@@ -12,6 +12,126 @@
 		]
 	},
 	"models": {
+		"veo-3.1-generate-preview": {
+			"operations": {
+				"video.generate": {
+					"maxPromptChars": 32000,
+					"durations": ["4", "6", "8"],
+					"supportsImageUrl": true,
+					"requiresDataUrlImageReference": true,
+					"maxReferenceBytes": 20000000,
+					"contentVariants": ["video"],
+					"pollIntervalSeconds": 10,
+					"sizes": {
+						"1280x720": {
+							"aspectRatio": "16:9",
+							"resolution": "720p"
+						},
+						"720x1280": {
+							"aspectRatio": "9:16",
+							"resolution": "720p"
+						},
+						"1920x1080": {
+							"aspectRatio": "16:9",
+							"resolution": "1080p"
+						},
+						"1080x1920": {
+							"aspectRatio": "9:16",
+							"resolution": "1080p"
+						},
+						"3840x2160": {
+							"aspectRatio": "16:9",
+							"resolution": "4k"
+						},
+						"2160x3840": {
+							"aspectRatio": "9:16",
+							"resolution": "4k"
+						}
+					},
+					"supportsFrameImages": true,
+					"supportsSeed": true,
+					"supportsVideoUrl": true,
+					"maxInputReferences": 3
+				}
+			}
+		},
+		"veo-3.1-fast-generate-preview": {
+			"operations": {
+				"video.generate": {
+					"maxPromptChars": 32000,
+					"durations": ["4", "6", "8"],
+					"supportsImageUrl": true,
+					"requiresDataUrlImageReference": true,
+					"maxReferenceBytes": 20000000,
+					"contentVariants": ["video"],
+					"pollIntervalSeconds": 10,
+					"sizes": {
+						"1280x720": {
+							"aspectRatio": "16:9",
+							"resolution": "720p"
+						},
+						"720x1280": {
+							"aspectRatio": "9:16",
+							"resolution": "720p"
+						},
+						"1920x1080": {
+							"aspectRatio": "16:9",
+							"resolution": "1080p"
+						},
+						"1080x1920": {
+							"aspectRatio": "9:16",
+							"resolution": "1080p"
+						},
+						"3840x2160": {
+							"aspectRatio": "16:9",
+							"resolution": "4k"
+						},
+						"2160x3840": {
+							"aspectRatio": "9:16",
+							"resolution": "4k"
+						}
+					},
+					"supportsFrameImages": true,
+					"supportsSeed": true,
+					"supportsVideoUrl": true,
+					"maxInputReferences": 3
+				}
+			}
+		},
+		"veo-3.1-lite-generate-preview": {
+			"operations": {
+				"video.generate": {
+					"maxPromptChars": 32000,
+					"durations": ["4", "6", "8"],
+					"supportsImageUrl": true,
+					"requiresDataUrlImageReference": true,
+					"maxReferenceBytes": 20000000,
+					"contentVariants": ["video"],
+					"pollIntervalSeconds": 10,
+					"sizes": {
+						"1280x720": {
+							"aspectRatio": "16:9",
+							"resolution": "720p"
+						},
+						"720x1280": {
+							"aspectRatio": "9:16",
+							"resolution": "720p"
+						},
+						"1920x1080": {
+							"aspectRatio": "16:9",
+							"resolution": "1080p"
+						},
+						"1080x1920": {
+							"aspectRatio": "9:16",
+							"resolution": "1080p"
+						}
+					},
+					"supportsFrameImages": true,
+					"supportsSeed": true,
+					"maxInputReferences": 1
+				}
+			}
+		},
 		"gemini-embedding-2": {
 			"operations": {
 				"embedding.create": {

@@ -27,6 +27,7 @@ const OPERATION_IDS = new Set<keyof OperationProfiles>([
 	"text.generate",
 	"image.generate",
 	"image.edit",
+	"video.generate",
 	"audio.transcribe",
 	"embedding.create",
 ]);
@@ -296,6 +297,51 @@ function validateOperations(value: unknown, path: string): void {
 							`${path}.${operation}.encodingFormats`,
 							`unknown format "${format}"`,
 						);
+				}
+			}
+		} else if (operation === "video.generate") {
+			for (const key of [
+				"maxPromptChars",
+				"maxReferenceBytes",
+				"maxInputReferences",
+				"pollIntervalSeconds",
+			]) {
+				if (profile[key] !== undefined)
+					assertNumber(profile[key], `${path}.${operation}.${key}`);
+			}
+			for (const key of [
+				"supportsImageUrl",
+				"supportsAudioUrl",
+				"supportsVideoUrl",
+				"supportsFileId",
+				"supportsFrameImages",
+				"supportsSeed",
+				"supportsGenerateAudio",
+				"requiresDataUrlImageReference",
+			]) {
+				if (profile[key] !== undefined)
+					assertBoolean(profile[key], `${path}.${operation}.${key}`);
+			}
+			for (const key of ["durations", "qualities", "contentVariants"]) {
+				if (profile[key] !== undefined)
+					assertStringArray(profile[key], `${path}.${operation}.${key}`);
+			}
+			if (profile.sizes !== undefined) {
+				if (!isRecord(profile.sizes))
+					fail(`${path}.${operation}.sizes`, "must be an object");
+				for (const [size, mapping] of Object.entries(profile.sizes)) {
+					assertString(size, `${path}.${operation}.sizes key`);
+					if (!isRecord(mapping)) {
+						fail(`${path}.${operation}.sizes.${size}`, "must be an object");
+					}
+					for (const key of ["size", "aspectRatio", "resolution"]) {
+						if (mapping[key] !== undefined) {
+							assertString(
+								mapping[key],
+								`${path}.${operation}.sizes.${size}.${key}`,
+							);
+						}
+					}
 				}
 			}
 		}
