@@ -57,6 +57,11 @@ interface CanonicalToolCall {
 	name: string;
 	/** Arguments as a JSON string (same as OpenAI). */
 	arguments: string;
+	/**
+	 * Opaque provider/tool-call state that must round-trip with the tool call itself.
+	 * Example: Gemini thought signatures exposed as `extra_content.google.thought_signature`.
+	 */
+	extraContent?: Record<string, unknown>;
 }
 
 export interface CanonicalMessage {

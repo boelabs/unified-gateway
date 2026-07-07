@@ -148,6 +148,25 @@ function contentToParts(
 	return content.map(partToGemini);
 }
 
+function googleToolCallExtra(toolCall: {
+	extraContent?: Record<string, unknown>;
+}): Record<string, unknown> | undefined {
+	const google = toolCall.extraContent?.google;
+	if (google === null || typeof google !== "object" || Array.isArray(google))
+		return undefined;
+	return google as Record<string, unknown>;
+}
+
+function googleThoughtSignature(toolCall: {
+	extraContent?: Record<string, unknown>;
+}): string | undefined {
+	const google = googleToolCallExtra(toolCall);
+	const signature = google?.thought_signature ?? google?.thoughtSignature;
+	return typeof signature === "string" && signature.length > 0
+		? signature
+		: undefined;
+}
+
 interface GeminiBody extends Record<string, unknown> {
 	contents: Array<{ role: "user" | "model"; parts: Record<string, unknown>[] }>;
 	systemInstruction?: { parts: Record<string, unknown>[] };
@@ -224,7 +243,15 @@ function buildGeminiBody(
 				} catch {
 					args = {};
 				}
-				parts.push({ functionCall: { name: tc.name, args } });
+				const functionCall: Record<string, unknown> = {
+					id: tc.id,
+					name: tc.name,
+					args,
+				};
+				const thoughtSignature = googleThoughtSignature(tc);
+				if (thoughtSignature !== undefined)
+					functionCall.thoughtSignature = thoughtSignature;
+				parts.push({ functionCall });
 			}
 			body.contents.push({ role: "model", parts });
 			continue;
@@ -245,7 +272,15 @@ function buildGeminiBody(
 			}
 			body.contents.push({
 				role: "user",
-				parts: [{ functionResponse: { name, response } }],
+				parts: [
+					{
+						functionResponse: {
+							name,
+							response,
+							...(m.toolCallId ? { id: m.toolCallId } : {}),
+						},
+					},
+				],
 			});
 			continue;
 		}
@@ -326,7 +361,9 @@ interface GeminiPart {
 	text?: string;
 	/** Reasoning (thinking) part. NOT visible content: excluded from output. */
 	thought?: boolean;
-	functionCall?: { name?: string; args?: unknown };
+	thoughtSignature?: string;
+	thought_signature?: string;
+	functionCall?: { id?: string; name?: string; args?: unknown };
 	inlineData?: { mimeType?: string; data?: string };
 }
 interface GeminiCandidate {
@@ -627,6 +664,21 @@ function mapGeminiUsage(u: GeminiUsage | undefined): Usage {
 	return usage;
 }
 
+function geminiPartThoughtSignature(part: GeminiPart): string | undefined {
+	const signature = part.thoughtSignature ?? part.thought_signature;
+	return typeof signature === "string" && signature.length > 0
+		? signature
+		: undefined;
+}
+
+function geminiToolCallExtra(
+	part: GeminiPart,
+): Record<string, unknown> | undefined {
+	const signature = geminiPartThoughtSignature(part);
+	if (signature === undefined) return undefined;
+	return { google: { thought_signature: signature } };
+}
+
 function candidateToChoice(
 	c: GeminiCandidate,
 	index: number,
@@ -641,10 +693,12 @@ function candidateToChoice(
 		if (p.text !== undefined && !p.thought) texts.push(p.text);
 		if (p.text !== undefined && p.thought) reasoning.push(p.text);
 		if (p.functionCall) {
+			const extraContent = geminiToolCallExtra(p);
 			toolCalls.push({
-				id: `call_${index}_${i}`,
+				id: p.functionCall.id ?? `call_${index}_${i}`,
 				name: p.functionCall.name ?? "",
 				arguments: JSON.stringify(p.functionCall.args ?? {}),
+				...(extraContent !== undefined ? { extraContent } : {}),
 			});
 		}
 	}
@@ -732,12 +786,16 @@ const chat: ChatHandler = {
 			if (hasToolCall) {
 				delta.toolCalls = parts
 					.filter((p) => p.functionCall)
-					.map((p, i) => ({
-						index: i,
-						id: `call_0_${i}`,
-						name: p.functionCall!.name ?? "",
-						arguments: JSON.stringify(p.functionCall!.args ?? {}),
-					}));
+					.map((p, i) => {
+						const extraContent = geminiToolCallExtra(p);
+						return {
+							index: i,
+							id: p.functionCall!.id ?? `call_0_${i}`,
+							name: p.functionCall!.name ?? "",
+							arguments: JSON.stringify(p.functionCall!.args ?? {}),
+							...(extraContent !== undefined ? { extraContent } : {}),
+						};
+					});
 			}
 			const chunk: CanonicalChatStreamChunk = {
 				id,

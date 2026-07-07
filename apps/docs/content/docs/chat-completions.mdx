@@ -37,6 +37,12 @@ see [Parameter policy](/docs/parameter-policy) for what happens when it doesn't 
 happens per-adapter — notably Google AI Studio narrows tool `parameters` to its own OpenAPI subset; see
 [Google AI Studio](/docs/providers-google).
 
+Some providers return opaque tool-call state that must round-trip with the tool call. The gateway keeps
+that state in `tool_calls[].extra_content` and reads it back from subsequent assistant messages. If you
+manage conversation history yourself, preserve `extra_content` exactly as returned; do not merge,
+rewrite, or drop it. When a later turn routes to a different provider, only the matching adapter uses
+its own namespace; unrelated provider state is ignored rather than forwarded upstream.
+
 ## Structured outputs
 
 `response_format: { "type": "json_schema", "json_schema": { ... } }` requests schema-adherent output on

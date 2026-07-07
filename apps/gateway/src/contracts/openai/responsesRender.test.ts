@@ -47,13 +47,22 @@ test("request->canonical: items message/function_call/function_call_output", () 
 					role: "user",
 					content: [{ type: "input_text", text: "hi" }],
 				},
-				{ type: "function_call", call_id: "c1", name: "f", arguments: "{}" },
+				{
+					type: "function_call",
+					call_id: "c1",
+					name: "f",
+					arguments: "{}",
+					extra_content: { google: { thought_signature: "sig-a" } },
+				},
 				{ type: "function_call_output", call_id: "c1", output: "42" },
 			],
 		}),
 	);
 	assert.deepEqual(u.messages[0]!.content, [{ type: "text", text: "hi" }]);
 	assert.equal(u.messages[1]!.toolCalls?.[0]?.name, "f");
+	assert.deepEqual(u.messages[1]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
 	assert.equal(u.messages[2]!.role, "tool");
 	assert.equal(u.messages[2]!.toolCallId, "c1");
 });
@@ -384,7 +393,14 @@ test("canonical->response: tool calls -> function_call items", () => {
 					role: "assistant",
 					content: null,
 					toolCalls: [
-						{ id: "call_1", name: "get_weather", arguments: '{"city":"CCS"}' },
+						{
+							id: "call_1",
+							name: "get_weather",
+							arguments: '{"city":"CCS"}',
+							extraContent: {
+								google: { thought_signature: "sig-a" },
+							},
+						},
 					],
 				},
 			},
@@ -399,6 +415,9 @@ test("canonical->response: tool calls -> function_call items", () => {
 	assert.ok(fc);
 	assert.equal(fc.name, "get_weather");
 	assert.equal(fc.call_id, "call_1");
+	assert.deepEqual(fc.extra_content, {
+		google: { thought_signature: "sig-a" },
+	});
 });
 
 test("stream->events: OpenResponses sequence for text", async () => {

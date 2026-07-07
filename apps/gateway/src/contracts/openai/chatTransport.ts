@@ -292,6 +292,7 @@ interface TransportToolCall {
 	id?: string;
 	index?: number;
 	function?: { name?: string; arguments?: string };
+	extra_content?: Record<string, unknown>;
 }
 
 interface TransportResponse {
@@ -331,6 +332,9 @@ export function parseOpenAIChatResponse(raw: unknown): CanonicalChatResponse {
 					id: tc.id ?? "",
 					name: tc.function?.name ?? "",
 					arguments: tc.function?.arguments ?? "",
+					...(tc.extra_content !== undefined
+						? { extraContent: tc.extra_content }
+						: {}),
 				}));
 			}
 			return {
@@ -385,6 +389,9 @@ export function parseOpenAIChatChunk(raw: unknown): CanonicalChatStreamChunk {
 						: {}),
 					...(tc.function?.arguments !== undefined
 						? { arguments: tc.function.arguments }
+						: {}),
+					...(tc.extra_content !== undefined
+						? { extraContent: tc.extra_content }
 						: {}),
 				}));
 			}

@@ -16,6 +16,10 @@ description: "Adapter key googleaistudio. Tool schema subset, embeddings routes,
   not translate cleanly; keep tool schemas simple if you see unexpected tool-call failures.
 - **Reasoning**: `gemini_level` (discrete `thinkingLevel`, with `xhigh` mapped to `high`) or
   `gemini_budget` (raw `thinkingBudget` tokens), per model — see [Reasoning](/docs/reasoning).
+- **Thought signatures** are preserved as opaque tool-call state. Gemini may return
+  `extra_content.google.thought_signature` on a tool call; clients using `store: false` must send that
+  field back with the same `function_call` item/message so the adapter can replay it as
+  `thoughtSignature` in the next `generateContent` request.
 - **Embeddings** accept text input and float vectors only through this gateway — no tokenized input,
   no `base64` encoding — regardless of what the catalog profile might otherwise allow.
 - **Image `quality` maps to native thinking** for Gemini image models: `auto` (or omitted) and `low` use
