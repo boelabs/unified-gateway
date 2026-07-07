@@ -599,7 +599,7 @@ function sse(
 
 /**
  * Converts the canonical chunk stream into the OpenResponses SSE event sequence.
- * Handles streaming text (the essential case) and emits function_calls as complete items.
+ * Streams text and reasoning summaries; function_calls are emitted as complete items.
  */
 export async function* canonicalChunksToResponsesEvents(
 	chunks: AsyncIterable<CanonicalChatStreamChunk>,
@@ -620,8 +620,43 @@ export async function* canonicalChunksToResponsesEvents(
 		{ id: string; name: string; arguments: string }
 	>();
 
+	const output: Record<string, unknown>[] = [];
+	let nextOutputIndex = 0;
+
 	let messageStarted = false;
+	let msgIndex = 0;
 	const msgId = `msg_${randomUUID()}`;
+
+	// Reasoning streams as its own output item, before the message (as in the
+	// non-stream render). `reasoningOpen` tracks an item awaiting its `.done` events.
+	let reasoningOpen = false;
+	let reasoningStreamed = false;
+	let rsIndex = 0;
+	const rsId = `rs_${randomUUID()}`;
+
+	const reasoningSummaryDone = (): SSEEvent[] => {
+		reasoningOpen = false;
+		const item = reasoningItem(reasoning, rsId);
+		output.push(item);
+		return [
+			sse("response.reasoning_summary_text.done", next(), {
+				item_id: rsId,
+				output_index: rsIndex,
+				summary_index: 0,
+				text: reasoning,
+			}),
+			sse("response.reasoning_summary_part.done", next(), {
+				item_id: rsId,
+				output_index: rsIndex,
+				summary_index: 0,
+				part: { type: "summary_text", text: reasoning },
+			}),
+			sse("response.output_item.done", next(), {
+				output_index: rsIndex,
+				item,
+			}),
+		];
+	};
 
 	const baseResponse = (status: string) =>
 		buildResponse(opts, {
@@ -650,12 +685,39 @@ export async function* canonicalChunksToResponsesEvents(
 		if (choice.finishReason) finish = choice.finishReason;
 
 		const delta = choice.delta;
-		if (delta.reasoning) reasoning += delta.reasoning;
+		if (delta.reasoning) {
+			if (!reasoningStreamed && !messageStarted) {
+				reasoningStreamed = true;
+				reasoningOpen = true;
+				rsIndex = nextOutputIndex++;
+				yield sse("response.output_item.added", next(), {
+					output_index: rsIndex,
+					item: { type: "reasoning", id: rsId, summary: [] },
+				});
+				yield sse("response.reasoning_summary_part.added", next(), {
+					item_id: rsId,
+					output_index: rsIndex,
+					summary_index: 0,
+					part: { type: "summary_text", text: "" },
+				});
+			}
+			reasoning += delta.reasoning;
+			if (reasoningOpen) {
+				yield sse("response.reasoning_summary_text.delta", next(), {
+					item_id: rsId,
+					output_index: rsIndex,
+					summary_index: 0,
+					delta: delta.reasoning,
+				});
+			}
+		}
 		if (delta.content) {
 			if (!messageStarted) {
+				if (reasoningOpen) yield* reasoningSummaryDone();
 				messageStarted = true;
+				msgIndex = nextOutputIndex++;
 				yield sse("response.output_item.added", next(), {
-					output_index: 0,
+					output_index: msgIndex,
 					item: {
 						type: "message",
 						id: msgId,
@@ -666,7 +728,7 @@ export async function* canonicalChunksToResponsesEvents(
 				});
 				yield sse("response.content_part.added", next(), {
 					item_id: msgId,
-					output_index: 0,
+					output_index: msgIndex,
 					content_index: 0,
 					part: { type: "output_text", text: "", annotations: [] },
 				});
@@ -674,7 +736,7 @@ export async function* canonicalChunksToResponsesEvents(
 			content += delta.content;
 			yield sse("response.output_text.delta", next(), {
 				item_id: msgId,
-				output_index: 0,
+				output_index: msgIndex,
 				content_index: 0,
 				delta: delta.content,
 			});
@@ -693,54 +755,76 @@ export async function* canonicalChunksToResponsesEvents(
 		}
 	}
 
-	const output: Record<string, unknown>[] = [];
+	if (reasoningOpen) yield* reasoningSummaryDone();
 
 	if (messageStarted) {
 		yield sse("response.output_text.done", next(), {
 			item_id: msgId,
-			output_index: 0,
+			output_index: msgIndex,
 			content_index: 0,
 			text: content,
 		});
 		yield sse("response.content_part.done", next(), {
 			item_id: msgId,
-			output_index: 0,
+			output_index: msgIndex,
 			content_index: 0,
 			part: { type: "output_text", text: content, annotations: [] },
 		});
 		const item = messageItem(content, msgId);
 		output.push(item);
-		yield sse("response.output_item.done", next(), { output_index: 0, item });
+		yield sse("response.output_item.done", next(), {
+			output_index: msgIndex,
+			item,
+		});
 	}
 
-	let outputIndex = messageStarted ? 1 : 0;
-	if (reasoning) {
-		output.push(reasoningItem(reasoning, `rs_${randomUUID()}`));
-		outputIndex += 1;
+	// Reasoning that arrived after the message opened (unusual interleave):
+	// emit it as a complete trailing item so nothing is dropped.
+	if (reasoning && !reasoningStreamed) {
+		rsIndex = nextOutputIndex++;
+		yield sse("response.output_item.added", next(), {
+			output_index: rsIndex,
+			item: { type: "reasoning", id: rsId, summary: [] },
+		});
+		yield sse("response.reasoning_summary_part.added", next(), {
+			item_id: rsId,
+			output_index: rsIndex,
+			summary_index: 0,
+			part: { type: "summary_text", text: "" },
+		});
+		yield sse("response.reasoning_summary_text.delta", next(), {
+			item_id: rsId,
+			output_index: rsIndex,
+			summary_index: 0,
+			delta: reasoning,
+		});
+		reasoningOpen = true;
+		yield* reasoningSummaryDone();
 	}
+
 	for (const tc of toolCalls.values()) {
 		const fcId = `fc_${randomUUID()}`;
 		const item = functionCallItem(tc, fcId);
+		const fcIndex = nextOutputIndex++;
 		yield sse("response.output_item.added", next(), {
-			output_index: outputIndex,
+			output_index: fcIndex,
 			item: { ...item, status: "in_progress", arguments: "" },
 		});
 		yield sse("response.function_call_arguments.delta", next(), {
 			item_id: fcId,
-			output_index: outputIndex,
+			output_index: fcIndex,
 			delta: tc.arguments,
 		});
 		yield sse("response.function_call_arguments.done", next(), {
 			item_id: fcId,
-			output_index: outputIndex,
+			output_index: fcIndex,
 			arguments: tc.arguments,
 		});
 		yield sse("response.output_item.done", next(), {
-			output_index: outputIndex,
+			output_index: fcIndex,
 			item,
 		});
 		output.push(item);
-		outputIndex += 1;
 	}
 
 	const { status, incomplete } = statusFor(finish);

@@ -447,3 +447,88 @@ test("stream->events: OpenResponses sequence for text", async () => {
 	]);
 	assert.equal(completedUsage.total_tokens, 3);
 });
+
+test("stream->events: reasoning summary streams as its own item before the message", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: { role: "assistant", reasoning: "Think" },
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [{ index: 0, delta: { reasoning: "ing." }, finishReason: null }],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [{ index: 0, delta: { content: "Hi" }, finishReason: "stop" }],
+			usage: {
+				promptTokens: 1,
+				completionTokens: 2,
+				totalTokens: 3,
+				reasoningTokens: 2,
+			},
+		};
+	}
+	const events: { type: string; data: any }[] = [];
+	for await (const ev of canonicalChunksToResponsesEvents(
+		chunks(),
+		renderOpts(),
+	)) {
+		events.push({ type: ev.event!, data: JSON.parse(ev.data) });
+	}
+	assert.deepEqual(
+		events.map((e) => e.type),
+		[
+			"response.created",
+			"response.in_progress",
+			"response.output_item.added",
+			"response.reasoning_summary_part.added",
+			"response.reasoning_summary_text.delta",
+			"response.reasoning_summary_text.delta",
+			"response.reasoning_summary_text.done",
+			"response.reasoning_summary_part.done",
+			"response.output_item.done",
+			"response.output_item.added",
+			"response.content_part.added",
+			"response.output_text.delta",
+			"response.output_text.done",
+			"response.content_part.done",
+			"response.output_item.done",
+			"response.completed",
+		],
+	);
+
+	const rsAdded = events[2]!.data;
+	assert.equal(rsAdded.item.type, "reasoning");
+	assert.equal(rsAdded.output_index, 0);
+	const textDone = events.find(
+		(e) => e.type === "response.reasoning_summary_text.done",
+	)!.data;
+	assert.equal(textDone.text, "Thinking.");
+	const rsDone = events[8]!.data;
+	assert.equal(rsDone.item.type, "reasoning");
+	assert.deepEqual(rsDone.item.summary, [
+		{ type: "summary_text", text: "Thinking." },
+	]);
+	const msgAdded = events[9]!.data;
+	assert.equal(msgAdded.item.type, "message");
+	assert.equal(msgAdded.output_index, 1);
+
+	const completed = events.at(-1)!.data.response;
+	assert.equal(completed.output[0].type, "reasoning");
+	assert.equal(completed.output[0].summary[0].text, "Thinking.");
+	assert.equal(completed.output[1].type, "message");
+	assert.equal(completed.usage.output_tokens_details.reasoning_tokens, 2);
+});
