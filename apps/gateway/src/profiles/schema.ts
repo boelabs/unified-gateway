@@ -411,11 +411,11 @@ function validateImageOperationRequirements(
 				message: "required for image operations",
 			});
 		}
-		if (!entry.sizes && !entry.arbitrarySize) {
+		if (!entry.sizes && !entry.arbitrarySize && !entry.autoSize) {
 			ctx.addIssue({
 				code: "custom",
 				path: [...pathPrefix, op, "sizes"],
-				message: "provide sizes or arbitrarySize",
+				message: "provide sizes, arbitrarySize, or autoSize",
 			});
 		}
 	}

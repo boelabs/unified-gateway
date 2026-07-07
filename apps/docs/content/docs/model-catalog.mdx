@@ -73,7 +73,7 @@ rules the admin API enforces.
 - `operations` is the declarative source: the presence of an operation implies support.
 - For custom models, `catalogEntry.operations` is required and the gateway validates per-operation
   minimums: text requires `capabilities.tools|vision|reasoning|structuredOutputs`; image requires
-  `outputFormats`, `responseFormats`, and `sizes` or `arbitrarySize`; audio transcribe requires
+  `outputFormats`, `responseFormats`, and `sizes`, `arbitrarySize`, or `autoSize`; audio transcribe requires
   `responseFormats`.
 - Embeddings are declared with `embedding.create`. The profile may indicate `dimensions`,
   `supportsDimensions`, `minDimensions`, `maxDimensions`, `encodingFormats`, input limits, and
