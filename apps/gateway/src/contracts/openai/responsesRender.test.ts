@@ -4,6 +4,7 @@ import { test } from "node:test";
 
 import {
 	canonicalChunksToResponsesEvents,
+	hydrateResponseInputOpaqueState,
 	resolveResponseInputReferences,
 	canonicalToResponsesResponse,
 	responsesRequestToCanonical,
@@ -65,6 +66,37 @@ test("request->canonical: items message/function_call/function_call_output", () 
 	});
 	assert.equal(u.messages[2]!.role, "tool");
 	assert.equal(u.messages[2]!.toolCallId, "c1");
+});
+
+test("request->canonical: LiteLLM provider_specific_fields restore function_call state", () => {
+	const u = responsesRequestToCanonical(
+		parse({
+			model: "gpt",
+			input: [
+				{
+					type: "function_call",
+					id: "fc_123",
+					call_id: "call_123",
+					name: "get_weather",
+					arguments: "{}",
+					provider_specific_fields: { thought_signature: "sig-a" },
+				},
+				{
+					type: "function_call",
+					id: "fc_456__thought__sig-b",
+					call_id: "call_456",
+					name: "get_weather",
+					arguments: "{}",
+				},
+			],
+		}),
+	);
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.deepEqual(u.messages[1]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-b" },
+	});
 });
 
 test("contract: rejects background:true, prompt, and conversation+previous_response_id", () => {
@@ -308,6 +340,58 @@ test("expandInputReferences: unresolved reference raises an OpenAI-faithful erro
 	);
 });
 
+test("hydrateResponseInputOpaqueState: restores stored function_call extra_content", async () => {
+	const input = normalizeResponseInput([
+		{
+			type: "function_call",
+			id: "fc_123",
+			call_id: "call_123",
+			name: "load_skill",
+			arguments: '{"name":"image-generation"}',
+		},
+		{ type: "function_call_output", call_id: "call_123", output: "ok" },
+	]);
+	const hydrated = await hydrateResponseInputOpaqueState(input, async (id) =>
+		id === "fc_123"
+			? {
+					type: "function_call",
+					id: "fc_123",
+					call_id: "call_123",
+					extra_content: { google: { thought_signature: "sig-a" } },
+				}
+			: undefined,
+	);
+	const u = responsesRequestToCanonical(
+		parse({ model: "gpt", input: hydrated }),
+	);
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+});
+
+test("hydrateResponseInputOpaqueState: preserves incoming provider data while restoring missing keys", async () => {
+	const input = normalizeResponseInput([
+		{
+			type: "function_call",
+			id: "fc_123",
+			call_id: "call_123",
+			name: "load_skill",
+			arguments: "{}",
+			extra_content: { openai: { item_id: "fc_123" } },
+		},
+	]);
+	const hydrated = await hydrateResponseInputOpaqueState(input, async () => ({
+		type: "function_call",
+		id: "fc_123",
+		call_id: "call_123",
+		extra_content: { google: { thought_signature: "sig-a" } },
+	}));
+	assert.deepEqual(hydrated[0]!.extra_content, {
+		google: { thought_signature: "sig-a" },
+		openai: { item_id: "fc_123" },
+	});
+});
+
 const renderOpts = (): RenderOptions => ({
 	req: parse({ model: "gpt", input: "hi" }),
 	upstreamModel: "gpt-x",
@@ -417,6 +501,77 @@ test("canonical->response: tool calls -> function_call items", () => {
 	assert.equal(fc.call_id, "call_1");
 	assert.deepEqual(fc.extra_content, {
 		google: { thought_signature: "sig-a" },
+	});
+	assert.deepEqual(fc.provider_specific_fields, {
+		thought_signature: "sig-a",
+	});
+	assert.deepEqual(out.provider_specific_fields, {
+		thought_signatures: ["sig-a"],
+	});
+});
+
+test("stream->events: function_call items include opaque extra_content in the completed response", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						role: "assistant",
+						toolCalls: [
+							{
+								index: 0,
+								id: "call_123",
+								name: "load_skill",
+								arguments: '{"name"',
+								extraContent: {
+									google: { thought_signature: "sig-a" },
+								},
+							},
+						],
+					},
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: { toolCalls: [{ index: 0, arguments: ':"image"}' }] },
+					finishReason: "tool_calls",
+				},
+			],
+			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+		};
+	}
+	let completed: any;
+	for await (const ev of canonicalChunksToResponsesEvents(
+		chunks(),
+		renderOpts(),
+	)) {
+		if (ev.event === "response.completed")
+			completed = JSON.parse(ev.data).response;
+	}
+	const fc = completed.output.find(
+		(item: any) => item.type === "function_call",
+	);
+	assert.ok(fc.id.startsWith("fc_"));
+	assert.equal(fc.call_id, "call_123");
+	assert.deepEqual(fc.extra_content, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.deepEqual(fc.provider_specific_fields, {
+		thought_signature: "sig-a",
+	});
+	assert.deepEqual(completed.provider_specific_fields, {
+		thought_signatures: ["sig-a"],
 	});
 });
 

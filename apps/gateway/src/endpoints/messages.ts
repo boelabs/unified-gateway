@@ -5,6 +5,7 @@ import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
+import { getAuth } from "#auth/middleware.ts";
 import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
@@ -31,6 +32,18 @@ import {
 } from "#contracts/anthropic/messagesRender.ts";
 
 import {
+	captureOpaqueToolCallStateFromChunk,
+	opaqueToolCallItemsFromResponse,
+	opaqueToolCallItemsFromState,
+} from "#core/opaqueToolState.ts";
+
+import {
+	persistOpaqueToolStateBestEffort,
+	hydrateRequestOpaqueToolState,
+	newOpaqueToolCallStateMap,
+} from "./runtime/opaqueToolState.ts";
+
+import {
 	routingMetadataRequested,
 	publicRoutingMetadata,
 	attachRoutingMetadata,
@@ -48,6 +61,7 @@ import {
  */
 export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 	const log = new RequestLogDraft(c, "messages");
+	const auth = getAuth(c);
 
 	try {
 		const json = await readJsonBody(c);
@@ -55,6 +69,7 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 		const req = parseBody(messagesRequestSchema, json);
 		log.publicModel = req.model;
 		let canonical = messagesRequestToCanonical(req);
+		canonical = await hydrateRequestOpaqueToolState(canonical, auth);
 		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
 		await preflight(c, canonical.model);
@@ -106,6 +121,16 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 				canonical.model,
 				routing.value.response,
 			);
+			await persistOpaqueToolStateBestEffort({
+				auth,
+				id: `opaque_tool_state_${log.requestId}`,
+				publicModel: canonical.model,
+				deploymentId: routing.candidate.row.id,
+				adapterKey: routing.candidate.adapter.key,
+				requestId: log.requestId,
+				output: opaqueToolCallItemsFromResponse(response),
+				metadata,
+			});
 			const usage = response.usage;
 			await routing.finish(usage);
 			const cost = accountUsage(c, meta, usage);
@@ -139,14 +164,17 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 				lastChunkAt = at;
 			},
 		);
+		const opaqueToolState = newOpaqueToolCallStateMap();
 		async function* transformedChunks() {
 			for await (const chunk of tapped) {
-				yield await applyStreamEventExtensions(
+				const transformed = await applyStreamEventExtensions(
 					c,
 					"chat",
 					canonical.model,
 					chunk,
 				);
+				captureOpaqueToolCallStateFromChunk(opaqueToolState, transformed);
+				yield transformed;
 			}
 		}
 		const events = canonicalChunksToMessagesEvents(
@@ -178,6 +206,16 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 					}
 					await stream.writeSSE({ event: ev.event!, data: ev.data });
 				}
+				await persistOpaqueToolStateBestEffort({
+					auth,
+					id: `opaque_tool_state_${log.requestId}`,
+					publicModel: canonical.model,
+					deploymentId: routing.candidate.row.id,
+					adapterKey: routing.candidate.adapter.key,
+					requestId: log.requestId,
+					output: opaqueToolCallItemsFromState(opaqueToolState),
+					metadata,
+				});
 				if (routingMetadata) {
 					await stream.writeSSE({
 						event: "routing_metadata",
