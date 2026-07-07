@@ -138,6 +138,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -164,6 +165,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -200,6 +202,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -219,6 +222,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -247,6 +251,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -266,6 +271,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -294,6 +300,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -313,6 +320,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -341,6 +349,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -360,6 +369,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "medium", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {},
 						"1024x1536": {},
@@ -382,9 +392,9 @@
 					"qualities": ["standard"],
 					"responseFormats": ["b64_json"],
 					"sizes": {
+						"1024x1024": {},
 						"256x256": {},
-						"512x512": {},
-						"1024x1024": {}
+						"512x512": {}
 					}
 				},
 				"image.edit": {
@@ -399,9 +409,9 @@
 					"qualities": ["standard"],
 					"responseFormats": ["b64_json"],
 					"sizes": {
+						"1024x1024": {},
 						"256x256": {},
-						"512x512": {},
-						"1024x1024": {}
+						"512x512": {}
 					}
 				}
 			}

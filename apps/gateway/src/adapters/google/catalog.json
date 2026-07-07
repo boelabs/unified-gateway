@@ -180,6 +180,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"qualityMappings": {
 						"auto": {
 							"thinkingLevel": "minimal"
@@ -237,6 +238,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto", "low", "high"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"qualityMappings": {
 						"auto": {
 							"thinkingLevel": "minimal"
@@ -303,6 +305,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {
 							"aspectRatio": "1:1",
@@ -337,6 +340,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {
 							"aspectRatio": "1:1",
@@ -380,6 +384,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {
 							"aspectRatio": "1:1",
@@ -414,6 +419,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {
 							"aspectRatio": "1:1",
@@ -458,6 +464,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {
 							"aspectRatio": "1:1"
@@ -487,6 +494,7 @@
 					"outputFormats": ["png", "jpeg", "webp"],
 					"qualities": ["auto"],
 					"responseFormats": ["b64_json"],
+					"autoSize": {},
 					"sizes": {
 						"1024x1024": {
 							"aspectRatio": "1:1"
@@ -948,7 +956,8 @@
 					}
 				},
 				"image.generate": {
-					"responseFormats": ["b64_json"]
+					"responseFormats": ["b64_json"],
+					"autoSize": {}
 				}
 			},
 			"pricing": {
@@ -981,7 +990,8 @@
 					}
 				},
 				"image.generate": {
-					"responseFormats": ["b64_json"]
+					"responseFormats": ["b64_json"],
+					"autoSize": {}
 				}
 			},
 			"pricing": {

@@ -106,7 +106,7 @@ export type CanonicalImageStreamEvent =
 			usage?: ImageUsage;
 	  };
 
-interface ImageSizeMapping {
+export interface ImageSizeMapping {
 	/** Native fields for image-config transports. */
 	aspectRatio?: string;
 	imageSize?: string;
@@ -133,8 +133,17 @@ export interface ImageModelProfile {
 	outputFormats?: ImageOutputFormat[];
 	qualities?: ImageQuality[];
 	responseFormats?: ImageResponseFormat[];
-	/** Exact accepted dimensions. `auto` is always handled separately. */
+	/**
+	 * Exact accepted dimensions. The first entry is the model's default: `size: "auto"` (or an
+	 * omitted size) resolves to it when the model has no native auto (`autoSize` absent).
+	 */
 	sizes?: Record<string, ImageSizeMapping>;
+	/**
+	 * Declares native support for `size: "auto"` (the model picks the dimensions itself, e.g. from
+	 * the input images of an edit). An empty object means "send no size fields / forward the native
+	 * auto value"; set mapping fields when the provider needs an explicit native translation.
+	 */
+	autoSize?: ImageSizeMapping;
 	arbitrarySize?: {
 		divisibleBy: number;
 		minAspectRatio: number;
@@ -154,4 +163,52 @@ export interface ImageModelProfile {
 	qualityMappings?: Partial<
 		Record<ImageQuality, { thinkingLevel?: "minimal" | "low" | "high" }>
 	>;
+}
+
+/** The provider-facing dimensions resolved from the requested `size` via the profile. */
+export interface ResolvedImageSize {
+	/** Exact WIDTHxHEIGHT, or the literal `auto` for models with native auto support. */
+	size?: string;
+	aspectRatio?: string;
+	imageSize?: string;
+}
+
+/**
+ * Resolves the requested `size` against the profile's size table. `auto` (and an omitted size,
+ * which is equivalent) resolves to the profile's `autoSize` mapping when the model supports auto
+ * natively, and falls back to the first `sizes` entry — the model's default — otherwise, so every
+ * image model accepts `size: "auto"` deterministically. Returns undefined when the profile
+ * declares nothing to send.
+ */
+export function resolveImageSize(
+	req: Pick<CanonicalImageRequest, "size">,
+	profile: ImageModelProfile | undefined,
+): ResolvedImageSize | undefined {
+	if (req.size && req.size !== "auto") {
+		const mapping = profile?.sizes?.[req.size];
+		return {
+			size: req.size,
+			...(mapping?.aspectRatio ? { aspectRatio: mapping.aspectRatio } : {}),
+			...(mapping?.imageSize ? { imageSize: mapping.imageSize } : {}),
+		};
+	}
+	if (profile?.autoSize) {
+		return {
+			size: "auto",
+			...(profile.autoSize.aspectRatio
+				? { aspectRatio: profile.autoSize.aspectRatio }
+				: {}),
+			...(profile.autoSize.imageSize
+				? { imageSize: profile.autoSize.imageSize }
+				: {}),
+		};
+	}
+	const first = Object.entries(profile?.sizes ?? {})[0];
+	if (!first) return undefined;
+	const [size, mapping] = first;
+	return {
+		size,
+		...(mapping.aspectRatio ? { aspectRatio: mapping.aspectRatio } : {}),
+		...(mapping.imageSize ? { imageSize: mapping.imageSize } : {}),
+	};
 }

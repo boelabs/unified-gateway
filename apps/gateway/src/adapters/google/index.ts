@@ -47,9 +47,10 @@ import type {
 	EmbeddingInput,
 } from "#core/embeddings.ts";
 
-import type {
-	CanonicalImageResponse,
-	CanonicalImageRequest,
+import {
+	type CanonicalImageResponse,
+	type CanonicalImageRequest,
+	resolveImageSize,
 } from "#core/images.ts";
 
 /**
@@ -373,11 +374,10 @@ async function buildGeminiImageBody(
 	}
 	const imageConfig: Record<string, unknown> = {};
 	const profile = imageProfileFor(ctx.meta, req.operation);
-	const mapping =
-		req.size && req.size !== "auto" ? profile?.sizes?.[req.size] : undefined;
+	const resolved = resolveImageSize(req, profile);
 	const qualityMapping = profile?.qualityMappings?.[req.quality ?? "auto"];
-	if (mapping?.aspectRatio) imageConfig.aspectRatio = mapping.aspectRatio;
-	if (mapping?.imageSize) imageConfig.imageSize = mapping.imageSize;
+	if (resolved?.aspectRatio) imageConfig.aspectRatio = resolved.aspectRatio;
+	if (resolved?.imageSize) imageConfig.imageSize = resolved.imageSize;
 	const body: Record<string, unknown> = {
 		contents: [{ role: "user", parts }],
 		generationConfig: {
@@ -391,10 +391,10 @@ async function buildGeminiImageBody(
 	return mergeExtraBodyDeep(body, req.extraBody, [
 		"contents",
 		"generationConfig.responseModalities",
-		...(mapping?.aspectRatio
+		...(resolved?.aspectRatio
 			? ["generationConfig.imageConfig.aspectRatio"]
 			: []),
-		...(mapping?.imageSize ? ["generationConfig.imageConfig.imageSize"] : []),
+		...(resolved?.imageSize ? ["generationConfig.imageConfig.imageSize"] : []),
 		...(qualityMapping?.thinkingLevel
 			? ["generationConfig.thinkingConfig.thinkingLevel"]
 			: []),

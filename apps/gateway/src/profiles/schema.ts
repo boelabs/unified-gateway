@@ -209,6 +209,13 @@ const imageOperationProfileSchema = z
 					.strict(),
 			)
 			.optional(),
+		autoSize: z
+			.object({
+				aspectRatio: z.string().optional(),
+				imageSize: z.string().optional(),
+			})
+			.strict()
+			.optional(),
 		arbitrarySize: z
 			.object({
 				divisibleBy: z.int().positive(),
