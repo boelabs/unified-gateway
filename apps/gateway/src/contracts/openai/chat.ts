@@ -291,6 +291,12 @@ export type OpenAIChatChunk = z.infer<typeof chatChunkSchema>;
  * OpenAI (edge) ⟷ canonical types (core).
  */
 
+function extraContent(value: unknown): Record<string, unknown> | undefined {
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		return undefined;
+	return value as Record<string, unknown>;
+}
+
 function mapContent(
 	content: z.infer<typeof messageContent> | null | undefined,
 ): string | CanonicalContentPart[] | null {
@@ -340,11 +346,17 @@ function mapMessage(m: z.infer<typeof messageSchema>): CanonicalMessage {
 	};
 	if (m.name !== undefined) msg.name = m.name;
 	if (m.tool_calls !== undefined) {
-		msg.toolCalls = m.tool_calls.map((tc) => ({
-			id: tc.id,
-			name: tc.function.name,
-			arguments: tc.function.arguments,
-		}));
+		msg.toolCalls = m.tool_calls.map((tc) => {
+			const extra = extraContent(
+				(tc as unknown as Record<string, unknown>).extra_content,
+			);
+			return {
+				id: tc.id,
+				name: tc.function.name,
+				arguments: tc.function.arguments,
+				...(extra !== undefined ? { extraContent: extra } : {}),
+			};
+		});
 	}
 	if (m.tool_call_id !== undefined) msg.toolCallId = m.tool_call_id;
 	return msg;
@@ -491,6 +503,9 @@ export function toOpenAIChatResponse(
 								id: tc.id,
 								type: "function" as const,
 								function: { name: tc.name, arguments: tc.arguments },
+								...(tc.extraContent !== undefined
+									? { extra_content: tc.extraContent }
+									: {}),
 							})),
 						}
 					: {}),
@@ -540,6 +555,9 @@ export function toOpenAIChatChunk(
 										? { arguments: tc.arguments }
 										: {}),
 								},
+								...(tc.extraContent !== undefined
+									? { extra_content: tc.extraContent }
+									: {}),
 							})),
 						}
 					: {}),

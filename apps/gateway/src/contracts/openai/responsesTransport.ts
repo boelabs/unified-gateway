@@ -314,6 +314,7 @@ interface RWOutputItem {
 	id?: string;
 	name?: string;
 	arguments?: string;
+	extra_content?: Record<string, unknown>;
 }
 interface RWResponse {
 	id?: string;
@@ -359,6 +360,9 @@ export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 				id: item.call_id ?? item.id ?? "",
 				name: item.name ?? "",
 				arguments: item.arguments ?? "",
+				...(item.extra_content !== undefined
+					? { extraContent: item.extra_content }
+					: {}),
 			});
 		}
 	}
@@ -435,9 +439,7 @@ export async function* responsesEventsToCanonicalChunks(
 		}
 
 		if (type === "response.output_item.added") {
-			const item = d.item as
-				| { type?: string; call_id?: string; name?: string }
-				| undefined;
+			const item = d.item as RWOutputItem | undefined;
 			if (item?.type === "function_call") {
 				const idx = Number(d.output_index ?? 0);
 				yield {
@@ -452,6 +454,9 @@ export async function* responsesEventsToCanonicalChunks(
 										id: item.call_id ?? "",
 										name: item.name ?? "",
 										arguments: "",
+										...(item.extra_content !== undefined
+											? { extraContent: item.extra_content }
+											: {}),
 									},
 								],
 							},

@@ -244,6 +244,49 @@ test("google.buildRequest: tool parameters are translated to Gemini's schema sub
 	});
 });
 
+test("google.buildRequest: replays functionCall id and thought signature", () => {
+	const body = JSON.parse(
+		googleAdapter.chat!.buildRequest(
+			{
+				...req,
+				messages: [
+					{ role: "user", content: "use the tool" },
+					{
+						role: "assistant",
+						content: null,
+						toolCalls: [
+							{
+								id: "function-call-1",
+								name: "load_skill",
+								arguments: '{"name":"conversation-workspace"}',
+								extraContent: {
+									google: { thought_signature: "thought-signature-a" },
+								},
+							},
+						],
+					},
+					{
+						role: "tool",
+						toolCallId: "function-call-1",
+						content: '{"loaded":true}',
+					},
+				],
+			},
+			ctx,
+		).body!,
+	);
+	const functionCall = body.contents[1].parts[0].functionCall;
+	assert.equal(functionCall.id, "function-call-1");
+	assert.equal(functionCall.name, "load_skill");
+	assert.equal(functionCall.thoughtSignature, "thought-signature-a");
+	assert.deepEqual(functionCall.args, { name: "conversation-workspace" });
+
+	const functionResponse = body.contents[2].parts[0].functionResponse;
+	assert.equal(functionResponse.id, "function-call-1");
+	assert.equal(functionResponse.name, "load_skill");
+	assert.deepEqual(functionResponse.response, { loaded: true });
+});
+
 test("google.buildRequest: Gemini 3 uses thinkingLevel and merges extraBody", () => {
 	const r = googleAdapter.chat!.buildRequest(
 		{
@@ -340,7 +383,12 @@ test("google.parseResponse: functionCall -> tool_calls + finish tool_calls", () 
 					role: "model",
 					parts: [
 						{
-							functionCall: { name: "get_weather", args: { city: "Caracas" } },
+							thoughtSignature: "thought-signature-a",
+							functionCall: {
+								id: "function-call-1",
+								name: "get_weather",
+								args: { city: "Caracas" },
+							},
 						},
 					],
 				},
@@ -356,11 +404,15 @@ test("google.parseResponse: functionCall -> tool_calls + finish tool_calls", () 
 	};
 	const u = googleAdapter.chat!.parseResponse(raw, ctx);
 	assert.equal(u.choices[0]!.finishReason, "tool_calls");
+	assert.equal(u.choices[0]!.message.toolCalls?.[0]?.id, "function-call-1");
 	assert.equal(u.choices[0]!.message.toolCalls?.[0]?.name, "get_weather");
 	assert.equal(
 		u.choices[0]!.message.toolCalls?.[0]?.arguments,
 		'{"city":"Caracas"}',
 	);
+	assert.deepEqual(u.choices[0]!.message.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "thought-signature-a" },
+	});
 });
 
 test("google.usage: reasoning (thoughts) is added to completion; total matches", () => {

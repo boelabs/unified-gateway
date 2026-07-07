@@ -29,6 +29,36 @@ test("prompt_cache_key: from chat contract to canonical request and OpenAI trans
 	assert.equal(body.prompt_cache_key, "thread-42");
 });
 
+test("OpenAI transport strips provider-specific tool-call extra_content", () => {
+	const body = buildOpenAIChatBody(
+		{
+			callType: "chat",
+			model: "gpt",
+			stream: false,
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					toolCalls: [
+						{
+							id: "call_1",
+							name: "f",
+							arguments: "{}",
+							extraContent: {
+								google: { thought_signature: "sig-a" },
+							},
+						},
+					],
+				},
+			],
+		},
+		"gpt-x",
+	);
+	const messages = body.messages as Array<Record<string, unknown>>;
+	const toolCalls = messages[0]!.tool_calls as Array<Record<string, unknown>>;
+	assert.equal(toolCalls[0]!.extra_content, undefined);
+});
+
 test("request: parses a basic chat and applies stream=false by default", () => {
 	const parsed = chatRequestSchema.parse({
 		model: "gpt",
@@ -181,6 +211,7 @@ test("toCanonical: maps multimodal content and tool_calls", () => {
 							id: "call_1",
 							type: "function",
 							function: { name: "f", arguments: "{}" },
+							extra_content: { google: { thought_signature: "sig-a" } },
 						},
 					],
 				},
@@ -195,6 +226,9 @@ test("toCanonical: maps multimodal content and tool_calls", () => {
 		detail: "high",
 	});
 	assert.equal(u.messages[1]!.toolCalls?.[0]?.name, "f");
+	assert.deepEqual(u.messages[1]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
 });
 
 test("toCanonical: maps content part file (file_id and file_data)", () => {
@@ -241,6 +275,16 @@ test("toOpenAIResponse: produces a schema-valid chat.completion", () => {
 					role: "assistant",
 					content: "hello!",
 					reasoning: "Resumen de reasoning",
+					toolCalls: [
+						{
+							id: "call_1",
+							name: "f",
+							arguments: "{}",
+							extraContent: {
+								google: { thought_signature: "sig-a" },
+							},
+						},
+					],
 				},
 			},
 		],
@@ -263,6 +307,14 @@ test("toOpenAIResponse: produces a schema-valid chat.completion", () => {
 	assert.equal(
 		(out.choices[0]!.message as Record<string, unknown>).reasoning,
 		"Resumen de reasoning",
+	);
+	assert.deepEqual(
+		(
+			out.choices[0]!.message.tool_calls?.[0] as
+				| Record<string, unknown>
+				| undefined
+		)?.extra_content,
+		{ google: { thought_signature: "sig-a" } },
 	);
 	assert.equal(out.usage.prompt_tokens_details?.cached_tokens, 4);
 });

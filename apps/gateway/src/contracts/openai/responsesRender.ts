@@ -129,6 +129,12 @@ function mapToolChoice(
 
 export type ResponseInputItem = Record<string, unknown>;
 
+function extraContent(value: unknown): Record<string, unknown> | undefined {
+	if (value === null || typeof value !== "object" || Array.isArray(value))
+		return undefined;
+	return value as Record<string, unknown>;
+}
+
 function cloneItem<T>(value: T): T {
 	return structuredClone(value);
 }
@@ -243,6 +249,7 @@ export function responsesRequestToCanonical(
 					break;
 				}
 				case "function_call": {
+					const extra = extraContent(item.extra_content);
 					messages.push({
 						role: "assistant",
 						content: null,
@@ -251,6 +258,7 @@ export function responsesRequestToCanonical(
 								id: String(item.call_id ?? item.id ?? ""),
 								name: String(item.name ?? ""),
 								arguments: String(item.arguments ?? ""),
+								...(extra !== undefined ? { extraContent: extra } : {}),
 							},
 						],
 					});
@@ -487,7 +495,12 @@ function reasoningItem(summary: string, id: string): Record<string, unknown> {
 }
 
 function functionCallItem(
-	tc: { id: string; name: string; arguments: string },
+	tc: {
+		id: string;
+		name: string;
+		arguments: string;
+		extraContent?: Record<string, unknown>;
+	},
 	id: string,
 ): Record<string, unknown> {
 	return {
@@ -497,6 +510,9 @@ function functionCallItem(
 		name: tc.name,
 		arguments: tc.arguments,
 		status: "completed",
+		...(tc.extraContent !== undefined
+			? { extra_content: tc.extraContent }
+			: {}),
 	};
 }
 
@@ -617,7 +633,12 @@ export async function* canonicalChunksToResponsesEvents(
 	let finish: CanonicalFinishReason | null = null;
 	const toolCalls = new Map<
 		number,
-		{ id: string; name: string; arguments: string }
+		{
+			id: string;
+			name: string;
+			arguments: string;
+			extraContent?: Record<string, unknown>;
+		}
 	>();
 
 	const output: Record<string, unknown>[] = [];
@@ -751,6 +772,7 @@ export async function* canonicalChunksToResponsesEvents(
 			if (tc.id) cur.id = tc.id;
 			if (tc.name) cur.name = tc.name;
 			if (tc.arguments) cur.arguments += tc.arguments;
+			if (tc.extraContent !== undefined) cur.extraContent = tc.extraContent;
 			toolCalls.set(tc.index, cur);
 		}
 	}

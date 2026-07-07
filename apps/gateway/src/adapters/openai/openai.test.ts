@@ -81,6 +81,33 @@ test("openai.buildRequest: native /responses transport, auth, and responses body
 	assert.equal(body.input[0].content[0].text, "hello");
 });
 
+test("openai.buildRequest: does not forward provider-specific tool-call extra_content", () => {
+	const r = openaiAdapter.chat!.buildRequest(
+		{
+			...baseReq,
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					toolCalls: [
+						{
+							id: "call_1",
+							name: "f",
+							arguments: "{}",
+							extraContent: {
+								google: { thought_signature: "sig-a" },
+							},
+						},
+					],
+				},
+			],
+		},
+		ctx,
+	);
+	const body = JSON.parse(r.body!);
+	assert.equal(body.input[0].extra_content, undefined);
+});
+
 test("openai.buildRequest: forwards /responses transport options", () => {
 	const r = openaiAdapter.chat!.buildRequest(
 		{
