@@ -13,8 +13,8 @@ import {
 	type ImageOutputFormat,
 	type ImageBackground,
 	type ImageQuality,
-	type ImageUsage,
 	resolveImageSize,
+	type ImageUsage,
 } from "#core/images.ts";
 
 const DIRECT_MANAGED = [
