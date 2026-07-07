@@ -16,6 +16,13 @@ import type {
 } from "#core/canonical.ts";
 
 import {
+	providerSpecificFieldsFromExtraContent,
+	extraContentFromProviderSpecificFields,
+	extraContentFromThoughtSignatureId,
+	mergeOpaqueExtraContent,
+} from "#core/opaqueToolState.ts";
+
+import {
 	effortFromBudgetTokens,
 	type ReasoningEffort,
 	isReasoningEffort,
@@ -57,6 +64,7 @@ interface Block {
 	input?: unknown;
 	tool_use_id?: string;
 	content?: unknown;
+	provider_specific_fields?: Record<string, unknown>;
 	cache_control?: Record<string, unknown>;
 }
 
@@ -201,10 +209,15 @@ export function messagesRequestToCanonical(
 			const toolCalls: NonNullable<CanonicalMessage["toolCalls"]> = [];
 			for (const b of blocks) {
 				if (b.type === "tool_use") {
+					const extraContent = mergeOpaqueExtraContent(
+						extraContentFromThoughtSignatureId(b.id),
+						extraContentFromProviderSpecificFields(b.provider_specific_fields),
+					);
 					toolCalls.push({
 						id: b.id ?? "",
 						name: b.name ?? "",
 						arguments: JSON.stringify(b.input ?? {}),
+						...(extraContent !== undefined ? { extraContent } : {}),
 					});
 				} else {
 					const p = blockToPart(b);
@@ -360,11 +373,17 @@ export function canonicalToMessagesResponse(
 	}
 	if (content) blocks.push({ type: "text", text: content });
 	for (const tc of choice?.message.toolCalls ?? []) {
+		const providerSpecificFields = providerSpecificFieldsFromExtraContent(
+			tc.extraContent,
+		);
 		blocks.push({
 			type: "tool_use",
 			id: tc.id,
 			name: tc.name,
 			input: parseArgs(tc.arguments),
+			...(providerSpecificFields !== undefined
+				? { provider_specific_fields: providerSpecificFields }
+				: {}),
 		});
 	}
 	return {
@@ -483,6 +502,13 @@ export async function* canonicalChunksToMessagesEvents(
 						id: tc.id ?? "",
 						name: tc.name ?? "",
 						input: {},
+						...(providerSpecificFieldsFromExtraContent(tc.extraContent) !==
+						undefined
+							? {
+									provider_specific_fields:
+										providerSpecificFieldsFromExtraContent(tc.extraContent),
+								}
+							: {}),
 					},
 				});
 			}

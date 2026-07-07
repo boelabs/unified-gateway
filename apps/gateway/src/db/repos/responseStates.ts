@@ -13,6 +13,7 @@ export interface StoreResponseStateInput {
 	deploymentId: string | null;
 	adapterKey: string | null;
 	previousResponseId: string | null;
+	store?: boolean;
 	requestInput: Record<string, unknown>[];
 	output: Record<string, unknown>[];
 	response: Record<string, unknown>;
@@ -83,7 +84,7 @@ export async function storeResponseState(
 			deploymentId: input.deploymentId,
 			adapterKey: input.adapterKey,
 			previousResponseId: input.previousResponseId,
-			store: true,
+			store: input.store ?? true,
 			requestInput: input.requestInput,
 			output: input.output,
 			response: input.response,
@@ -107,7 +108,12 @@ export async function getResponseStateForScope(
 		.select()
 		.from(responseStates)
 		.where(
-			and(eq(responseStates.id, id), scope, gt(responseStates.expiresAt, now)),
+			and(
+				eq(responseStates.id, id),
+				scope,
+				eq(responseStates.store, true),
+				gt(responseStates.expiresAt, now),
+			),
 		)
 		.limit(1);
 	return row;
@@ -122,15 +128,17 @@ export async function getResponseStateForScope(
  * then runs over that (typically small) set. If a single key accumulates a very large number of
  * stored states, add an expression GIN index over the item ids.
  */
-export async function findResponseItemByIdForScope(
+async function findResponseItemByIdForScopeMatchingStore(
 	itemId: string,
 	virtualKeyId: string | null,
 	now = new Date(),
+	requireStored = true,
 ): Promise<Record<string, unknown> | undefined> {
 	const scope =
 		virtualKeyId === null
 			? isNull(responseStates.virtualKeyId)
 			: eq(responseStates.virtualKeyId, virtualKeyId);
+	const storeScope = requireStored ? eq(responseStates.store, true) : undefined;
 	const needle = JSON.stringify([{ id: itemId }]);
 	const [row] = await db
 		.select({
@@ -141,6 +149,7 @@ export async function findResponseItemByIdForScope(
 		.where(
 			and(
 				scope,
+				storeScope,
 				gt(responseStates.expiresAt, now),
 				sql`(${responseStates.output} @> ${needle}::jsonb OR ${responseStates.requestInput} @> ${needle}::jsonb)`,
 			),
@@ -149,6 +158,27 @@ export async function findResponseItemByIdForScope(
 	if (!row) return undefined;
 	return [...row.output, ...row.requestInput].find(
 		(it) => (it as { id?: unknown }).id === itemId,
+	);
+}
+
+export async function findResponseItemByIdForScope(
+	itemId: string,
+	virtualKeyId: string | null,
+	now = new Date(),
+): Promise<Record<string, unknown> | undefined> {
+	return findResponseItemByIdForScopeMatchingStore(itemId, virtualKeyId, now);
+}
+
+export async function findInternalResponseItemByIdForScope(
+	itemId: string,
+	virtualKeyId: string | null,
+	now = new Date(),
+): Promise<Record<string, unknown> | undefined> {
+	return findResponseItemByIdForScopeMatchingStore(
+		itemId,
+		virtualKeyId,
+		now,
+		false,
 	);
 }
 
@@ -163,7 +193,9 @@ export async function deleteResponseStateForScope(
 			: eq(responseStates.virtualKeyId, virtualKeyId);
 	const rows = await db
 		.delete(responseStates)
-		.where(and(eq(responseStates.id, id), scope))
+		.where(
+			and(eq(responseStates.id, id), scope, eq(responseStates.store, true)),
+		)
 		.returning({ id: responseStates.id });
 	return rows.length > 0;
 }

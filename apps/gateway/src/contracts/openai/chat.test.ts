@@ -231,6 +231,39 @@ test("toCanonical: maps multimodal content and tool_calls", () => {
 	});
 });
 
+test("toCanonical: maps LiteLLM provider_specific_fields thought signatures", () => {
+	const u = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "gpt",
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_1",
+							type: "function",
+							function: { name: "get_weather", arguments: "{}" },
+							provider_specific_fields: { thought_signature: "sig-a" },
+						},
+						{
+							id: "call_2__thought__sig-b",
+							type: "function",
+							function: { name: "get_weather", arguments: "{}" },
+						},
+					],
+				},
+			],
+		}),
+	);
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.deepEqual(u.messages[0]!.toolCalls?.[1]?.extraContent, {
+		google: { thought_signature: "sig-b" },
+	});
+});
+
 test("toCanonical: maps content part file (file_id and file_data)", () => {
 	const u = toCanonicalChatRequest(
 		chatRequestSchema.parse({
@@ -316,6 +349,19 @@ test("toOpenAIResponse: produces a schema-valid chat.completion", () => {
 		)?.extra_content,
 		{ google: { thought_signature: "sig-a" } },
 	);
+	assert.deepEqual(
+		(
+			out.choices[0]!.message.tool_calls?.[0] as
+				| Record<string, unknown>
+				| undefined
+		)?.provider_specific_fields,
+		{ thought_signature: "sig-a" },
+	);
+	assert.deepEqual(
+		(out.choices[0]!.message as Record<string, unknown>)
+			.provider_specific_fields,
+		{ thought_signatures: ["sig-a"] },
+	);
 	assert.equal(out.usage.prompt_tokens_details?.cached_tokens, 4);
 });
 
@@ -344,7 +390,21 @@ test("toOpenAIChunk: produces a valid chat.completion.chunk with final usage", (
 		choices: [
 			{
 				index: 0,
-				delta: { reasoning: "pienso", content: "ho" },
+				delta: {
+					reasoning: "pienso",
+					content: "ho",
+					toolCalls: [
+						{
+							index: 0,
+							id: "call_1",
+							name: "get_weather",
+							arguments: "{}",
+							extraContent: {
+								google: { thought_signature: "sig-a" },
+							},
+						},
+					],
+				},
 				finishReason: null,
 			},
 		],
@@ -358,5 +418,13 @@ test("toOpenAIChunk: produces a valid chat.completion.chunk with final usage", (
 		"pienso",
 	);
 	assert.equal(out.choices[0]!.delta.content, "ho");
+	assert.deepEqual(
+		(
+			out.choices[0]!.delta.tool_calls?.[0] as
+				| Record<string, unknown>
+				| undefined
+		)?.provider_specific_fields,
+		{ thought_signature: "sig-a" },
+	);
 	assert.equal(out.usage?.total_tokens, 3);
 });

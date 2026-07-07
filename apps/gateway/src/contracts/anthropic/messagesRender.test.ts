@@ -118,6 +118,41 @@ test("request->canonical: assistant tool_use and user tool_result", () => {
 	assert.equal(u.messages[1]!.content, "42");
 });
 
+test("request->canonical: LiteLLM provider_specific_fields restore tool_use state", () => {
+	const u = messagesRequestToCanonical(
+		parse({
+			model: "claude",
+			max_tokens: 50,
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "tool_use",
+							id: "tu_1",
+							name: "f",
+							input: { x: 1 },
+							provider_specific_fields: { thought_signature: "sig-a" },
+						},
+						{
+							type: "tool_use",
+							id: "tu_2__thought__sig-b",
+							name: "f",
+							input: { x: 2 },
+						},
+					],
+				},
+			],
+		}),
+	);
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.deepEqual(u.messages[0]!.toolCalls?.[1]?.extraContent, {
+		google: { thought_signature: "sig-b" },
+	});
+});
+
 test("request->canonical: image block -> data URL; tools/tool_choice", () => {
 	const u = messagesRequestToCanonical(
 		parse({
@@ -283,7 +318,16 @@ test("canonical->response: tool_calls -> tool_use; finish tool_calls -> tool_use
 				message: {
 					role: "assistant",
 					content: null,
-					toolCalls: [{ id: "tu_1", name: "f", arguments: '{"x":1}' }],
+					toolCalls: [
+						{
+							id: "tu_1",
+							name: "f",
+							arguments: '{"x":1}',
+							extraContent: {
+								google: { thought_signature: "sig-a" },
+							},
+						},
+					],
 				},
 			},
 		],
@@ -294,6 +338,9 @@ test("canonical->response: tool_calls -> tool_use; finish tool_calls -> tool_use
 	const tu = out.content.find((b: any) => b.type === "tool_use");
 	assert.equal(tu.name, "f");
 	assert.deepEqual(tu.input, { x: 1 });
+	assert.deepEqual(tu.provider_specific_fields, {
+		thought_signature: "sig-a",
+	});
 });
 
 test("stream->events: Anthropic sequence for text", async () => {
@@ -336,4 +383,45 @@ test("stream->events: Anthropic sequence for text", async () => {
 	]);
 	assert.equal(deltaUsage.output_tokens, 1);
 	assert.equal(deltaUsage.input_tokens, undefined); // message_delta only carries output_tokens
+});
+
+test("stream->events: Anthropic tool_use includes provider_specific_fields", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "claude-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						role: "assistant",
+						toolCalls: [
+							{
+								index: 0,
+								id: "tu_1",
+								name: "f",
+								arguments: '{"x":1}',
+								extraContent: {
+									google: { thought_signature: "sig-a" },
+								},
+							},
+						],
+					},
+					finishReason: "tool_calls",
+				},
+			],
+			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+		};
+	}
+	let toolUse: any;
+	for await (const ev of canonicalChunksToMessagesEvents(chunks(), opts)) {
+		if (ev.event === "content_block_start") {
+			const data = JSON.parse(ev.data);
+			if (data.content_block.type === "tool_use") toolUse = data.content_block;
+		}
+	}
+	assert.deepEqual(toolUse.provider_specific_fields, {
+		thought_signature: "sig-a",
+	});
 });

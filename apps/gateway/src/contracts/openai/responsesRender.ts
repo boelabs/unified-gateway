@@ -18,6 +18,14 @@ import type {
 } from "#core/canonical.ts";
 
 import {
+	providerSpecificFieldsFromExtraContent,
+	extraContentFromProviderSpecificFields,
+	extraContentFromThoughtSignatureId,
+	mergeStoredOpaqueExtraContent,
+	mergeOpaqueExtraContent,
+} from "#core/opaqueToolState.ts";
+
+import {
 	type ReasoningSummary,
 	isReasoningEffort,
 	summaryForEffort,
@@ -228,6 +236,39 @@ export async function expandInputReferences(
 	return resolveResponseInputReferences(input, referenceItems);
 }
 
+/**
+ * Some OpenAI-compatible clients preserve the public `function_call.id` but drop unknown fields such
+ * as `extra_content`. Rehydrate those opaque provider fields from gateway state before canonicalizing.
+ */
+export async function hydrateResponseInputOpaqueState(
+	input: ResponseInputItem[],
+	lookup: (id: string) => Promise<ResponseInputItem | undefined>,
+): Promise<ResponseInputItem[]> {
+	const hydrated: ResponseInputItem[] = [];
+	for (const raw of input) {
+		const item = cloneItem(raw);
+		if (item.type !== "function_call") {
+			hydrated.push(item);
+			continue;
+		}
+
+		const id = itemId(item);
+		if (id === null) {
+			hydrated.push(item);
+			continue;
+		}
+
+		const stored = await lookup(id);
+		const merged = mergeStoredOpaqueExtraContent(
+			extraContent(item.extra_content),
+			stored?.extra_content,
+		);
+		if (merged !== undefined) item.extra_content = merged;
+		hydrated.push(item);
+	}
+	return hydrated;
+}
+
 /** Translates an OpenResponses request to the canonical chat request. */
 export function responsesRequestToCanonical(
 	req: ResponsesRequest,
@@ -249,7 +290,13 @@ export function responsesRequestToCanonical(
 					break;
 				}
 				case "function_call": {
-					const extra = extraContent(item.extra_content);
+					const extra = mergeOpaqueExtraContent(
+						extraContentFromThoughtSignatureId(item.id),
+						extraContentFromProviderSpecificFields(
+							item.provider_specific_fields,
+						),
+						extraContent(item.extra_content),
+					);
 					messages.push({
 						role: "assistant",
 						content: null,
@@ -503,6 +550,9 @@ function functionCallItem(
 	},
 	id: string,
 ): Record<string, unknown> {
+	const providerSpecificFields = providerSpecificFieldsFromExtraContent(
+		tc.extraContent,
+	);
 	return {
 		type: "function_call",
 		id,
@@ -513,7 +563,27 @@ function functionCallItem(
 		...(tc.extraContent !== undefined
 			? { extra_content: tc.extraContent }
 			: {}),
+		...(providerSpecificFields !== undefined
+			? { provider_specific_fields: providerSpecificFields }
+			: {}),
 	};
+}
+
+function outputProviderSpecificFields(
+	output: Record<string, unknown>[],
+): Record<string, unknown> | undefined {
+	const thoughtSignatures: string[] = [];
+	for (const item of output) {
+		const fields = item.provider_specific_fields;
+		if (fields === null || typeof fields !== "object" || Array.isArray(fields))
+			continue;
+		const signature = (fields as Record<string, unknown>).thought_signature;
+		if (typeof signature === "string" && signature.length > 0)
+			thoughtSignatures.push(signature);
+	}
+	return thoughtSignatures.length > 0
+		? { thought_signatures: thoughtSignatures }
+		: undefined;
 }
 
 /** Builds the OpenResponses `response` object. */
@@ -531,6 +601,7 @@ function buildResponse(
 	},
 ): Record<string, unknown> {
 	const { req } = opts;
+	const providerSpecificFields = outputProviderSpecificFields(parts.output);
 	return {
 		id: parts.id,
 		object: "response",
@@ -556,6 +627,9 @@ function buildResponse(
 		truncation: req.truncation ?? "disabled",
 		usage: parts.usage ? toResponsesUsage(parts.usage) : null,
 		metadata: req.metadata ?? {},
+		...(providerSpecificFields !== undefined
+			? { provider_specific_fields: providerSpecificFields }
+			: {}),
 	};
 }
 

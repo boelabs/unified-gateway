@@ -10,19 +10,21 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+	findInternalResponseItemByIdForScope,
+	findResponseItemByIdForScope,
+	deleteExpiredResponseStates,
+	deleteResponseStateForScope,
+	getResponseStateForScope,
+	storeResponseState,
+} from "#db/repos/responseStates.ts";
+
+import {
 	listDeploymentsByPublicModel,
 	getDeploymentCredentials,
 	getDeploymentById,
 	createDeployment,
 	deleteDeployment,
 } from "#db/repos/deployments.ts";
-
-import {
-	deleteExpiredResponseStates,
-	deleteResponseStateForScope,
-	getResponseStateForScope,
-	storeResponseState,
-} from "#db/repos/responseStates.ts";
 
 const skip = (await pgAvailable()) ? false : "Postgres unavailable";
 
@@ -94,5 +96,42 @@ test("response_states: store/get and expired-row GC (cron base)", {
 		assert.equal(await getResponseStateForScope(id, vkId), undefined);
 	} finally {
 		await deleteResponseStateForScope(id, vkId);
+	}
+});
+
+test("response_states: store=false is internal-only for opaque item lookup", {
+	skip,
+}, async () => {
+	const id = `resp_internal_itest_${randomUUID()}`;
+	const itemId = `fc_itest_${randomUUID()}`;
+	const vkId = null;
+	await storeResponseState({
+		id,
+		virtualKeyId: vkId,
+		publicModel: "itest",
+		deploymentId: null,
+		adapterKey: "googleaistudio",
+		previousResponseId: null,
+		store: false,
+		requestInput: [],
+		output: [
+			{
+				type: "function_call",
+				id: itemId,
+				call_id: "call_1",
+				extra_content: { google: { thought_signature: "sig-a" } },
+			},
+		],
+		response: { id, object: "response", store: false },
+	});
+	try {
+		assert.equal(await getResponseStateForScope(id, vkId), undefined);
+		assert.equal(await findResponseItemByIdForScope(itemId, vkId), undefined);
+		const internal = await findInternalResponseItemByIdForScope(itemId, vkId);
+		assert.deepEqual(internal?.extra_content, {
+			google: { thought_signature: "sig-a" },
+		});
+	} finally {
+		await deleteExpiredResponseStates(new Date(Date.now() + 10 ** 12));
 	}
 });

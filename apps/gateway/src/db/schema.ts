@@ -332,7 +332,8 @@ export const requestLogs = pgTable(
 
 /**
  * Local canonical state of /v1/responses. Not observability: used to reconstruct
- * previous_response_id without depending on the upstream. Only persisted when store=true.
+ * previous_response_id without depending on the upstream. Rows with store=false are internal-only
+ * minimal opaque provider state, not public response storage.
  */
 export const responseStates = pgTable(
 	"response_states",

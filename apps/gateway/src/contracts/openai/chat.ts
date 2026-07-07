@@ -4,6 +4,14 @@ import { GatewayError } from "#core/errors.ts";
 import type { Usage } from "#core/usage.ts";
 import * as z from "zod/v4";
 
+import {
+	providerSpecificFieldsFromExtraContent,
+	extraContentFromProviderSpecificFields,
+	providerSpecificFieldsFromToolCalls,
+	extraContentFromThoughtSignatureId,
+	mergeOpaqueExtraContent,
+} from "#core/opaqueToolState.ts";
+
 import type {
 	CanonicalChatStreamChunk,
 	CanonicalResponseFormat,
@@ -347,8 +355,11 @@ function mapMessage(m: z.infer<typeof messageSchema>): CanonicalMessage {
 	if (m.name !== undefined) msg.name = m.name;
 	if (m.tool_calls !== undefined) {
 		msg.toolCalls = m.tool_calls.map((tc) => {
-			const extra = extraContent(
-				(tc as unknown as Record<string, unknown>).extra_content,
+			const raw = tc as unknown as Record<string, unknown>;
+			const extra = mergeOpaqueExtraContent(
+				extraContentFromThoughtSignatureId(tc.id),
+				extraContentFromProviderSpecificFields(raw.provider_specific_fields),
+				extraContent(raw.extra_content),
 			);
 			return {
 				id: tc.id,
@@ -475,6 +486,74 @@ function toOpenAIUsage(u: Usage): z.infer<typeof usageSchema> {
 	return out;
 }
 
+function toolCallProviderSpecificFields(
+	extraContent: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	return providerSpecificFieldsFromExtraContent(extraContent);
+}
+
+function renderResponseToolCall(tc: {
+	id: string;
+	name: string;
+	arguments: string;
+	extraContent?: Record<string, unknown>;
+}): {
+	id: string;
+	type: "function";
+	function: { name: string; arguments: string };
+	extra_content?: Record<string, unknown>;
+	provider_specific_fields?: Record<string, unknown>;
+} {
+	const providerSpecificFields = providerSpecificFieldsFromExtraContent(
+		tc.extraContent,
+	);
+	return {
+		id: tc.id,
+		type: "function" as const,
+		function: { name: tc.name, arguments: tc.arguments },
+		...(tc.extraContent !== undefined
+			? { extra_content: tc.extraContent }
+			: {}),
+		...(providerSpecificFields !== undefined
+			? { provider_specific_fields: providerSpecificFields }
+			: {}),
+	};
+}
+
+function renderChunkToolCall(tc: {
+	index: number;
+	id?: string | undefined;
+	name?: string | undefined;
+	arguments?: string | undefined;
+	extraContent?: Record<string, unknown> | undefined;
+}): {
+	index: number;
+	id?: string;
+	type: "function";
+	function: { name?: string; arguments?: string };
+	extra_content?: Record<string, unknown>;
+	provider_specific_fields?: Record<string, unknown>;
+} {
+	const providerSpecificFields = toolCallProviderSpecificFields(
+		tc.extraContent,
+	);
+	return {
+		index: tc.index,
+		...(tc.id !== undefined ? { id: tc.id } : {}),
+		type: "function" as const,
+		function: {
+			...(tc.name !== undefined ? { name: tc.name } : {}),
+			...(tc.arguments !== undefined ? { arguments: tc.arguments } : {}),
+		},
+		...(tc.extraContent !== undefined
+			? { extra_content: tc.extraContent }
+			: {}),
+		...(providerSpecificFields !== undefined
+			? { provider_specific_fields: providerSpecificFields }
+			: {}),
+	};
+}
+
 /** Canonical response -> OpenAI response (non-stream). */
 export function toOpenAIChatResponse(
 	resp: CanonicalChatResponse,
@@ -499,14 +578,23 @@ export function toOpenAIChatResponse(
 					: {}),
 				...(c.message.toolCalls
 					? {
-							tool_calls: c.message.toolCalls.map((tc) => ({
-								id: tc.id,
-								type: "function" as const,
-								function: { name: tc.name, arguments: tc.arguments },
-								...(tc.extraContent !== undefined
-									? { extra_content: tc.extraContent }
-									: {}),
-							})),
+							tool_calls: c.message.toolCalls.map((tc) =>
+								renderResponseToolCall({
+									id: tc.id,
+									name: tc.name,
+									arguments: tc.arguments,
+									...(tc.extraContent !== undefined
+										? { extraContent: tc.extraContent }
+										: {}),
+								}),
+							),
+							...(providerSpecificFieldsFromToolCalls(c.message.toolCalls) !==
+							undefined
+								? {
+										provider_specific_fields:
+											providerSpecificFieldsFromToolCalls(c.message.toolCalls),
+									}
+								: {}),
 						}
 					: {}),
 			},
@@ -545,20 +633,15 @@ export function toOpenAIChatChunk(
 						: {}),
 				...(c.delta.toolCalls
 					? {
-							tool_calls: c.delta.toolCalls.map((tc) => ({
-								index: tc.index,
-								...(tc.id !== undefined ? { id: tc.id } : {}),
-								type: "function" as const,
-								function: {
-									...(tc.name !== undefined ? { name: tc.name } : {}),
-									...(tc.arguments !== undefined
-										? { arguments: tc.arguments }
-										: {}),
-								},
-								...(tc.extraContent !== undefined
-									? { extra_content: tc.extraContent }
-									: {}),
-							})),
+							tool_calls: c.delta.toolCalls.map((tc) =>
+								renderChunkToolCall({
+									index: tc.index,
+									id: tc.id,
+									name: tc.name,
+									arguments: tc.arguments,
+									extraContent: tc.extraContent,
+								}),
+							),
 						}
 					: {}),
 			},
