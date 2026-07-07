@@ -34,6 +34,26 @@ test("catalog images: GPT Image and Nano Banana declare operations/profiles", ()
 	}
 });
 
+test("catalog images: native auto is declared where supported; the default size leads elsewhere", () => {
+	assert.deepEqual(
+		getCatalogEntry("openai", "gpt-image-2-2026-04-21")?.operations[
+			"image.generate"
+		]?.autoSize,
+		{},
+	);
+	assert.deepEqual(
+		getCatalogEntry("googleaistudio", "gemini-3.1-flash-image")?.operations[
+			"image.edit"
+		]?.autoSize,
+		{},
+	);
+	for (const model of ["dall-e-3", "dall-e-2"]) {
+		const gen = getCatalogEntry("openai", model)?.operations["image.generate"];
+		assert.equal(gen?.autoSize, undefined, model);
+		assert.equal(Object.keys(gen?.sizes ?? {})[0], "1024x1024", model);
+	}
+});
+
 test("catalog images: known models default to chat; custom declares image via catalogEntry", () => {
 	assert.deepEqual(
 		resolveModelMetadata("openai", "gpt-5.4").supportedCallTypes,

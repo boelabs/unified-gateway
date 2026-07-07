@@ -9,10 +9,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import sharp from "sharp";
 
-import type {
-	CanonicalImageRequest,
-	CanonicalImageInput,
-	ImageModelProfile,
+import {
+	type CanonicalImageRequest,
+	type CanonicalImageInput,
+	type ImageModelProfile,
+	resolveImageSize,
 } from "#core/images.ts";
 
 const profile: ImageModelProfile = {
@@ -275,6 +276,80 @@ test("Gemini images: generateContent emits IMAGE config and parses inlineData", 
 	);
 	assert.equal(response.data[0]?.mimeType, "image/png");
 	assert.equal(response.usage?.totalTokens, 5);
+});
+
+test("resolveImageSize: auto resolves to autoSize natively or the first profile size", () => {
+	const table: ImageModelProfile = {
+		sizes: {
+			"1024x1024": { aspectRatio: "1:1", imageSize: "1K" },
+			"848x1264": { aspectRatio: "2:3", imageSize: "1K" },
+		},
+	};
+	assert.deepEqual(resolveImageSize({ size: "848x1264" }, table), {
+		size: "848x1264",
+		aspectRatio: "2:3",
+		imageSize: "1K",
+	});
+	// No native auto: auto and omitted fall back to the first (default) size.
+	for (const req of [{ size: "auto" }, {}]) {
+		assert.deepEqual(resolveImageSize(req, table), {
+			size: "1024x1024",
+			aspectRatio: "1:1",
+			imageSize: "1K",
+		});
+	}
+	// Native auto: forward auto, plus any explicit native translation.
+	assert.deepEqual(
+		resolveImageSize({ size: "auto" }, { ...table, autoSize: {} }),
+		{
+			size: "auto",
+		},
+	);
+	assert.deepEqual(
+		resolveImageSize({}, { ...table, autoSize: { aspectRatio: "auto" } }),
+		{ size: "auto", aspectRatio: "auto" },
+	);
+	// Nothing declared: nothing to send.
+	assert.equal(resolveImageSize({ size: "auto" }, {}), undefined);
+	assert.equal(resolveImageSize({}, undefined), undefined);
+});
+
+test("OpenAI images: size auto forwards auto natively or the first profile size", async () => {
+	const { size: _, ...withoutSize } = generation;
+	const nativeCtx = ctx("images");
+	nativeCtx.meta.image = { ...profile, autoSize: {} };
+	for (const req of [{ ...generation, size: "auto" }, withoutSize]) {
+		const request = await openaiAdapter.imageGeneration!.buildRequest(
+			req,
+			nativeCtx,
+		);
+		assert.equal(JSON.parse(request.body as string).size, "auto");
+	}
+	const fallbackRequest = await openaiAdapter.imageGeneration!.buildRequest(
+		{ ...generation, size: "auto" },
+		ctx("images"),
+	);
+	assert.equal(JSON.parse(fallbackRequest.body as string).size, "1024x1024");
+});
+
+test("Gemini images: size auto omits imageConfig natively or maps the first profile size", async () => {
+	const nativeCtx = ctx("generate_content", "google");
+	nativeCtx.meta.image = { ...profile, autoSize: {} };
+	const nativeRequest = await googleAdapter.imageGeneration!.buildRequest(
+		{ ...generation, size: "auto" },
+		nativeCtx,
+	);
+	const nativeBody = JSON.parse(nativeRequest.body as string);
+	assert.equal(nativeBody.generationConfig.imageConfig, undefined);
+
+	const { size: _, ...withoutSize } = generation;
+	const fallbackRequest = await googleAdapter.imageGeneration!.buildRequest(
+		withoutSize,
+		ctx("generate_content", "google"),
+	);
+	const fallbackBody = JSON.parse(fallbackRequest.body as string);
+	assert.equal(fallbackBody.generationConfig.imageConfig.aspectRatio, "1:1");
+	assert.equal(fallbackBody.generationConfig.imageConfig.imageSize, "1K");
 });
 
 test("Gemini 3.1 images: quality controls thinkingLevel; auto/low/omitted use minimal", async () => {

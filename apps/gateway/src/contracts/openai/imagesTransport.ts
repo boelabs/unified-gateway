@@ -5,15 +5,16 @@ import { readFile } from "node:fs/promises";
 import { parseSSE } from "#core/sse.ts";
 import { openAsBlob } from "node:fs";
 
-import type {
-	CanonicalImageStreamEvent,
-	CanonicalImageResponse,
-	CanonicalImageRequest,
-	CanonicalImageData,
-	ImageOutputFormat,
-	ImageBackground,
-	ImageQuality,
-	ImageUsage,
+import {
+	type CanonicalImageStreamEvent,
+	type CanonicalImageResponse,
+	type CanonicalImageRequest,
+	type CanonicalImageData,
+	type ImageOutputFormat,
+	type ImageBackground,
+	type ImageQuality,
+	type ImageUsage,
+	resolveImageSize,
 } from "#core/images.ts";
 
 const DIRECT_MANAGED = [
@@ -44,6 +45,7 @@ function directBody(
 ): Record<string, unknown> {
 	const localOutputFormat = profile?.nativeOutputFormat === false;
 	const localOutputCompression = profile?.nativeOutputCompression === false;
+	const resolvedSize = resolveImageSize(req, profile);
 	const body: Record<string, unknown> = {
 		model: upstreamModel,
 		prompt: req.prompt,
@@ -64,7 +66,7 @@ function directBody(
 			: {}),
 		...(req.quality !== undefined ? { quality: req.quality } : {}),
 		response_format: "b64_json",
-		...(req.size !== undefined ? { size: req.size } : {}),
+		...(resolvedSize?.size !== undefined ? { size: resolvedSize.size } : {}),
 		...(req.stream && profile?.supportsNativeStreaming ? { stream: true } : {}),
 		...(req.style !== undefined ? { style: req.style } : {}),
 		...(req.user !== undefined ? { user: req.user } : {}),
@@ -273,8 +275,7 @@ export async function buildOmniImageBody(
 		});
 	}
 	const imageConfig: Record<string, unknown> = {};
-	const mapping =
-		req.size && req.size !== "auto" ? profile?.sizes?.[req.size] : undefined;
+	const mapping = resolveImageSize(req, profile);
 	if (mapping?.aspectRatio) imageConfig.aspect_ratio = mapping.aspectRatio;
 	if (mapping?.imageSize) imageConfig.image_size = mapping.imageSize;
 	const body: Record<string, unknown> = {

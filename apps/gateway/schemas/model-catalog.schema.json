@@ -273,6 +273,7 @@
 					"type": "object",
 					"additionalProperties": { "$ref": "#/$defs/imageSizeMapping" }
 				},
+				"autoSize": { "$ref": "#/$defs/imageSizeMapping" },
 				"arbitrarySize": { "$ref": "#/$defs/arbitraryImageSize" },
 				"supportsNativeStreaming": { "type": "boolean" },
 				"nativeOutputFormat": { "type": "boolean" },

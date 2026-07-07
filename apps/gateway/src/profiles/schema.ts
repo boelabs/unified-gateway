@@ -209,6 +209,13 @@ const imageOperationProfileSchema = z
 					.strict(),
 			)
 			.optional(),
+		autoSize: z
+			.object({
+				aspectRatio: z.string().optional(),
+				imageSize: z.string().optional(),
+			})
+			.strict()
+			.optional(),
 		arbitrarySize: z
 			.object({
 				divisibleBy: z.int().positive(),
@@ -404,11 +411,11 @@ function validateImageOperationRequirements(
 				message: "required for image operations",
 			});
 		}
-		if (!entry.sizes && !entry.arbitrarySize) {
+		if (!entry.sizes && !entry.arbitrarySize && !entry.autoSize) {
 			ctx.addIssue({
 				code: "custom",
 				path: [...pathPrefix, op, "sizes"],
-				message: "provide sizes or arbitrarySize",
+				message: "provide sizes, arbitrarySize, or autoSize",
 			});
 		}
 	}

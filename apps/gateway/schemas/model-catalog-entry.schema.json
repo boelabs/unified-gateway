@@ -130,7 +130,8 @@
 								"required": ["outputFormats", "responseFormats"],
 								"anyOf": [
 									{ "required": ["sizes"] },
-									{ "required": ["arbitrarySize"] }
+									{ "required": ["arbitrarySize"] },
+									{ "required": ["autoSize"] }
 								]
 							}
 						}
@@ -153,7 +154,8 @@
 								"required": ["outputFormats", "responseFormats"],
 								"anyOf": [
 									{ "required": ["sizes"] },
-									{ "required": ["arbitrarySize"] }
+									{ "required": ["arbitrarySize"] },
+									{ "required": ["autoSize"] }
 								]
 							}
 						}

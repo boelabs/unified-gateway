@@ -28,6 +28,15 @@ responses are **not part of the public contract**. `response_format` may be omit
 per-model, declared in its catalog `image.generate`/`image.edit` profile — an unsupported combination
 returns `400 unsupported_parameter` before any upstream call.
 
+## `size: "auto"` works everywhere
+
+`size: "auto"` — and an omitted `size`, which is equivalent — is accepted for **every** image model.
+Models whose profile declares native auto support (`autoSize`, e.g. the `gpt-image-*` and
+`gemini-*-image` families) let the model pick the dimensions itself — for edits, Gemini matches the
+aspect ratio of the input images. Models without native auto resolve `auto` deterministically to the
+**first entry of the profile's `sizes` table**, which is the model's default size. The response `size`
+always reports the actual dimensions of the returned image, never the literal `auto`.
+
 ## Output handling
 
 Every returned PNG, JPEG, and WebP is **re-encoded to strip upstream metadata** — no provider watermark
