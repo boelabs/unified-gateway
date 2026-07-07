@@ -13,15 +13,6 @@ import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 import { parseSSE } from "#core/sse.ts";
 
-import type {
-	CanonicalChatStreamChunk,
-	CanonicalChatResponse,
-	CanonicalFinishReason,
-	CanonicalChatRequest,
-	CanonicalContentPart,
-	CanonicalMessage,
-} from "#core/canonical.ts";
-
 import {
 	type CanonicalVideoProviderJob,
 	type CanonicalVideoRequest,
@@ -30,6 +21,15 @@ import {
 	type VideoStatus,
 	resolveVideoSize,
 } from "#core/videos.ts";
+
+import type {
+	CanonicalChatStreamChunk,
+	CanonicalChatResponse,
+	CanonicalFinishReason,
+	CanonicalChatRequest,
+	CanonicalContentPart,
+	CanonicalMessage,
+} from "#core/canonical.ts";
 
 import type {
 	EmbeddingsHandler,

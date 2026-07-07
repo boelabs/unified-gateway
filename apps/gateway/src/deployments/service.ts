@@ -1,10 +1,10 @@
 import { resolveModelMetadata, getCatalogEntry } from "#catalog/index.ts";
 import type { TransportOverrides } from "#profiles/types.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
-import type { Adapter } from "#adapters/types.ts";
 import { isUpstreamTransport } from "#core/transport.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
 import { getAdapter } from "#adapters/registry.ts";
+import type { Adapter } from "#adapters/types.ts";
 import { GatewayError } from "#core/errors.ts";
 
 import {
