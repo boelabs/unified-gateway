@@ -5,6 +5,18 @@ import type { SSEEvent } from "#core/sse.ts";
 import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 
+import {
+	providerSpecificFieldsFromExtraContent,
+	extraContentFromProviderSpecificFields,
+	providerFieldsWithOpenAIReasoning,
+	openaiReasoningFromProviderFields,
+	type OpenAIReasoningStateItem,
+	mergeProviderExtraContent,
+	decodeThoughtSignatureId,
+	encodeThoughtSignatureId,
+	stripThoughtSignatureId,
+} from "#core/providerSpecificFields.ts";
+
 import type {
 	CanonicalChatStreamChunk,
 	CanonicalResponseFormat,
@@ -16,14 +28,6 @@ import type {
 	CanonicalMessage,
 	CanonicalRole,
 } from "#core/canonical.ts";
-
-import {
-	providerSpecificFieldsFromExtraContent,
-	extraContentFromProviderSpecificFields,
-	extraContentFromThoughtSignatureId,
-	mergeStoredOpaqueExtraContent,
-	mergeOpaqueExtraContent,
-} from "#core/opaqueToolState.ts";
 
 import {
 	type ReasoningSummary,
@@ -236,39 +240,6 @@ export async function expandInputReferences(
 	return resolveResponseInputReferences(input, referenceItems);
 }
 
-/**
- * Some OpenAI-compatible clients preserve the public `function_call.id` but drop unknown fields such
- * as `extra_content`. Rehydrate those opaque provider fields from gateway state before canonicalizing.
- */
-export async function hydrateResponseInputOpaqueState(
-	input: ResponseInputItem[],
-	lookup: (id: string) => Promise<ResponseInputItem | undefined>,
-): Promise<ResponseInputItem[]> {
-	const hydrated: ResponseInputItem[] = [];
-	for (const raw of input) {
-		const item = cloneItem(raw);
-		if (item.type !== "function_call") {
-			hydrated.push(item);
-			continue;
-		}
-
-		const id = itemId(item);
-		if (id === null) {
-			hydrated.push(item);
-			continue;
-		}
-
-		const stored = await lookup(id);
-		const merged = mergeStoredOpaqueExtraContent(
-			extraContent(item.extra_content),
-			stored?.extra_content,
-		);
-		if (merged !== undefined) item.extra_content = merged;
-		hydrated.push(item);
-	}
-	return hydrated;
-}
-
 /** Translates an OpenResponses request to the canonical chat request. */
 export function responsesRequestToCanonical(
 	req: ResponsesRequest,
@@ -280,48 +251,90 @@ export function responsesRequestToCanonical(
 	if (typeof req.input === "string") {
 		messages.push({ role: "user", content: req.input });
 	} else if (Array.isArray(req.input)) {
+		// OpenAI reasoning state items precede the assistant items they belong to; buffer them and
+		// attach to the next assistant-derived message.
+		let pendingReasoning: OpenAIReasoningStateItem[] = [];
+		const attachPendingReasoning = (message: CanonicalMessage): void => {
+			if (pendingReasoning.length === 0) return;
+			const existing = openaiReasoningFromProviderFields(
+				message.providerFields,
+			);
+			message.providerFields = providerFieldsWithOpenAIReasoning([
+				...(existing ?? []),
+				...pendingReasoning,
+			]);
+			pendingReasoning = [];
+		};
 		for (const raw of req.input) {
 			const item = raw as Record<string, unknown>;
 			const type = (item.type as string | undefined) ?? "message";
 			switch (type) {
 				case "message": {
 					const role = (item.role as CanonicalRole) ?? "user";
-					messages.push({ role, content: mapMessageContent(item.content) });
+					const message: CanonicalMessage = {
+						role,
+						content: mapMessageContent(item.content),
+					};
+					if (role === "assistant") attachPendingReasoning(message);
+					messages.push(message);
 					break;
 				}
 				case "function_call": {
-					const extra = mergeOpaqueExtraContent(
-						extraContentFromThoughtSignatureId(item.id),
+					// The gateway embeds the signature in call_id; LiteLLM-style clients carry it on the
+					// item id. Accept both, preferring call_id.
+					const fromCallId = decodeThoughtSignatureId(item.call_id ?? "");
+					const fromItemId = decodeThoughtSignatureId(item.id ?? "");
+					const decoded = {
+						id: item.call_id !== undefined ? fromCallId.id : fromItemId.id,
+						extraContent: fromCallId.extraContent ?? fromItemId.extraContent,
+					};
+					const extra = mergeProviderExtraContent(
+						decoded.extraContent,
 						extraContentFromProviderSpecificFields(
 							item.provider_specific_fields,
 						),
 						extraContent(item.extra_content),
 					);
-					messages.push({
+					const message: CanonicalMessage = {
 						role: "assistant",
 						content: null,
 						toolCalls: [
 							{
-								id: String(item.call_id ?? item.id ?? ""),
+								id: decoded.id,
 								name: String(item.name ?? ""),
 								arguments: String(item.arguments ?? ""),
 								...(extra !== undefined ? { extraContent: extra } : {}),
 							},
 						],
-					});
+					};
+					attachPendingReasoning(message);
+					messages.push(message);
 					break;
 				}
 				case "function_call_output": {
 					const out = item.output;
 					messages.push({
 						role: "tool",
-						toolCallId: String(item.call_id ?? ""),
+						toolCallId: stripThoughtSignatureId(String(item.call_id ?? "")),
 						content: typeof out === "string" ? out : JSON.stringify(out ?? ""),
 					});
 					break;
 				}
-				case "reasoning":
-					break; // input reasoning state: ignored
+				case "reasoning": {
+					const encrypted = item.encrypted_content;
+					if (typeof encrypted === "string" && encrypted.length > 0) {
+						pendingReasoning.push({
+							encrypted_content: encrypted,
+							...(typeof item.id === "string" && item.id.length > 0
+								? { id: item.id }
+								: {}),
+							...(Array.isArray(item.summary)
+								? { summary: structuredClone(item.summary) }
+								: {}),
+						});
+					}
+					break; // summary-only reasoning state: ignored
+				}
 				case "item_reference":
 					throw new GatewayError({
 						class: "bad_request",
@@ -331,6 +344,12 @@ export function responsesRequestToCanonical(
 				default:
 					break;
 			}
+		}
+		// A trailing buffer has no assistant item to anchor to; attach to the last assistant
+		// message if any (malformed orderings degrade gracefully instead of erroring).
+		if (pendingReasoning.length > 0) {
+			const last = [...messages].reverse().find((m) => m.role === "assistant");
+			if (last !== undefined) attachPendingReasoning(last);
 		}
 	}
 
@@ -541,6 +560,33 @@ function reasoningItem(summary: string, id: string): Record<string, unknown> {
 	};
 }
 
+/**
+ * Renders OpenAI reasoning state (encrypted_content) as native reasoning output items so
+ * clients that replay output items round-trip it. Emitted regardless of the client's `include`
+ * (deliberate deviation from OpenAI: it is what makes default store:false replay flows work).
+ * A visible summary is folded into the first state item lacking one.
+ */
+function reasoningStateItems(
+	items: OpenAIReasoningStateItem[],
+	summary: string | null | undefined,
+): Record<string, unknown>[] {
+	let summaryLeft = typeof summary === "string" && summary.length > 0;
+	return items.map((item) => {
+		const hasOwnSummary =
+			Array.isArray(item.summary) && item.summary.length > 0;
+		const useSummary = summaryLeft && !hasOwnSummary;
+		if (useSummary) summaryLeft = false;
+		return {
+			type: "reasoning",
+			id: item.id ?? `rs_${randomUUID()}`,
+			summary: useSummary
+				? [{ type: "summary_text", text: summary }]
+				: (item.summary ?? []),
+			encrypted_content: item.encrypted_content,
+		};
+	});
+}
+
 function functionCallItem(
 	tc: {
 		id: string;
@@ -556,7 +602,9 @@ function functionCallItem(
 	return {
 		type: "function_call",
 		id,
-		call_id: tc.id,
+		// The thought signature rides inside the public call_id (LiteLLM-compatible): clients echo
+		// call_id verbatim even when they drop extra_content/provider_specific_fields.
+		call_id: encodeThoughtSignatureId(tc.id, tc.extraContent),
 		name: tc.name,
 		arguments: tc.arguments,
 		status: "completed",
@@ -655,8 +703,16 @@ export function canonicalToResponsesResponse(
 	const { status, incomplete } = statusFor(choice?.finishReason ?? null);
 
 	const output: Record<string, unknown>[] = [];
-	if (choice?.message.reasoning)
+	const reasoningState = openaiReasoningFromProviderFields(
+		choice?.message.providerFields,
+	);
+	if (reasoningState !== undefined) {
+		output.push(
+			...reasoningStateItems(reasoningState, choice?.message.reasoning),
+		);
+	} else if (choice?.message.reasoning) {
 		output.push(reasoningItem(choice.message.reasoning, `rs_${randomUUID()}`));
+	}
 	if (content) output.push(messageItem(content, `msg_${randomUUID()}`));
 	for (const tc of choice?.message.toolCalls ?? []) {
 		output.push(functionCallItem(tc, `fc_${randomUUID()}`));
@@ -728,6 +784,22 @@ export async function* canonicalChunksToResponsesEvents(
 	let reasoningStreamed = false;
 	let rsIndex = 0;
 	const rsId = `rs_${randomUUID()}`;
+
+	// OpenAI encrypted reasoning state accumulated across deltas (concatenated, deduped by item
+	// id) and emitted as complete reasoning items before the tool-call items.
+	const reasoningState: OpenAIReasoningStateItem[] = [];
+	const appendReasoningState = (
+		fields: Record<string, unknown> | undefined,
+	): void => {
+		for (const item of openaiReasoningFromProviderFields(fields) ?? []) {
+			if (
+				item.id !== undefined &&
+				reasoningState.some((existing) => existing.id === item.id)
+			)
+				continue;
+			reasoningState.push(item);
+		}
+	};
 
 	const reasoningSummaryDone = (): SSEEvent[] => {
 		reasoningOpen = false;
@@ -849,6 +921,9 @@ export async function* canonicalChunksToResponsesEvents(
 			if (tc.extraContent !== undefined) cur.extraContent = tc.extraContent;
 			toolCalls.set(tc.index, cur);
 		}
+
+		if (delta.providerFields !== undefined)
+			appendReasoningState(delta.providerFields);
 	}
 
 	if (reasoningOpen) yield* reasoningSummaryDone();
@@ -896,6 +971,22 @@ export async function* canonicalChunksToResponsesEvents(
 		});
 		reasoningOpen = true;
 		yield* reasoningSummaryDone();
+	}
+
+	// Encrypted reasoning state: emitted as complete trailing items (the live-streamed summary
+	// item above stays as-is; replay clients echo both and the transport replays only the
+	// encrypted ones).
+	for (const stateItem of reasoningStateItems(reasoningState, null)) {
+		const stateIndex = nextOutputIndex++;
+		yield sse("response.output_item.added", next(), {
+			output_index: stateIndex,
+			item: stateItem,
+		});
+		yield sse("response.output_item.done", next(), {
+			output_index: stateIndex,
+			item: stateItem,
+		});
+		output.push(stateItem);
 	}
 
 	for (const tc of toolCalls.values()) {

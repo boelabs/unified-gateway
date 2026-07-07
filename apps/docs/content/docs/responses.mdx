@@ -39,11 +39,11 @@ reconstruct conversation state, not for observability. See
 variable and [Operations → `response_states` GC](/docs/operations#response_states-gc) for how expiry
 actually runs.
 
-When `store: false`, the client owns the full conversation state. Preserve every output item exactly,
-including `function_call.extra_content`, when sending tool outputs back. Providers such as Gemini use
-that opaque state for thought signatures; losing it can make the next tool turn fail even though the
-visible `reasoning.summary` is empty or omitted. If routing later switches providers, the gateway keeps
-the state in stored/history items but only replays the namespace understood by the selected adapter.
+When `store: false`, the client owns the full conversation state. Echo output items back as they were
+returned: opaque provider state rides inside `function_call.call_id` (Gemini thought signatures, as
+`<id>__thought__<signature>`) and inside `reasoning` items (`encrypted_content` for OpenAI reasoning
+models), so clients that replay ids and items verbatim need no special handling. See
+[Provider-specific fields](/docs/provider-specific-fields).
 
 ## `text.format`
 

@@ -72,6 +72,12 @@ export interface CanonicalMessage {
 	toolCalls?: CanonicalToolCall[];
 	/** Only on role=tool messages: which tool_call it answers. */
 	toolCallId?: string;
+	/**
+	 * Opaque provider-namespaced per-message state that must round-trip with the assistant message
+	 * (e.g. OpenAI encrypted reasoning items as `providerFields.openai.reasoning`). Filled and
+	 * consumed by contracts/transports; opaque to the core.
+	 */
+	providerFields?: Record<string, unknown>;
 }
 
 interface CanonicalTool extends CanonicalCacheControlled {
@@ -169,6 +175,8 @@ interface CanonicalChatResponseChoice {
 		reasoning?: string | null;
 		toolCalls?: CanonicalToolCall[];
 		refusal?: string | null;
+		/** Opaque provider-namespaced per-message state (see CanonicalMessage.providerFields). */
+		providerFields?: Record<string, unknown>;
 	};
 }
 
@@ -194,6 +202,8 @@ export interface CanonicalChatStreamChunk {
 			reasoning?: string;
 			toolCalls?: Array<{ index: number } & Partial<CanonicalToolCall>>;
 			refusal?: string;
+			/** Opaque provider-namespaced per-message state (see CanonicalMessage.providerFields). */
+			providerFields?: Record<string, unknown>;
 		};
 		finishReason: CanonicalFinishReason | null;
 	}>;

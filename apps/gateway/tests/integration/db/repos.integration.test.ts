@@ -10,7 +10,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
-	findInternalResponseItemByIdForScope,
 	findResponseItemByIdForScope,
 	deleteExpiredResponseStates,
 	deleteResponseStateForScope,
@@ -99,7 +98,7 @@ test("response_states: store/get and expired-row GC (cron base)", {
 	}
 });
 
-test("response_states: store=false is internal-only for opaque item lookup", {
+test("response_states: store=false rows are invisible to item lookup", {
 	skip,
 }, async () => {
 	const id = `resp_internal_itest_${randomUUID()}`;
@@ -119,7 +118,6 @@ test("response_states: store=false is internal-only for opaque item lookup", {
 				type: "function_call",
 				id: itemId,
 				call_id: "call_1",
-				extra_content: { google: { thought_signature: "sig-a" } },
 			},
 		],
 		response: { id, object: "response", store: false },
@@ -127,10 +125,6 @@ test("response_states: store=false is internal-only for opaque item lookup", {
 	try {
 		assert.equal(await getResponseStateForScope(id, vkId), undefined);
 		assert.equal(await findResponseItemByIdForScope(itemId, vkId), undefined);
-		const internal = await findInternalResponseItemByIdForScope(itemId, vkId);
-		assert.deepEqual(internal?.extra_content, {
-			google: { thought_signature: "sig-a" },
-		});
 	} finally {
 		await deleteExpiredResponseStates(new Date(Date.now() + 10 ** 12));
 	}

@@ -4,7 +4,6 @@ import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
-import { getAuth } from "#auth/middleware.ts";
 import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
@@ -22,18 +21,6 @@ import {
 	parseBody,
 	preflight,
 } from "./runtime/pipeline.ts";
-
-import {
-	captureOpaqueToolCallStateFromChunk,
-	opaqueToolCallItemsFromResponse,
-	opaqueToolCallItemsFromState,
-} from "#core/opaqueToolState.ts";
-
-import {
-	persistOpaqueToolStateBestEffort,
-	hydrateRequestOpaqueToolState,
-	newOpaqueToolCallStateMap,
-} from "./runtime/opaqueToolState.ts";
 
 import {
 	toCanonicalChatRequest,
@@ -58,7 +45,6 @@ export async function chatCompletionsHandler(
 	c: Context<AppEnv>,
 ): Promise<Response> {
 	const log = new RequestLogDraft(c, "chat");
-	const auth = getAuth(c);
 
 	try {
 		const json = await readJsonBody(c);
@@ -66,7 +52,6 @@ export async function chatCompletionsHandler(
 		const parsed = parseBody(chatRequestSchema, json);
 
 		let canonical = toCanonicalChatRequest(parsed);
-		canonical = await hydrateRequestOpaqueToolState(canonical, auth);
 		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
 		await preflight(c, canonical.model);
@@ -116,16 +101,6 @@ export async function chatCompletionsHandler(
 				canonical.model,
 				routing.value.response,
 			);
-			await persistOpaqueToolStateBestEffort({
-				auth,
-				id: `opaque_tool_state_${log.requestId}`,
-				publicModel: canonical.model,
-				deploymentId: routing.candidate.row.id,
-				adapterKey: routing.candidate.adapter.key,
-				requestId: log.requestId,
-				output: opaqueToolCallItemsFromResponse(response),
-				metadata,
-			});
 			await routing.finish(response.usage);
 			const cost = accountUsage(c, meta, response.usage);
 			const baseResponse = toOpenAIChatResponse(response);
@@ -162,7 +137,6 @@ export async function chatCompletionsHandler(
 			let finalUsage: Usage | null = null;
 			let content = "";
 			let streamError: GatewayError | null = null;
-			const opaqueToolState = newOpaqueToolCallStateMap();
 			try {
 				for await (const chunk of chunks) {
 					const transformed = await applyStreamEventExtensions(
@@ -171,7 +145,6 @@ export async function chatCompletionsHandler(
 						canonical.model,
 						chunk,
 					);
-					captureOpaqueToolCallStateFromChunk(opaqueToolState, transformed);
 					const delta = transformed.choices[0]?.delta;
 					if (delta?.content) content += delta.content;
 					if (transformed.usage) finalUsage = transformed.usage; // capture ALWAYS for accounting
@@ -187,16 +160,6 @@ export async function chatCompletionsHandler(
 						data: JSON.stringify(toOpenAIChatChunk(out)),
 					});
 				}
-				await persistOpaqueToolStateBestEffort({
-					auth,
-					id: `opaque_tool_state_${log.requestId}`,
-					publicModel: canonical.model,
-					deploymentId: routing.candidate.row.id,
-					adapterKey: routing.candidate.adapter.key,
-					requestId: log.requestId,
-					output: opaqueToolCallItemsFromState(opaqueToolState),
-					metadata,
-				});
 				if (routingMetadata) {
 					await stream.writeSSE({
 						data: JSON.stringify({

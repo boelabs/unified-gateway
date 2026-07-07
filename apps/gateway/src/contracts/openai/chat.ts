@@ -8,9 +8,13 @@ import {
 	providerSpecificFieldsFromExtraContent,
 	extraContentFromProviderSpecificFields,
 	providerSpecificFieldsFromToolCalls,
-	extraContentFromThoughtSignatureId,
-	mergeOpaqueExtraContent,
-} from "#core/opaqueToolState.ts";
+	openaiReasoningFromProviderFields,
+	mergeProviderExtraContent,
+	decodeThoughtSignatureId,
+	encodeThoughtSignatureId,
+	stripThoughtSignatureId,
+	mergeProviderFields,
+} from "#core/providerSpecificFields.ts";
 
 import type {
 	CanonicalChatStreamChunk,
@@ -356,20 +360,29 @@ function mapMessage(m: z.infer<typeof messageSchema>): CanonicalMessage {
 	if (m.tool_calls !== undefined) {
 		msg.toolCalls = m.tool_calls.map((tc) => {
 			const raw = tc as unknown as Record<string, unknown>;
-			const extra = mergeOpaqueExtraContent(
-				extraContentFromThoughtSignatureId(tc.id),
+			const decoded = decodeThoughtSignatureId(tc.id);
+			const extra = mergeProviderExtraContent(
+				decoded.extraContent,
 				extraContentFromProviderSpecificFields(raw.provider_specific_fields),
 				extraContent(raw.extra_content),
 			);
 			return {
-				id: tc.id,
+				id: decoded.id,
 				name: tc.function.name,
 				arguments: tc.function.arguments,
 				...(extra !== undefined ? { extraContent: extra } : {}),
 			};
 		});
 	}
-	if (m.tool_call_id !== undefined) msg.toolCallId = m.tool_call_id;
+	if (m.tool_call_id !== undefined)
+		msg.toolCallId = stripThoughtSignatureId(m.tool_call_id);
+	if (m.role === "assistant") {
+		const raw = m as unknown as Record<string, unknown>;
+		const reasoning = openaiReasoningFromProviderFields(
+			extraContent(raw.provider_specific_fields),
+		);
+		if (reasoning !== undefined) msg.providerFields = { openai: { reasoning } };
+	}
 	return msg;
 }
 
@@ -508,7 +521,9 @@ function renderResponseToolCall(tc: {
 		tc.extraContent,
 	);
 	return {
-		id: tc.id,
+		// Embed the thought signature in the public id (LiteLLM-compatible) so clients that echo
+		// tool call ids verbatim round-trip it without understanding any extra field.
+		id: encodeThoughtSignatureId(tc.id, tc.extraContent),
 		type: "function" as const,
 		function: { name: tc.name, arguments: tc.arguments },
 		...(tc.extraContent !== undefined
@@ -537,9 +552,14 @@ function renderChunkToolCall(tc: {
 	const providerSpecificFields = toolCallProviderSpecificFields(
 		tc.extraContent,
 	);
+	// Google delivers id and extraContent in the same canonical delta, so the first emission of
+	// the id already carries the signature suffix. An upstream that split them across chunks
+	// would emit a clean id (accepted limitation; no known upstream does).
 	return {
 		index: tc.index,
-		...(tc.id !== undefined ? { id: tc.id } : {}),
+		...(tc.id !== undefined
+			? { id: encodeThoughtSignatureId(tc.id, tc.extraContent) }
+			: {}),
 		type: "function" as const,
 		function: {
 			...(tc.name !== undefined ? { name: tc.name } : {}),
@@ -564,41 +584,43 @@ export function toOpenAIChatResponse(
 		object: "chat.completion",
 		created: resp.created,
 		model: resp.model,
-		choices: resp.choices.map((c) => ({
-			index: c.index,
-			finish_reason: c.finishReason,
-			logprobs: null,
-			message: {
-				role: "assistant" as const,
-				content: c.message.content,
-				// OpenAI always includes `refusal` (null when the model did not refuse).
-				refusal: c.message.refusal ?? null,
-				...(c.message.reasoning !== undefined
-					? { reasoning: c.message.reasoning }
-					: {}),
-				...(c.message.toolCalls
-					? {
-							tool_calls: c.message.toolCalls.map((tc) =>
-								renderResponseToolCall({
-									id: tc.id,
-									name: tc.name,
-									arguments: tc.arguments,
-									...(tc.extraContent !== undefined
-										? { extraContent: tc.extraContent }
-										: {}),
-								}),
-							),
-							...(providerSpecificFieldsFromToolCalls(c.message.toolCalls) !==
-							undefined
-								? {
-										provider_specific_fields:
-											providerSpecificFieldsFromToolCalls(c.message.toolCalls),
-									}
-								: {}),
-						}
-					: {}),
-			},
-		})),
+		choices: resp.choices.map((c) => {
+			const providerSpecificFields = mergeProviderFields(
+				providerSpecificFieldsFromToolCalls(c.message.toolCalls),
+				c.message.providerFields,
+			);
+			return {
+				index: c.index,
+				finish_reason: c.finishReason,
+				logprobs: null,
+				message: {
+					role: "assistant" as const,
+					content: c.message.content,
+					// OpenAI always includes `refusal` (null when the model did not refuse).
+					refusal: c.message.refusal ?? null,
+					...(c.message.reasoning !== undefined
+						? { reasoning: c.message.reasoning }
+						: {}),
+					...(c.message.toolCalls
+						? {
+								tool_calls: c.message.toolCalls.map((tc) =>
+									renderResponseToolCall({
+										id: tc.id,
+										name: tc.name,
+										arguments: tc.arguments,
+										...(tc.extraContent !== undefined
+											? { extraContent: tc.extraContent }
+											: {}),
+									}),
+								),
+							}
+						: {}),
+					...(providerSpecificFields !== undefined
+						? { provider_specific_fields: providerSpecificFields }
+						: {}),
+				},
+			};
+		}),
 		usage: toOpenAIUsage(resp.usage),
 	};
 }
@@ -643,6 +665,9 @@ export function toOpenAIChatChunk(
 								}),
 							),
 						}
+					: {}),
+				...(c.delta.providerFields !== undefined
+					? { provider_specific_fields: c.delta.providerFields }
 					: {}),
 			},
 		})),

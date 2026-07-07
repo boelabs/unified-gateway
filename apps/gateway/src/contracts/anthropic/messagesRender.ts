@@ -5,6 +5,15 @@ import type { SSEEvent } from "#core/sse.ts";
 import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 
+import {
+	providerSpecificFieldsFromExtraContent,
+	extraContentFromProviderSpecificFields,
+	mergeProviderExtraContent,
+	decodeThoughtSignatureId,
+	encodeThoughtSignatureId,
+	stripThoughtSignatureId,
+} from "#core/providerSpecificFields.ts";
+
 import type {
 	CanonicalChatStreamChunk,
 	CanonicalChatResponse,
@@ -14,13 +23,6 @@ import type {
 	CanonicalToolChoice,
 	CanonicalMessage,
 } from "#core/canonical.ts";
-
-import {
-	providerSpecificFieldsFromExtraContent,
-	extraContentFromProviderSpecificFields,
-	extraContentFromThoughtSignatureId,
-	mergeOpaqueExtraContent,
-} from "#core/opaqueToolState.ts";
 
 import {
 	effortFromBudgetTokens,
@@ -209,12 +211,13 @@ export function messagesRequestToCanonical(
 			const toolCalls: NonNullable<CanonicalMessage["toolCalls"]> = [];
 			for (const b of blocks) {
 				if (b.type === "tool_use") {
-					const extraContent = mergeOpaqueExtraContent(
-						extraContentFromThoughtSignatureId(b.id),
+					const decoded = decodeThoughtSignatureId(b.id ?? "");
+					const extraContent = mergeProviderExtraContent(
+						decoded.extraContent,
 						extraContentFromProviderSpecificFields(b.provider_specific_fields),
 					);
 					toolCalls.push({
-						id: b.id ?? "",
+						id: decoded.id,
 						name: b.name ?? "",
 						arguments: JSON.stringify(b.input ?? {}),
 						...(extraContent !== undefined ? { extraContent } : {}),
@@ -246,7 +249,7 @@ export function messagesRequestToCanonical(
 				flush();
 				messages.push({
 					role: "tool",
-					toolCallId: b.tool_use_id ?? "",
+					toolCallId: stripThoughtSignatureId(b.tool_use_id ?? ""),
 					content: toolResultToString(b.content),
 				});
 			} else {
@@ -378,7 +381,8 @@ export function canonicalToMessagesResponse(
 		);
 		blocks.push({
 			type: "tool_use",
-			id: tc.id,
+			// Thought signature embedded in the public id (LiteLLM-compatible round trip).
+			id: encodeThoughtSignatureId(tc.id, tc.extraContent),
 			name: tc.name,
 			input: parseArgs(tc.arguments),
 			...(providerSpecificFields !== undefined
@@ -499,7 +503,7 @@ export async function* canonicalChunksToMessagesEvents(
 					index: blockIndex,
 					content_block: {
 						type: "tool_use",
-						id: tc.id ?? "",
+						id: encodeThoughtSignatureId(tc.id ?? "", tc.extraContent),
 						name: tc.name ?? "",
 						input: {},
 						...(providerSpecificFieldsFromExtraContent(tc.extraContent) !==

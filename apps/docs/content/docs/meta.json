@@ -27,6 +27,7 @@
 		"embeddings",
 		"audio-transcriptions",
 		"streaming",
+		"provider-specific-fields",
 		"models-discovery",
 		"headers",
 		"---Routing & Resilience---",

@@ -4,7 +4,6 @@ import { test } from "node:test";
 
 import {
 	canonicalChunksToResponsesEvents,
-	hydrateResponseInputOpaqueState,
 	resolveResponseInputReferences,
 	canonicalToResponsesResponse,
 	responsesRequestToCanonical,
@@ -340,56 +339,61 @@ test("expandInputReferences: unresolved reference raises an OpenAI-faithful erro
 	);
 });
 
-test("hydrateResponseInputOpaqueState: restores stored function_call extra_content", async () => {
-	const input = normalizeResponseInput([
-		{
-			type: "function_call",
-			id: "fc_123",
-			call_id: "call_123",
-			name: "load_skill",
-			arguments: '{"name":"image-generation"}',
-		},
-		{ type: "function_call_output", call_id: "call_123", output: "ok" },
-	]);
-	const hydrated = await hydrateResponseInputOpaqueState(input, async (id) =>
-		id === "fc_123"
-			? {
+test("request->canonical: signature embedded in call_id is decoded and stripped", () => {
+	const u = responsesRequestToCanonical(
+		parse({
+			model: "gpt",
+			input: [
+				{
 					type: "function_call",
 					id: "fc_123",
-					call_id: "call_123",
-					extra_content: { google: { thought_signature: "sig-a" } },
-				}
-			: undefined,
+					call_id: "call_123__thought__sig-a",
+					name: "load_skill",
+					arguments: '{"name":"image-generation"}',
+				},
+				{
+					type: "function_call_output",
+					call_id: "call_123__thought__sig-a",
+					output: "ok",
+				},
+			],
+		}),
 	);
-	const u = responsesRequestToCanonical(
-		parse({ model: "gpt", input: hydrated }),
-	);
+	assert.equal(u.messages[0]!.toolCalls?.[0]?.id, "call_123");
 	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
 		google: { thought_signature: "sig-a" },
 	});
+	assert.equal(u.messages[1]!.role, "tool");
+	assert.equal(u.messages[1]!.toolCallId, "call_123");
 });
 
-test("hydrateResponseInputOpaqueState: preserves incoming provider data while restoring missing keys", async () => {
-	const input = normalizeResponseInput([
-		{
-			type: "function_call",
-			id: "fc_123",
-			call_id: "call_123",
-			name: "load_skill",
-			arguments: "{}",
-			extra_content: { openai: { item_id: "fc_123" } },
+test("request->canonical: reasoning items with encrypted_content attach to the next assistant item", () => {
+	const u = responsesRequestToCanonical(
+		parse({
+			model: "gpt",
+			input: [
+				{
+					type: "reasoning",
+					id: "rs_1",
+					summary: [],
+					encrypted_content: "enc-1",
+				},
+				{
+					type: "function_call",
+					call_id: "call_1",
+					name: "f",
+					arguments: "{}",
+				},
+				{ type: "function_call_output", call_id: "call_1", output: "ok" },
+			],
+		}),
+	);
+	assert.deepEqual(u.messages[0]!.providerFields, {
+		openai: {
+			reasoning: [{ encrypted_content: "enc-1", id: "rs_1", summary: [] }],
 		},
-	]);
-	const hydrated = await hydrateResponseInputOpaqueState(input, async () => ({
-		type: "function_call",
-		id: "fc_123",
-		call_id: "call_123",
-		extra_content: { google: { thought_signature: "sig-a" } },
-	}));
-	assert.deepEqual(hydrated[0]!.extra_content, {
-		google: { thought_signature: "sig-a" },
-		openai: { item_id: "fc_123" },
 	});
+	assert.equal(u.messages[1]!.role, "tool");
 });
 
 const renderOpts = (): RenderOptions => ({
@@ -498,7 +502,7 @@ test("canonical->response: tool calls -> function_call items", () => {
 	const fc = out.output.find((o: any) => o.type === "function_call");
 	assert.ok(fc);
 	assert.equal(fc.name, "get_weather");
-	assert.equal(fc.call_id, "call_1");
+	assert.equal(fc.call_id, "call_1__thought__sig-a");
 	assert.deepEqual(fc.extra_content, {
 		google: { thought_signature: "sig-a" },
 	});
@@ -563,7 +567,7 @@ test("stream->events: function_call items include opaque extra_content in the co
 		(item: any) => item.type === "function_call",
 	);
 	assert.ok(fc.id.startsWith("fc_"));
-	assert.equal(fc.call_id, "call_123");
+	assert.equal(fc.call_id, "call_123__thought__sig-a");
 	assert.deepEqual(fc.extra_content, {
 		google: { thought_signature: "sig-a" },
 	});
@@ -705,4 +709,191 @@ test("stream->events: reasoning summary streams as its own item before the messa
 	assert.equal(completed.output[0].summary[0].text, "Thinking.");
 	assert.equal(completed.output[1].type, "message");
 	assert.equal(completed.usage.output_tokens_details.reasoning_tokens, 2);
+});
+
+test("stream->events: output_item.added/done share the same suffixed call_id", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						role: "assistant",
+						toolCalls: [
+							{
+								index: 0,
+								id: "call_1",
+								name: "f",
+								arguments: "{}",
+								extraContent: { google: { thought_signature: "sig-a" } },
+							},
+						],
+					},
+					finishReason: "tool_calls",
+				},
+			],
+		};
+	}
+	const callIds: string[] = [];
+	for await (const ev of canonicalChunksToResponsesEvents(
+		chunks(),
+		renderOpts(),
+	)) {
+		if (
+			ev.event === "response.output_item.added" ||
+			ev.event === "response.output_item.done"
+		) {
+			const item = JSON.parse(ev.data).item;
+			if (item.type === "function_call") callIds.push(item.call_id);
+		}
+	}
+	assert.deepEqual(callIds, [
+		"call_1__thought__sig-a",
+		"call_1__thought__sig-a",
+	]);
+});
+
+test("canonical->response: encrypted reasoning state renders as native reasoning items", () => {
+	const resp: CanonicalChatResponse = {
+		id: "x",
+		created: 1,
+		model: "gpt-x",
+		choices: [
+			{
+				index: 0,
+				finishReason: "tool_calls",
+				message: {
+					role: "assistant",
+					content: null,
+					reasoning: "visible summary",
+					providerFields: {
+						openai: { reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }] },
+					},
+					toolCalls: [{ id: "call_1", name: "f", arguments: "{}" }],
+				},
+			},
+		],
+		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+	};
+	const out = canonicalToResponsesResponse(resp, renderOpts()) as Record<
+		string,
+		any
+	>;
+	const rs = out.output.filter((o: any) => o.type === "reasoning");
+	assert.equal(rs.length, 1);
+	assert.equal(rs[0].id, "rs_1");
+	assert.equal(rs[0].encrypted_content, "enc-1");
+	// The visible summary folds into the state item instead of a second reasoning item.
+	assert.deepEqual(rs[0].summary, [
+		{ type: "summary_text", text: "visible summary" },
+	]);
+	// State precedes the function_call item.
+	assert.ok(
+		out.output.findIndex((o: any) => o.type === "reasoning") <
+			out.output.findIndex((o: any) => o.type === "function_call"),
+	);
+});
+
+test("responses surface: encrypted reasoning round trip (render -> replay -> canonical)", () => {
+	const resp: CanonicalChatResponse = {
+		id: "x",
+		created: 1,
+		model: "gpt-x",
+		choices: [
+			{
+				index: 0,
+				finishReason: "tool_calls",
+				message: {
+					role: "assistant",
+					content: null,
+					providerFields: {
+						openai: { reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }] },
+					},
+					toolCalls: [{ id: "call_1", name: "f", arguments: "{}" }],
+				},
+			},
+		],
+		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+	};
+	const rendered = canonicalToResponsesResponse(resp, renderOpts()) as Record<
+		string,
+		any
+	>;
+	// A replay client echoes the output items and appends the tool result.
+	const u = responsesRequestToCanonical(
+		parse({
+			model: "gpt",
+			input: [
+				...rendered.output,
+				{
+					type: "function_call_output",
+					call_id: rendered.output.find((o: any) => o.type === "function_call")
+						.call_id,
+					output: "ok",
+				},
+			],
+		}),
+	);
+	const assistant = u.messages.find((m) => m.role === "assistant");
+	assert.deepEqual(assistant?.providerFields, {
+		openai: {
+			reasoning: [{ encrypted_content: "enc-1", id: "rs_1", summary: [] }],
+		},
+	});
+});
+
+test("stream->events: accumulated encrypted reasoning emits trailing items before tool calls", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						role: "assistant",
+						providerFields: {
+							openai: {
+								reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+							},
+						},
+					},
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						toolCalls: [{ index: 0, id: "call_1", name: "f", arguments: "{}" }],
+					},
+					finishReason: "tool_calls",
+				},
+			],
+		};
+	}
+	let completed: any;
+	const order: string[] = [];
+	for await (const ev of canonicalChunksToResponsesEvents(
+		chunks(),
+		renderOpts(),
+	)) {
+		if (ev.event === "response.output_item.done")
+			order.push(JSON.parse(ev.data).item.type);
+		if (ev.event === "response.completed")
+			completed = JSON.parse(ev.data).response;
+	}
+	assert.deepEqual(order, ["reasoning", "function_call"]);
+	const rs = completed.output.find((o: any) => o.type === "reasoning");
+	assert.equal(rs.encrypted_content, "enc-1");
+	assert.equal(rs.id, "rs_1");
 });

@@ -377,3 +377,158 @@ test("openai embeddings handler: POST /embeddings with OpenAI body", () => {
 	);
 	assert.deepEqual(parsed.usage, { promptTokens: 2, totalTokens: 2 });
 });
+
+test("openai.buildRequest: upstream call is store:false and extra_body cannot override it", () => {
+	const r = openaiAdapter.chat!.buildRequest(baseReq, ctx);
+	assert.equal(JSON.parse(r.body!).store, false);
+	assert.throws(
+		() =>
+			openaiAdapter.chat!.buildRequest(
+				{ ...baseReq, extraBody: { store: true } },
+				ctx,
+			),
+		/extra_body.store/,
+	);
+});
+
+test("openai.buildRequest: reasoning-capable models request encrypted reasoning content", () => {
+	const r = openaiAdapter.chat!.buildRequest(baseReq, reasoningCtx);
+	assert.deepEqual(JSON.parse(r.body!).include, [
+		"reasoning.encrypted_content",
+	]);
+
+	// Deduped against a client-forwarded include; non-reasoning models do not request it.
+	const merged = openaiAdapter.chat!.buildRequest(
+		{
+			...baseReq,
+			responsesTransport: {
+				include: [
+					"reasoning.encrypted_content",
+					"message.output_text.logprobs",
+				],
+			},
+		},
+		reasoningCtx,
+	);
+	assert.deepEqual(JSON.parse(merged.body!).include, [
+		"reasoning.encrypted_content",
+		"message.output_text.logprobs",
+	]);
+	assert.equal(
+		JSON.parse(openaiAdapter.chat!.buildRequest(baseReq, ctx).body!).include,
+		undefined,
+	);
+});
+
+test("openai.buildRequest: replays encrypted reasoning items before function calls", () => {
+	const r = openaiAdapter.chat!.buildRequest(
+		{
+			...baseReq,
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					providerFields: {
+						openai: {
+							reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+						},
+					},
+					toolCalls: [{ id: "call_1", name: "f", arguments: "{}" }],
+				},
+				{ role: "tool", toolCallId: "call_1", content: "ok" },
+			],
+		},
+		reasoningCtx,
+	);
+	const input = JSON.parse(r.body!).input;
+	assert.deepEqual(input[0], {
+		type: "reasoning",
+		id: "rs_1",
+		encrypted_content: "enc-1",
+		summary: [],
+	});
+	assert.equal(input[1].type, "function_call");
+	assert.equal(input[2].type, "function_call_output");
+});
+
+test("openai.parseResponse: reasoning encrypted_content -> message providerFields", () => {
+	const canonical = openaiAdapter.chat!.parseResponse(
+		{
+			id: "resp_1",
+			created_at: 1,
+			model: "gpt-5.5",
+			status: "completed",
+			output: [
+				{
+					type: "reasoning",
+					id: "rs_1",
+					summary: [{ type: "summary_text", text: "thinking" }],
+					encrypted_content: "enc-1",
+				},
+				{
+					type: "function_call",
+					call_id: "call_1",
+					name: "f",
+					arguments: "{}",
+				},
+			],
+			usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+		},
+		reasoningCtx,
+	);
+	const message = canonical.choices[0]!.message;
+	assert.equal(message.reasoning, "thinking");
+	assert.deepEqual(message.providerFields, {
+		openai: {
+			reasoning: [
+				{
+					encrypted_content: "enc-1",
+					id: "rs_1",
+					summary: [{ type: "summary_text", text: "thinking" }],
+				},
+			],
+		},
+	});
+});
+
+test("openai.parseStream: reasoning output_item.done -> delta.providerFields (deduped)", async () => {
+	async function* events() {
+		yield {
+			event: "response.created",
+			data: JSON.stringify({ response: { id: "resp_1", model: "gpt-5.5" } }),
+		};
+		yield {
+			event: "response.output_item.done",
+			data: JSON.stringify({
+				item: { type: "reasoning", id: "rs_1", encrypted_content: "enc-1" },
+			}),
+		};
+		yield {
+			event: "response.completed",
+			data: JSON.stringify({
+				response: {
+					id: "resp_1",
+					status: "completed",
+					output: [
+						{ type: "reasoning", id: "rs_1", encrypted_content: "enc-1" },
+						{ type: "reasoning", id: "rs_2", encrypted_content: "enc-2" },
+					],
+					usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+				},
+			}),
+		};
+	}
+	const collected: unknown[] = [];
+	for await (const chunk of (
+		await import("#contracts/openai/responsesTransport.ts")
+	).responsesEventsToCanonicalChunks(events())) {
+		for (const choice of chunk.choices) {
+			if (choice.delta.providerFields !== undefined)
+				collected.push(choice.delta.providerFields);
+		}
+	}
+	assert.deepEqual(collected, [
+		{ openai: { reasoning: [{ encrypted_content: "enc-1", id: "rs_1" }] } },
+		{ openai: { reasoning: [{ encrypted_content: "enc-2", id: "rs_2" }] } },
+	]);
+});
