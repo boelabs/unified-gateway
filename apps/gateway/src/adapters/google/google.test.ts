@@ -275,10 +275,12 @@ test("google.buildRequest: replays functionCall id and thought signature", () =>
 			ctx,
 		).body!,
 	);
-	const functionCall = body.contents[1].parts[0].functionCall;
+	const functionCallPart = body.contents[1].parts[0];
+	const functionCall = functionCallPart.functionCall;
 	assert.equal(functionCall.id, "function-call-1");
 	assert.equal(functionCall.name, "load_skill");
-	assert.equal(functionCall.thoughtSignature, "thought-signature-a");
+	assert.equal(functionCallPart.thoughtSignature, "thought-signature-a");
+	assert.equal(functionCall.thoughtSignature, undefined);
 	assert.deepEqual(functionCall.args, { name: "conversation-workspace" });
 
 	const functionResponse = body.contents[2].parts[0].functionResponse;
@@ -553,9 +555,11 @@ test("google.buildRequest: a client-echoed suffixed id arrives clean via the con
 	);
 	const r = googleAdapter.chat!.buildRequest(canonical, ctx);
 	const body = JSON.parse(r.body!);
-	const fnCall = body.contents[1].parts[0].functionCall;
+	const fnCallPart = body.contents[1].parts[0];
+	const fnCall = fnCallPart.functionCall;
 	assert.equal(fnCall.id, "call_1");
-	assert.equal(fnCall.thoughtSignature, "sig-a");
+	assert.equal(fnCallPart.thoughtSignature, "sig-a");
+	assert.equal(fnCall.thoughtSignature, undefined);
 	// The tool result maps back to the function name via the clean id.
 	assert.equal(body.contents[2].parts[0].functionResponse.name, "f");
 });

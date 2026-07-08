@@ -248,10 +248,11 @@ function buildGeminiBody(
 					name: tc.name,
 					args,
 				};
+				const part: Record<string, unknown> = { functionCall };
 				const thoughtSignature = googleThoughtSignature(tc);
 				if (thoughtSignature !== undefined)
-					functionCall.thoughtSignature = thoughtSignature;
-				parts.push({ functionCall });
+					part.thoughtSignature = thoughtSignature;
+				parts.push(part);
 			}
 			body.contents.push({ role: "model", parts });
 			continue;
