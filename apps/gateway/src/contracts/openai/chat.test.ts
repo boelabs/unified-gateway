@@ -428,3 +428,198 @@ test("toOpenAIChunk: produces a valid chat.completion.chunk with final usage", (
 	);
 	assert.equal(out.usage?.total_tokens, 3);
 });
+
+test("toCanonical: strips embedded signatures from tool call ids and tool_call_id", () => {
+	const u = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "gpt",
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_1__thought__sig-a",
+							type: "function",
+							function: { name: "f", arguments: "{}" },
+						},
+					],
+				},
+				{
+					role: "tool",
+					tool_call_id: "call_1__thought__sig-a",
+					content: "ok",
+				},
+			],
+		}),
+	);
+	assert.equal(u.messages[0]!.toolCalls?.[0]?.id, "call_1");
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.equal(u.messages[1]!.toolCallId, "call_1");
+});
+
+test("toOpenAIResponse: embeds the thought signature in the tool call id", () => {
+	const canonical: CanonicalChatResponse = {
+		id: "resp_1",
+		created: 1,
+		model: "gpt",
+		choices: [
+			{
+				index: 0,
+				finishReason: "tool_calls",
+				message: {
+					role: "assistant",
+					content: null,
+					toolCalls: [
+						{
+							id: "call_1",
+							name: "f",
+							arguments: "{}",
+							extraContent: { google: { thought_signature: "sig-a" } },
+						},
+						{ id: "call_2", name: "g", arguments: "{}" },
+					],
+				},
+			},
+		],
+		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+	};
+	const out = toOpenAIChatResponse(canonical);
+	chatResponseSchema.parse(out);
+	assert.equal(
+		out.choices[0]!.message.tool_calls?.[0]?.id,
+		"call_1__thought__sig-a",
+	);
+	// Parallel call without a signature keeps its clean id.
+	assert.equal(out.choices[0]!.message.tool_calls?.[1]?.id, "call_2");
+});
+
+test("round trip: a signed response replayed as history restores the canonical state", () => {
+	const canonical: CanonicalChatResponse = {
+		id: "resp_1",
+		created: 1,
+		model: "gpt",
+		choices: [
+			{
+				index: 0,
+				finishReason: "tool_calls",
+				message: {
+					role: "assistant",
+					content: null,
+					toolCalls: [
+						{
+							id: "call_1",
+							name: "f",
+							arguments: "{}",
+							extraContent: { google: { thought_signature: "sig-a" } },
+						},
+					],
+				},
+			},
+		],
+		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+	};
+	const rendered = toOpenAIChatResponse(canonical);
+	// Simulate a client that echoes only the standard fields (drops extra_content/psf).
+	const echoed = rendered.choices[0]!.message.tool_calls!.map((tc) => ({
+		id: tc.id,
+		type: "function",
+		function: tc.function,
+	}));
+	const u = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "gpt",
+			messages: [
+				{ role: "assistant", content: null, tool_calls: echoed },
+				{ role: "tool", tool_call_id: echoed[0]!.id, content: "ok" },
+			],
+		}),
+	);
+	assert.equal(u.messages[0]!.toolCalls?.[0]?.id, "call_1");
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.equal(u.messages[1]!.toolCallId, "call_1");
+});
+
+test("toOpenAIChunk: first tool-call delta carries the suffixed id", () => {
+	const chunk: CanonicalChatStreamChunk = {
+		id: "c",
+		created: 1,
+		model: "gpt",
+		choices: [
+			{
+				index: 0,
+				delta: {
+					role: "assistant",
+					toolCalls: [
+						{
+							index: 0,
+							id: "call_1",
+							name: "f",
+							arguments: "",
+							extraContent: { google: { thought_signature: "sig-a" } },
+						},
+					],
+				},
+				finishReason: null,
+			},
+		],
+	};
+	const out = toOpenAIChatChunk(chunk);
+	chatChunkSchema.parse(out);
+	assert.equal(
+		out.choices[0]!.delta.tool_calls?.[0]?.id,
+		"call_1__thought__sig-a",
+	);
+});
+
+test("chat surface: message-level provider_specific_fields carry OpenAI reasoning state", () => {
+	const canonical: CanonicalChatResponse = {
+		id: "resp_1",
+		created: 1,
+		model: "gpt",
+		choices: [
+			{
+				index: 0,
+				finishReason: "stop",
+				message: {
+					role: "assistant",
+					content: "hi",
+					providerFields: {
+						openai: { reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }] },
+					},
+				},
+			},
+		],
+		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+	};
+	const out = toOpenAIChatResponse(canonical);
+	chatResponseSchema.parse(out);
+	assert.deepEqual(
+		(out.choices[0]!.message as Record<string, unknown>)
+			.provider_specific_fields,
+		{ openai: { reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }] } },
+	);
+
+	// Inbound: an assistant message carrying the field restores canonical providerFields.
+	const u = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "gpt",
+			messages: [
+				{
+					role: "assistant",
+					content: "hi",
+					provider_specific_fields: {
+						openai: { reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }] },
+					},
+				},
+			],
+		}),
+	);
+	assert.deepEqual(u.messages[0]!.providerFields, {
+		openai: { reasoning: [{ encrypted_content: "enc-1", id: "rs_1" }] },
+	});
+});

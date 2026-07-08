@@ -5,8 +5,10 @@
  *
  * (responsesRender.ts is the EDGE with the client; responsesTransport.ts is the transport with the PROVIDER.)
  *
- * Parameters managed by the gateway (previous_response_id, store, item_reference, background) do NOT
- * exist in the canonical type, so they are never forwarded to the upstream.
+ * Parameters managed by the gateway (previous_response_id, item_reference, background) do NOT
+ * exist in the canonical type, so they are never forwarded to the upstream. `store` is always set
+ * to false: the gateway keeps no state with the provider, and OpenAI only returns encrypted
+ * reasoning content for unstored responses.
  */
 
 import { mergeExtraBody } from "#core/extraBody.ts";
@@ -26,6 +28,12 @@ import type {
 } from "#core/canonical.ts";
 
 import {
+	providerFieldsWithOpenAIReasoning,
+	openaiReasoningFromProviderFields,
+	type OpenAIReasoningStateItem,
+} from "#core/providerSpecificFields.ts";
+
+import {
 	toUpstreamReasoningEffort,
 	type ResolvedReasoning,
 	type ReasoningSpec,
@@ -33,7 +41,10 @@ import {
 	summaryVisible,
 } from "#core/reasoning.ts";
 
+const ENCRYPTED_REASONING_INCLUDE = "reasoning.encrypted_content";
+
 const OPENAI_RESPONSES_TRANSPORT_MANAGED_KEYS = [
+	"store",
 	"model",
 	"input",
 	"stream",
@@ -180,6 +191,17 @@ export function buildResponsesRequestBody(
 			continue;
 		}
 		if (m.role === "assistant") {
+			// Replay encrypted reasoning state before the items it belongs to (OpenAI requires
+			// reasoning items to precede the function calls they preceded originally).
+			for (const item of openaiReasoningFromProviderFields(m.providerFields) ??
+				[]) {
+				input.push({
+					type: "reasoning",
+					...(item.id !== undefined ? { id: item.id } : {}),
+					encrypted_content: item.encrypted_content,
+					summary: item.summary ?? [],
+				});
+			}
 			if (m.content)
 				input.push({
 					type: "message",
@@ -233,8 +255,18 @@ export function buildResponsesRequestBody(
 				? req.toolChoice
 				: { type: "function", name: req.toolChoice.name };
 	}
-	if (req.responsesTransport?.include !== undefined)
-		body.include = req.responsesTransport.include;
+	// Encrypted reasoning state: request it for reasoning-capable models so multi-turn tool flows
+	// can replay it. OpenAI only returns encrypted_content for unstored responses; the gateway is
+	// stateless with the upstream by design (it never uses upstream previous_response_id), so the
+	// upstream call is always store:false.
+	body.store = false;
+	const include = [...(req.responsesTransport?.include ?? [])];
+	if (
+		reasoningSpec?.kind === "openai_effort" &&
+		!include.includes(ENCRYPTED_REASONING_INCLUDE)
+	)
+		include.push(ENCRYPTED_REASONING_INCLUDE);
+	if (include.length > 0) body.include = include;
 	if (req.responsesTransport?.metadata !== undefined)
 		body.metadata = req.responsesTransport.metadata;
 	const text = { ...(req.responsesTransport?.text ?? {}) };
@@ -315,6 +347,27 @@ interface RWOutputItem {
 	name?: string;
 	arguments?: string;
 	extra_content?: Record<string, unknown>;
+	encrypted_content?: string;
+}
+
+function reasoningStateFromItem(
+	item: RWOutputItem,
+): OpenAIReasoningStateItem | undefined {
+	if (item.type !== "reasoning") return undefined;
+	if (
+		typeof item.encrypted_content !== "string" ||
+		item.encrypted_content.length === 0
+	)
+		return undefined;
+	return {
+		encrypted_content: item.encrypted_content,
+		...(typeof item.id === "string" && item.id.length > 0
+			? { id: item.id }
+			: {}),
+		...(Array.isArray(item.summary)
+			? { summary: structuredClone(item.summary) }
+			: {}),
+	};
 }
 interface RWResponse {
 	id?: string;
@@ -343,6 +396,7 @@ export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 	const r = (raw ?? {}) as RWResponse;
 	let content = "";
 	const reasoning: string[] = [];
+	const reasoningState: OpenAIReasoningStateItem[] = [];
 	const toolCalls: NonNullable<
 		CanonicalChatResponse["choices"][number]["message"]["toolCalls"]
 	> = [];
@@ -355,6 +409,8 @@ export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 				if (typeof s === "string") reasoning.push(s);
 				else if (s.text) reasoning.push(s.text);
 			}
+			const state = reasoningStateFromItem(item);
+			if (state !== undefined) reasoningState.push(state);
 		} else if (item.type === "function_call") {
 			toolCalls.push({
 				id: item.call_id ?? item.id ?? "",
@@ -371,6 +427,8 @@ export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 		content: content.length > 0 ? content : null,
 	};
 	if (reasoning.length > 0) message.reasoning = reasoning.join("\n\n");
+	if (reasoningState.length > 0)
+		message.providerFields = providerFieldsWithOpenAIReasoning(reasoningState);
 	if (toolCalls.length > 0) message.toolCalls = toolCalls;
 	return {
 		id: r.id ?? `resp-${randomUUID()}`,
@@ -392,6 +450,9 @@ export async function* responsesEventsToCanonicalChunks(
 	let id = "";
 	let model = "";
 	let roleSent = false;
+	// Encrypted reasoning item ids already forwarded as delta.providerFields (dedupes the final
+	// response against per-item events).
+	const reasoningStateSeen = new Set<string>();
 
 	const base = () => ({ id, created, model });
 
@@ -485,8 +546,58 @@ export async function* responsesEventsToCanonicalChunks(
 			continue;
 		}
 
+		if (type === "response.output_item.done") {
+			const item = d.item as RWOutputItem | undefined;
+			const state =
+				item !== undefined ? reasoningStateFromItem(item) : undefined;
+			if (
+				state !== undefined &&
+				(state.id === undefined || !reasoningStateSeen.has(state.id))
+			) {
+				if (state.id !== undefined) reasoningStateSeen.add(state.id);
+				yield {
+					...base(),
+					choices: [
+						{
+							index: 0,
+							delta: {
+								providerFields: providerFieldsWithOpenAIReasoning([state]),
+							},
+							finishReason: null,
+						},
+					],
+				};
+			}
+			continue;
+		}
+
 		if (type === "response.completed" || type === "response.incomplete") {
 			const r = (d.response ?? {}) as RWResponse;
+			// Belt and braces: forward any encrypted reasoning state that did not stream as its own
+			// output_item.done event.
+			const missed = (r.output ?? [])
+				.map(reasoningStateFromItem)
+				.filter(
+					(state): state is OpenAIReasoningStateItem =>
+						state !== undefined &&
+						(state.id === undefined || !reasoningStateSeen.has(state.id)),
+				);
+			if (missed.length > 0) {
+				for (const state of missed)
+					if (state.id !== undefined) reasoningStateSeen.add(state.id);
+				yield {
+					...base(),
+					choices: [
+						{
+							index: 0,
+							delta: {
+								providerFields: providerFieldsWithOpenAIReasoning(missed),
+							},
+							finishReason: null,
+						},
+					],
+				};
+			}
 			const hasTool = (r.output ?? []).some(
 				(it) => it.type === "function_call",
 			);

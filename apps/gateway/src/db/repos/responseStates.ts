@@ -128,17 +128,15 @@ export async function getResponseStateForScope(
  * then runs over that (typically small) set. If a single key accumulates a very large number of
  * stored states, add an expression GIN index over the item ids.
  */
-async function findResponseItemByIdForScopeMatchingStore(
+export async function findResponseItemByIdForScope(
 	itemId: string,
 	virtualKeyId: string | null,
 	now = new Date(),
-	requireStored = true,
 ): Promise<Record<string, unknown> | undefined> {
 	const scope =
 		virtualKeyId === null
 			? isNull(responseStates.virtualKeyId)
 			: eq(responseStates.virtualKeyId, virtualKeyId);
-	const storeScope = requireStored ? eq(responseStates.store, true) : undefined;
 	const needle = JSON.stringify([{ id: itemId }]);
 	const [row] = await db
 		.select({
@@ -149,7 +147,7 @@ async function findResponseItemByIdForScopeMatchingStore(
 		.where(
 			and(
 				scope,
-				storeScope,
+				eq(responseStates.store, true),
 				gt(responseStates.expiresAt, now),
 				sql`(${responseStates.output} @> ${needle}::jsonb OR ${responseStates.requestInput} @> ${needle}::jsonb)`,
 			),
@@ -158,27 +156,6 @@ async function findResponseItemByIdForScopeMatchingStore(
 	if (!row) return undefined;
 	return [...row.output, ...row.requestInput].find(
 		(it) => (it as { id?: unknown }).id === itemId,
-	);
-}
-
-export async function findResponseItemByIdForScope(
-	itemId: string,
-	virtualKeyId: string | null,
-	now = new Date(),
-): Promise<Record<string, unknown> | undefined> {
-	return findResponseItemByIdForScopeMatchingStore(itemId, virtualKeyId, now);
-}
-
-export async function findInternalResponseItemByIdForScope(
-	itemId: string,
-	virtualKeyId: string | null,
-	now = new Date(),
-): Promise<Record<string, unknown> | undefined> {
-	return findResponseItemByIdForScopeMatchingStore(
-		itemId,
-		virtualKeyId,
-		now,
-		false,
 	);
 }
 

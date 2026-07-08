@@ -14,17 +14,6 @@ import { env } from "#config/env.ts";
 import type { Context } from "hono";
 
 import {
-	canonicalChunksToResponsesEvents,
-	hydrateResponseInputOpaqueState,
-	canonicalToResponsesResponse,
-	responsesRequestToCanonical,
-	normalizeResponseInput,
-	type ResponseInputItem,
-	expandInputReferences,
-	type RenderOptions,
-} from "#contracts/openai/responsesRender.ts";
-
-import {
 	applyCanonicalResponseExtensions,
 	applyCanonicalRequestExtensions,
 	applyStreamEventExtensions,
@@ -38,7 +27,16 @@ import {
 } from "./runtime/pipeline.ts";
 
 import {
-	findInternalResponseItemByIdForScope,
+	canonicalChunksToResponsesEvents,
+	canonicalToResponsesResponse,
+	responsesRequestToCanonical,
+	normalizeResponseInput,
+	type ResponseInputItem,
+	expandInputReferences,
+	type RenderOptions,
+} from "#contracts/openai/responsesRender.ts";
+
+import {
 	findResponseItemByIdForScope,
 	deleteResponseStateForScope,
 	getResponseStateForScope,
@@ -116,43 +114,13 @@ async function prepareResponsesRequest(
 		previousItems,
 		(id) => findResponseItemByIdForScope(id, virtualKeyId),
 	);
-	const hydratedCurrentInput = await hydrateResponseInputOpaqueState(
-		currentInput,
-		(id) => findInternalResponseItemByIdForScope(id, virtualKeyId),
-	);
 	const effectiveInput = [
 		...previousItems.map((item) => structuredClone(item)),
-		...hydratedCurrentInput,
+		...currentInput,
 	];
 	// Resolve `store` against the gateway default so both persistence and the echoed value agree.
 	const store = req.store ?? env.RESPONSES_STORE_DEFAULT;
 	return { req: { ...req, input: effectiveInput, store }, effectiveInput };
-}
-
-function hasOpaqueExtraContent(item: Record<string, unknown>): boolean {
-	const extra = item.extra_content;
-	return (
-		extra !== null &&
-		typeof extra === "object" &&
-		!Array.isArray(extra) &&
-		Object.keys(extra).length > 0
-	);
-}
-
-function opaqueOutputItems(
-	output: ResponseInputItem[],
-): Record<string, unknown>[] {
-	return output.flatMap((item) => {
-		if (!hasOpaqueExtraContent(item)) return [];
-		return [
-			{
-				type: item.type,
-				...(typeof item.id === "string" ? { id: item.id } : {}),
-				...(typeof item.call_id === "string" ? { call_id: item.call_id } : {}),
-				extra_content: structuredClone(item.extra_content),
-			},
-		];
-	});
 }
 
 async function persistResponseState(opts: {
@@ -165,10 +133,10 @@ async function persistResponseState(opts: {
 	requestId: string;
 	metadata: Record<string, unknown>;
 }): Promise<void> {
-	const store = opts.req.store === true;
-	const renderedOutput = outputItemsFromResponse(opts.response);
-	const output = store ? renderedOutput : opaqueOutputItems(renderedOutput);
-	if (!store && output.length === 0) return;
+	// Opaque tool-call state round-trips statelessly through the client (thought signatures ride
+	// inside call ids); only client-requested storage (`store: true`) persists anything.
+	if (opts.req.store !== true) return;
+	const output = outputItemsFromResponse(opts.response);
 	const id = responseId(opts.response);
 	await storeResponseState({
 		id,
@@ -176,14 +144,13 @@ async function persistResponseState(opts: {
 		publicModel: opts.req.model,
 		deploymentId: opts.deploymentId,
 		adapterKey: opts.adapterKey,
-		previousResponseId: store ? (opts.req.previous_response_id ?? null) : null,
-		store,
-		requestInput: store ? opts.effectiveInput : [],
+		previousResponseId: opts.req.previous_response_id ?? null,
+		store: true,
+		requestInput: opts.effectiveInput,
 		output,
-		response: store ? opts.response : { id, object: "response", store: false },
+		response: opts.response,
 		metadata: {
 			requestId: opts.requestId,
-			...(store ? {} : { internalOnly: true }),
 			...opts.metadata,
 		},
 	});

@@ -524,3 +524,38 @@ test("google.parseStream: deltas + usage final", async () => {
 	assert.equal(firstHadRole, true);
 	assert.equal(usageTotal, 5);
 });
+
+test("google.buildRequest: a client-echoed suffixed id arrives clean via the contract", async () => {
+	// End to end through the chat contract: the client echoes the suffixed id verbatim; the
+	// adapter must see a clean functionCall.id with the signature reattached.
+	const { toCanonicalChatRequest, chatRequestSchema } = await import(
+		"#contracts/openai/chat.ts"
+	);
+	const canonical = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "gemini",
+			messages: [
+				{ role: "user", content: "hi" },
+				{
+					role: "assistant",
+					content: null,
+					tool_calls: [
+						{
+							id: "call_1__thought__sig-a",
+							type: "function",
+							function: { name: "f", arguments: "{}" },
+						},
+					],
+				},
+				{ role: "tool", tool_call_id: "call_1__thought__sig-a", content: "ok" },
+			],
+		}),
+	);
+	const r = googleAdapter.chat!.buildRequest(canonical, ctx);
+	const body = JSON.parse(r.body!);
+	const fnCall = body.contents[1].parts[0].functionCall;
+	assert.equal(fnCall.id, "call_1");
+	assert.equal(fnCall.thoughtSignature, "sig-a");
+	// The tool result maps back to the function name via the clean id.
+	assert.equal(body.contents[2].parts[0].functionResponse.name, "f");
+});

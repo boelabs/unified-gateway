@@ -425,3 +425,109 @@ test("stream->events: Anthropic tool_use includes provider_specific_fields", asy
 		thought_signature: "sig-a",
 	});
 });
+
+test("request->canonical: strips embedded signatures from tool_use ids and tool_result references", () => {
+	const u = messagesRequestToCanonical(
+		parse({
+			model: "claude",
+			max_tokens: 10,
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{
+							type: "tool_use",
+							id: "toolu_1__thought__sig-a",
+							name: "f",
+							input: {},
+						},
+					],
+				},
+				{
+					role: "user",
+					content: [
+						{
+							type: "tool_result",
+							tool_use_id: "toolu_1__thought__sig-a",
+							content: "ok",
+						},
+					],
+				},
+			],
+		}),
+	);
+	assert.equal(u.messages[0]!.toolCalls?.[0]?.id, "toolu_1");
+	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: "sig-a" },
+	});
+	assert.equal(u.messages[1]!.toolCallId, "toolu_1");
+});
+
+test("canonical->response: tool_use id carries the embedded signature", () => {
+	const resp: CanonicalChatResponse = {
+		id: "x",
+		created: 1,
+		model: "claude-x",
+		choices: [
+			{
+				index: 0,
+				finishReason: "tool_calls",
+				message: {
+					role: "assistant",
+					content: null,
+					toolCalls: [
+						{
+							id: "toolu_1",
+							name: "f",
+							arguments: "{}",
+							extraContent: { google: { thought_signature: "sig-a" } },
+						},
+					],
+				},
+			},
+		],
+		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+	};
+	const out = canonicalToMessagesResponse(resp, opts) as Record<string, any>;
+	const toolUse = out.content.find((b: any) => b.type === "tool_use");
+	assert.equal(toolUse.id, "toolu_1__thought__sig-a");
+	assert.deepEqual(toolUse.provider_specific_fields, {
+		thought_signature: "sig-a",
+	});
+});
+
+test("stream->events: content_block_start tool_use id carries the embedded signature", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "claude-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						role: "assistant",
+						toolCalls: [
+							{
+								index: 0,
+								id: "toolu_1",
+								name: "f",
+								arguments: "{}",
+								extraContent: { google: { thought_signature: "sig-a" } },
+							},
+						],
+					},
+					finishReason: "tool_calls",
+				},
+			],
+		};
+	}
+	let started: any;
+	for await (const ev of canonicalChunksToMessagesEvents(chunks(), opts)) {
+		if (ev.event === "content_block_start") {
+			const d = JSON.parse(ev.data);
+			if (d.content_block?.type === "tool_use") started = d.content_block;
+		}
+	}
+	assert.equal(started.id, "toolu_1__thought__sig-a");
+});

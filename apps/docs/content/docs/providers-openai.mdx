@@ -14,6 +14,12 @@ description: "Adapter key openai. Credentials, transport, and quirks."
 - **Reasoning**: `openai_effort` (`reasoning_effort`) on reasoning-family models. `-chat` suffixed
   variants (e.g. `gpt-5.2-chat`) are non-reasoning — the real API rejects `reasoning_effort` on them,
   and the catalog declares them without a `reasoning` spec accordingly.
+- **Encrypted reasoning round-trips through the client.** On reasoning-capable models the upstream
+  call always sets `store: false` and requests `include: ["reasoning.encrypted_content"]`; the
+  encrypted state is returned to the client (native `reasoning` items on `/v1/responses`,
+  message-level `provider_specific_fields` on `/v1/chat/completions`) and replayed upstream when
+  echoed back. Responses are therefore never stored in your OpenAI account. See
+  [Provider-specific fields](/docs/provider-specific-fields).
 - **Images**: `gpt-image-*` models; always returns `b64_json` regardless of requested
   `response_format` (see [Images](/docs/images)).
 - **Videos**: Sora profiles are included for OpenAI-shaped compatibility, but OpenAI's current docs
