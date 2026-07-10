@@ -62,3 +62,22 @@ test("transport per operation: incompatible config fails explicitly", () => {
 		/does not support/,
 	);
 });
+
+test("transport preference: native wire wins unless the operator configured an override", () => {
+	const c = candidate();
+	c.adapter.transports = {
+		"images.generations": {
+			supported: ["chat_completions", "responses"],
+			default: "responses",
+		},
+	};
+	assert.equal(
+		resolveTransport(c, "images.generations", "chat_completions"),
+		"chat_completions",
+	);
+	c.row.transportOverrides = { "image.generate": "responses" };
+	assert.equal(
+		resolveTransport(c, "images.generations", "chat_completions"),
+		"responses",
+	);
+});

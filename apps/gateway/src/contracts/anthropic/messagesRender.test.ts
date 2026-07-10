@@ -73,6 +73,7 @@ test("request->canonical: cache_control is preserved in system (array), content,
 	}>;
 	assert.deepEqual(userContent[0]!.cacheControl, { type: "ephemeral" });
 	assert.deepEqual(u.tools?.[0]?.cacheControl, { type: "ephemeral" });
+	assert.equal(u.requiresNativeWire, true);
 });
 
 test("request->canonical: system without cache_control flattens to string", () => {
@@ -205,11 +206,11 @@ test("request->canonical: thinking budget and output_config.effort are normalize
 			thinking: { type: "adaptive" },
 			output_config: { effort: "low" },
 			messages: [{ role: "user", content: "hello" }],
-			extra_body: { top_k: 40 },
+			top_k: 40,
 		}),
 	);
 	assert.deepEqual(effort.reasoning, { effort: "low", summary: "auto" });
-	assert.deepEqual(effort.extraBody, { top_k: 40 });
+	assert.equal(effort.topK, 40);
 });
 
 test("request->canonical: output_config.format becomes canonical format", () => {
@@ -258,6 +259,17 @@ test("canonical->response: content blocks + stop_reason + usage", () => {
 					role: "assistant",
 					content: "hello",
 					reasoning: "Penbe brief.",
+					providerFields: {
+						anthropic: {
+							thinking_blocks: [
+								{
+									type: "thinking",
+									thinking: "Penbe brief.",
+									signature: "sig-1",
+								},
+							],
+						},
+					},
 				},
 			},
 		],
@@ -268,6 +280,7 @@ test("canonical->response: content blocks + stop_reason + usage", () => {
 	assert.equal(out.role, "assistant");
 	assert.equal(out.content[0].type, "thinking");
 	assert.equal(out.content[0].thinking, "Penbe brief.");
+	assert.equal(out.content[0].signature, "sig-1");
 	assert.equal(out.content[1].type, "text");
 	assert.equal(out.content[1].text, "hello");
 	assert.equal(out.stop_reason, "end_turn");
@@ -530,4 +543,96 @@ test("stream->events: content_block_start tool_use id carries the embedded signa
 		}
 	}
 	assert.equal(started.id, "toolu_1__thought__sig-a");
+});
+
+test("request->canonical: thinking and redacted blocks remain message-bound state", () => {
+	const canonical = messagesRequestToCanonical(
+		parse({
+			model: "claude",
+			max_tokens: 100,
+			messages: [
+				{
+					role: "assistant",
+					content: [
+						{ type: "thinking", thinking: "plan", signature: "sig-1" },
+						{ type: "redacted_thinking", data: "opaque-1" },
+						{ type: "tool_use", id: "toolu_1", name: "f", input: {} },
+					],
+				},
+			],
+		}),
+	);
+	assert.deepEqual(canonical.messages[0]?.providerFields, {
+		anthropic: {
+			thinking_blocks: [
+				{ type: "thinking", thinking: "plan", signature: "sig-1" },
+				{ type: "redacted_thinking", data: "opaque-1" },
+			],
+		},
+	});
+	assert.equal(canonical.requiresNativeWire, true);
+});
+
+test("stream->events: native thinking emits its real signature delta", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "claude-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						providerFields: { anthropic: { thinking_stream: true } },
+					},
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "claude-x",
+			choices: [
+				{
+					index: 0,
+					delta: { reasoning: "plan" },
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "claude-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						providerFields: {
+							anthropic: {
+								thinking_blocks: [
+									{
+										type: "thinking",
+										thinking: "plan",
+										signature: "sig-1",
+									},
+								],
+							},
+						},
+					},
+					finishReason: "stop",
+				},
+			],
+		};
+	}
+	const deltas: any[] = [];
+	for await (const event of canonicalChunksToMessagesEvents(chunks(), opts)) {
+		if (event.event === "content_block_delta")
+			deltas.push(JSON.parse(event.data).delta);
+	}
+	assert.deepEqual(deltas, [
+		{ type: "thinking_delta", thinking: "plan" },
+		{ type: "signature_delta", signature: "sig-1" },
+	]);
 });

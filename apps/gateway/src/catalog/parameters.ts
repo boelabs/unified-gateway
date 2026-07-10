@@ -139,6 +139,7 @@ interface FieldSpec {
 const FIELD_SPECS: readonly FieldSpec[] = [
 	{ field: "temperature", names: ["temperature"] },
 	{ field: "topP", names: ["top_p"] },
+	{ field: "topK", names: ["top_k"] },
 	{ field: "maxTokens", names: ["max_tokens", "max_completion_tokens"] },
 	{ field: "stop", names: ["stop"] },
 	{ field: "n", names: ["n"] },
@@ -157,6 +158,8 @@ const FIELD_SPECS: readonly FieldSpec[] = [
 type ResponsesTransport = NonNullable<
 	CanonicalChatRequest["responsesTransport"]
 >;
+type ChatTransport = NonNullable<CanonicalChatRequest["chatTransport"]>;
+type MessagesTransport = NonNullable<CanonicalChatRequest["messagesTransport"]>;
 
 const RESPONSES_TRANSPORT_SPECS: ReadonlyArray<{
 	field: keyof ResponsesTransport;
@@ -169,7 +172,33 @@ const RESPONSES_TRANSPORT_SPECS: ReadonlyArray<{
 	{ field: "promptCacheKey", names: ["prompt_cache_key"] },
 	{ field: "topLogprobs", names: ["top_logprobs"] },
 	{ field: "maxToolCalls", names: ["max_tool_calls"] },
+	{ field: "user", names: ["user"] },
+	{ field: "truncation", names: ["truncation"] },
+	{ field: "contextManagement", names: ["context_management"] },
 ];
+
+const CHAT_TRANSPORT_SPECS: ReadonlyArray<{
+	field: keyof ChatTransport;
+	names: readonly string[];
+}> = [
+	{ field: "audio", names: ["audio"] },
+	{ field: "logprobs", names: ["logprobs"] },
+	{ field: "topLogprobs", names: ["top_logprobs"] },
+	{ field: "logitBias", names: ["logit_bias"] },
+	{ field: "metadata", names: ["metadata"] },
+	{ field: "modalities", names: ["modalities"] },
+	{ field: "prediction", names: ["prediction"] },
+	{ field: "serviceTier", names: ["service_tier"] },
+	{ field: "safetyIdentifier", names: ["safety_identifier"] },
+	{ field: "store", names: ["store"] },
+	{ field: "verbosity", names: ["verbosity"] },
+	{ field: "webSearchOptions", names: ["web_search_options"] },
+];
+
+const MESSAGES_TRANSPORT_SPECS: ReadonlyArray<{
+	field: keyof MessagesTransport;
+	names: readonly string[];
+}> = [{ field: "metadata", names: ["metadata"] }];
 
 function hasOwn(value: object, key: PropertyKey): boolean {
 	return Object.hasOwn(value, key);
@@ -185,6 +214,9 @@ function dropCanonicalField(
 			break;
 		case "topP":
 			delete req.topP;
+			break;
+		case "topK":
+			delete req.topK;
 			break;
 		case "maxTokens":
 			delete req.maxTokens;
@@ -256,9 +288,25 @@ function dropResponsesField(
 		case "maxToolCalls":
 			delete transport.maxToolCalls;
 			break;
+		case "user":
+			delete transport.user;
+			break;
+		case "truncation":
+			delete transport.truncation;
+			break;
+		case "contextManagement":
+			delete transport.contextManagement;
+			break;
 		default:
 			break;
 	}
+}
+
+function dropTransportField<T extends object>(
+	transport: T,
+	field: keyof T,
+): void {
+	delete (transport as Record<PropertyKey, unknown>)[field];
 }
 
 function isEmptyRecord(value: Record<string, unknown>): boolean {
@@ -296,6 +344,22 @@ export function requestedUnsupportedParameters(
 		}
 		for (const [name] of Object.entries(transport.reasoning ?? {})) {
 			if (parameterState(meta, name) === "unsupported") unsupported.add(name);
+		}
+	}
+	const chatTransport = req.chatTransport;
+	if (chatTransport) {
+		for (const spec of CHAT_TRANSPORT_SPECS) {
+			if (!hasOwn(chatTransport, spec.field)) continue;
+			const name = explicitlyUnsupportedName(meta, spec.names);
+			if (name) unsupported.add(name);
+		}
+	}
+	const messagesTransport = req.messagesTransport;
+	if (messagesTransport) {
+		for (const spec of MESSAGES_TRANSPORT_SPECS) {
+			if (!hasOwn(messagesTransport, spec.field)) continue;
+			const name = explicitlyUnsupportedName(meta, spec.names);
+			if (name) unsupported.add(name);
 		}
 	}
 	return [...unsupported].sort();
@@ -380,6 +444,32 @@ export function applyUnsupportedParameterPolicy(
 		if (isEmptyRecord(transport as Record<string, unknown>))
 			delete next.responsesTransport;
 		else next.responsesTransport = transport;
+	}
+	if (next.chatTransport !== undefined) {
+		const transport: ChatTransport = { ...next.chatTransport };
+		for (const spec of CHAT_TRANSPORT_SPECS) {
+			if (!hasOwn(transport, spec.field)) continue;
+			const name = explicitlyUnsupportedName(meta, spec.names);
+			if (!name || !unsupported.has(name)) continue;
+			dropTransportField(transport, spec.field);
+			dropped.add(name);
+		}
+		if (isEmptyRecord(transport as Record<string, unknown>))
+			delete next.chatTransport;
+		else next.chatTransport = transport;
+	}
+	if (next.messagesTransport !== undefined) {
+		const transport: MessagesTransport = { ...next.messagesTransport };
+		for (const spec of MESSAGES_TRANSPORT_SPECS) {
+			if (!hasOwn(transport, spec.field)) continue;
+			const name = explicitlyUnsupportedName(meta, spec.names);
+			if (!name || !unsupported.has(name)) continue;
+			dropTransportField(transport, spec.field);
+			dropped.add(name);
+		}
+		if (isEmptyRecord(transport as Record<string, unknown>))
+			delete next.messagesTransport;
+		else next.messagesTransport = transport;
 	}
 
 	return {

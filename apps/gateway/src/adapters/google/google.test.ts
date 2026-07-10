@@ -563,3 +563,94 @@ test("google.buildRequest: a client-echoed suffixed id arrives clean via the con
 	// The tool result maps back to the function name via the clean id.
 	assert.equal(body.contents[2].parts[0].functionResponse.name, "f");
 });
+
+test("google.buildRequest: sampling controls match the catalog surface", () => {
+	const built = googleAdapter.chat!.buildRequest(
+		{
+			...req,
+			seed: 42,
+			topK: 32,
+			presencePenalty: 0.2,
+			frequencyPenalty: 0.3,
+			n: 2,
+		},
+		ctx,
+	);
+	assert.deepEqual(JSON.parse(built.body!).generationConfig, {
+		temperature: 0.4,
+		topK: 32,
+		maxOutputTokens: 50,
+		candidateCount: 2,
+		presencePenalty: 0.2,
+		frequencyPenalty: 0.3,
+		seed: 42,
+	});
+});
+
+test("google.parseStream: every candidate is preserved", async () => {
+	const sse = `data: {"candidates":[{"content":{"parts":[{"text":"A"}]},"finishReason":"STOP","index":0},{"content":{"parts":[{"text":"B"}]},"finishReason":"STOP","index":1}]}\n\n`;
+	const chunks = [];
+	for await (const chunk of googleAdapter.chat!.parseStream(
+		new Response(sse).body!,
+		ctx,
+	))
+		chunks.push(chunk);
+	assert.deepEqual(
+		chunks[0]?.choices.map((choice) => ({
+			index: choice.index,
+			content: choice.delta.content,
+		})),
+		[
+			{ index: 0, content: "A" },
+			{ index: 1, content: "B" },
+		],
+	);
+});
+
+test("google content signatures: complete native parts survive replay", () => {
+	const parsed = googleAdapter.chat!.parseResponse(
+		{
+			modelVersion: "gemini",
+			candidates: [
+				{
+					index: 0,
+					finishReason: "STOP",
+					content: {
+						parts: [
+							{
+								text: "internal",
+								thought: true,
+								thoughtSignature: "sig-text",
+							},
+							{ text: "answer" },
+						],
+					},
+				},
+			],
+			usageMetadata: {},
+		},
+		ctx,
+	);
+	const message = parsed.choices[0]!.message;
+	const replay = googleAdapter.chat!.buildRequest(
+		{
+			...req,
+			messages: [
+				{
+					role: "assistant",
+					content: message.content,
+					providerFields: message.providerFields!,
+				},
+			],
+		},
+		ctx,
+	);
+	assert.deepEqual(JSON.parse(replay.body!).contents[0].parts, [
+		{
+			text: "internal",
+			thought: true,
+			thoughtSignature: "sig-text",
+		},
+		{ text: "answer" },
+	]);
+});

@@ -350,3 +350,102 @@ test("anthropic.parseStream: text and tool JSON deltas stream as canonical chunk
 	assert.equal(chunks[5]!.choices[0]!.finishReason, "tool_calls");
 	assert.equal(chunks[5]!.usage?.totalTokens, 11);
 });
+
+test("anthropic thinking state: signed and redacted blocks survive parse and replay", () => {
+	const parsed = anthropicAdapter.chat!.parseResponse(
+		{
+			id: "msg_1",
+			model: "claude",
+			stop_reason: "tool_use",
+			content: [
+				{ type: "thinking", thinking: "plan", signature: "sig-1" },
+				{ type: "redacted_thinking", data: "opaque-1" },
+				{ type: "tool_use", id: "toolu_1", name: "lookup", input: {} },
+			],
+			usage: { input_tokens: 2, output_tokens: 3 },
+		},
+		ctx,
+	);
+	const message = parsed.choices[0]!.message;
+	assert.deepEqual(message.providerFields, {
+		anthropic: {
+			thinking_blocks: [
+				{ type: "thinking", thinking: "plan", signature: "sig-1" },
+				{ type: "redacted_thinking", data: "opaque-1" },
+			],
+		},
+	});
+	const replay = anthropicAdapter.chat!.buildRequest(
+		{
+			...req,
+			messages: [
+				{
+					role: "assistant",
+					content: null,
+					providerFields: message.providerFields!,
+					toolCalls: message.toolCalls!,
+				},
+				{ role: "tool", toolCallId: "toolu_1", content: "ok" },
+			],
+		},
+		ctx,
+	);
+	const body = JSON.parse(replay.body!);
+	assert.deepEqual(body.messages[0].content.slice(0, 2), [
+		{ type: "thinking", thinking: "plan", signature: "sig-1" },
+		{ type: "redacted_thinking", data: "opaque-1" },
+	]);
+});
+
+test("anthropic.buildRequest: top_k and metadata use their native fields", () => {
+	const built = anthropicAdapter.chat!.buildRequest(
+		{
+			...req,
+			topK: 40,
+			messagesTransport: { metadata: { user_id: "user-1" } },
+		},
+		ctx,
+	);
+	const body = JSON.parse(built.body!);
+	assert.equal(body.top_k, 40);
+	assert.deepEqual(body.metadata, { user_id: "user-1" });
+});
+
+test("anthropic.parseStream: signature deltas become replayable message state", async () => {
+	const sse =
+		`event: message_start\ndata: {"type":"message_start","message":{"id":"msg_1","model":"claude","usage":{"input_tokens":1},"content":[]}}\n\n` +
+		`event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}\n\n` +
+		`event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"plan"}}\n\n` +
+		`event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-1"}}\n\n` +
+		`event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n` +
+		`event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}\n\n`;
+	const fields: unknown[] = [];
+	for await (const chunk of anthropicAdapter.chat!.parseStream(
+		new Response(sse).body!,
+		ctx,
+	)) {
+		const value = chunk.choices[0]?.delta.providerFields;
+		if (value !== undefined) fields.push(value);
+	}
+	assert.deepEqual(fields.at(-1), {
+		anthropic: {
+			thinking_blocks: [
+				{ type: "thinking", thinking: "plan", signature: "sig-1" },
+			],
+		},
+	});
+});
+
+test("anthropic.parseResponse: context-window stop maps to length", () => {
+	const parsed = anthropicAdapter.chat!.parseResponse(
+		{
+			id: "msg_1",
+			model: "claude",
+			stop_reason: "model_context_window_exceeded",
+			content: [{ type: "text", text: "partial" }],
+			usage: { input_tokens: 1, output_tokens: 1 },
+		},
+		ctx,
+	);
+	assert.equal(parsed.choices[0]?.finishReason, "length");
+});

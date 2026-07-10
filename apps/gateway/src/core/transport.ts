@@ -55,3 +55,9 @@ export interface AdapterTransports {
 	supported: readonly UpstreamTransport[];
 	default: UpstreamTransport;
 }
+
+export function nativeTransportForPublicWire(
+	wire: "chat_completions" | "responses" | "messages",
+): UpstreamTransport {
+	return wire;
+}

@@ -3,15 +3,28 @@ import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
-import { log as appLog } from "#logging/log.ts";
 import { GatewayError } from "#core/errors.ts";
 import { getAuth } from "#auth/middleware.ts";
 import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
 import type { Auth } from "#auth/types.ts";
+import { randomUUID } from "node:crypto";
 import { env } from "#config/env.ts";
 import type { Context } from "hono";
+
+import {
+	canonicalChunksToResponsesEvents,
+	canonicalToResponsesResponse,
+	responsesRequestToCanonical,
+	responseEventForClient,
+	normalizeResponseInput,
+	type ResponseInputItem,
+	expandInputReferences,
+	type RenderOptions,
+	responseForClient,
+	toResponsesUsage,
+} from "#contracts/openai/responsesRender.ts";
 
 import {
 	applyCanonicalResponseExtensions,
@@ -27,14 +40,11 @@ import {
 } from "./runtime/pipeline.ts";
 
 import {
-	canonicalChunksToResponsesEvents,
-	canonicalToResponsesResponse,
-	responsesRequestToCanonical,
-	normalizeResponseInput,
-	type ResponseInputItem,
-	expandInputReferences,
-	type RenderOptions,
-} from "#contracts/openai/responsesRender.ts";
+	compactResponseRequestSchema,
+	type CompactResponseRequest,
+	responsesRequestSchema,
+	type ResponsesRequest,
+} from "#contracts/openai/responses.ts";
 
 import {
 	findResponseItemByIdForScope,
@@ -50,9 +60,9 @@ import {
 } from "./runtime/routingMetadata.ts";
 
 import {
-	responsesRequestSchema,
-	type ResponsesRequest,
-} from "#contracts/openai/responses.ts";
+	expandLocalCompactionItems,
+	encodeCompactionSummary,
+} from "./runtime/responseCompaction.ts";
 
 import {
 	parameterPolicyLogMetadata,
@@ -114,13 +124,121 @@ async function prepareResponsesRequest(
 		previousItems,
 		(id) => findResponseItemByIdForScope(id, virtualKeyId),
 	);
-	const effectiveInput = [
+	const effectiveInput = expandLocalCompactionItems([
 		...previousItems.map((item) => structuredClone(item)),
 		...currentInput,
-	];
+	]);
 	// Resolve `store` against the gateway default so both persistence and the echoed value agree.
 	const store = req.store ?? env.RESPONSES_STORE_DEFAULT;
 	return { req: { ...req, input: effectiveInput, store }, effectiveInput };
+}
+
+const COMPACTION_INSTRUCTIONS =
+	"Create a compact, faithful conversation state for a later model turn. Preserve user intent, constraints, decisions, tool results, unresolved work, and identifiers that are still needed. Remove repetition and incidental wording. Return only the compacted state.";
+
+/** POST /v1/responses/compact - provider-agnostic conversation compaction. */
+export async function compactResponseHandler(
+	c: Context<AppEnv>,
+): Promise<Response> {
+	const log = new RequestLogDraft(c, "responses.compact");
+	const auth = getAuth(c);
+	try {
+		const json = await readJsonBody(c);
+		log.requestBody = json;
+		const compact: CompactResponseRequest = parseBody(
+			compactResponseRequestSchema,
+			json,
+		);
+		log.publicModel = compact.model;
+		const request = responsesRequestSchema.parse({
+			model: compact.model,
+			...(compact.input !== undefined ? { input: compact.input } : {}),
+			...(compact.previous_response_id != null
+				? { previous_response_id: compact.previous_response_id }
+				: {}),
+			instructions: [COMPACTION_INSTRUCTIONS, compact.instructions]
+				.filter(
+					(value): value is string =>
+						typeof value === "string" && value.length > 0,
+				)
+				.join("\n\n"),
+			...(compact.prompt_cache_key !== undefined
+				? { prompt_cache_key: compact.prompt_cache_key }
+				: {}),
+			stream: false,
+			store: false,
+		});
+		const prepared = await prepareResponsesRequest(request, auth);
+		let canonical = responsesRequestToCanonical(prepared.req);
+		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
+		log.publicModel = canonical.model;
+		await preflight(c, canonical.model);
+		const settings = await getEffectiveSettings();
+		const { routing, parameterPolicy } = await routeChat(
+			c,
+			canonical,
+			log.requestId,
+			settings,
+		);
+		log.applyRouting(routing);
+		if (routing.value.kind !== "json")
+			throw new GatewayError({
+				class: "server",
+				message: "Compaction unexpectedly returned a stream",
+			});
+		const response = await applyCanonicalResponseExtensions(
+			c,
+			"chat",
+			canonical.model,
+			routing.value.response,
+		);
+		const summary = response.choices[0]?.message.content;
+		if (typeof summary !== "string" || summary.length === 0)
+			throw new GatewayError({
+				class: "server",
+				message: "Compaction returned no summary",
+			});
+		await routing.finish(response.usage);
+		const meta = routing.candidate.meta;
+		const cost = accountUsage(c, meta, response.usage);
+		const metadata = candidateMetadata(routing.candidate);
+		const parameterMetadata = parameterPolicyLogMetadata(
+			parameterPolicy,
+			settings.unsupportedParameterStrategy,
+		);
+		if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+		const createdAt = Math.floor(Date.now() / 1000);
+		const body = {
+			id: `resp_${randomUUID()}`,
+			object: "response.compaction",
+			created_at: createdAt,
+			output: [
+				{
+					id: `cmp_${randomUUID()}`,
+					type: "compaction",
+					encrypted_content: encodeCompactionSummary(summary),
+				},
+			],
+			usage: toResponsesUsage(response.usage),
+		};
+		log.write({
+			status: "success",
+			httpStatus: 200,
+			usage: response.usage,
+			cost,
+			ttftMs: log.elapsedMs(),
+			responseBody: body,
+			metadata,
+			error: null,
+		});
+		return c.json(body);
+	} catch (error) {
+		const gatewayError = toGatewayError(error);
+		log.applyFailedAttempts(gatewayError.attempts);
+		await notifyExtensionError(c, "chat", log.publicModel, gatewayError);
+		log.writeError(gatewayError);
+		throw error;
+	}
 }
 
 async function persistResponseState(opts: {
@@ -132,11 +250,12 @@ async function persistResponseState(opts: {
 	adapterKey: string | null;
 	requestId: string;
 	metadata: Record<string, unknown>;
+	internalOutput?: ResponseInputItem[];
 }): Promise<void> {
 	// Opaque tool-call state round-trips statelessly through the client (thought signatures ride
 	// inside call ids); only client-requested storage (`store: true`) persists anything.
 	if (opts.req.store !== true) return;
-	const output = outputItemsFromResponse(opts.response);
+	const output = opts.internalOutput ?? outputItemsFromResponse(opts.response);
 	const id = responseId(opts.response);
 	await storeResponseState({
 		id,
@@ -234,12 +353,17 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			const usage = response.usage;
 			await routing.finish(usage);
 			const cost = accountUsage(c, meta, usage);
-			const rendered = canonicalToResponsesResponse(response, renderOpts);
+			const internalRendered = canonicalToResponsesResponse(
+				response,
+				renderOpts,
+			);
+			const rendered = responseForClient(internalRendered, pipelineReq.include);
 			await persistResponseState({
 				auth,
 				req: pipelineReq,
 				effectiveInput: prepared.effectiveInput,
 				response: rendered,
+				internalOutput: outputItemsFromResponse(internalRendered),
 				deploymentId: routing.candidate.row.id,
 				adapterKey: routing.candidate.adapter.key,
 				requestId: log.requestId,
@@ -291,7 +415,8 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			let statePersisted = false;
 			try {
 				for await (const ev of events) {
-					let eventData = ev.data;
+					const clientEvent = responseEventForClient(ev, pipelineReq.include);
+					let eventData = clientEvent.data;
 					if (
 						ev.event === "response.completed" ||
 						ev.event === "response.incomplete"
@@ -299,8 +424,13 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 						let completed:
 							| (Record<string, unknown> & { usage?: unknown })
 							| undefined;
+						let internalResponse: Record<string, unknown> | undefined;
 						try {
-							const data = JSON.parse(ev.data) as {
+							const internalData = JSON.parse(ev.data) as {
+								response?: Record<string, unknown> & { usage?: unknown };
+							};
+							internalResponse = internalData.response;
+							const data = JSON.parse(clientEvent.data) as {
 								response?: Record<string, unknown> & { usage?: unknown };
 							};
 							completed = data.response;
@@ -330,30 +460,27 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 						} catch {
 							completed = undefined; // malformed final event: skip usage/persist, still forward to client
 						}
-						// Persist best-effort: a state-store failure must never break the client's stream.
+						// Persist before the terminal event: store=true must never acknowledge an unretrievable id.
 						if (completed && !statePersisted) {
+							await persistResponseState({
+								auth,
+								req: pipelineReq,
+								effectiveInput: prepared.effectiveInput,
+								response: completed,
+								...(internalResponse
+									? {
+											internalOutput: outputItemsFromResponse(internalResponse),
+										}
+									: {}),
+								deploymentId: routing.candidate.row.id,
+								adapterKey: routing.candidate.adapter.key,
+								requestId: log.requestId,
+								metadata,
+							});
 							statePersisted = true;
-							try {
-								await persistResponseState({
-									auth,
-									req: pipelineReq,
-									effectiveInput: prepared.effectiveInput,
-									response: completed,
-									deploymentId: routing.candidate.row.id,
-									adapterKey: routing.candidate.adapter.key,
-									requestId: log.requestId,
-									metadata,
-								});
-							} catch (persistErr) {
-								appLog.error(
-									"responses",
-									"failed to persist streamed response state",
-									{ err: persistErr },
-								);
-							}
 						}
 					}
-					await stream.writeSSE({ event: ev.event!, data: eventData });
+					await stream.writeSSE({ event: clientEvent.event!, data: eventData });
 				}
 			} catch (err) {
 				streamError = GatewayError.is(err)

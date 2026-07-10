@@ -19,6 +19,13 @@ import type {
 	CanonicalMessage,
 } from "#core/canonical.ts";
 
+import {
+	providerFieldsWithAnthropicThinking,
+	anthropicThinkingFromProviderFields,
+	type AnthropicThinkingBlock,
+	mergeProviderFields,
+} from "#core/providerSpecificFields.ts";
+
 import type {
 	AdapterContext,
 	ProviderModule,
@@ -41,6 +48,8 @@ interface AnthropicContentBlock {
 	type?: string;
 	text?: string;
 	thinking?: string;
+	signature?: string;
+	data?: string;
 	id?: string;
 	name?: string;
 	input?: unknown;
@@ -63,6 +72,7 @@ interface AnthropicStreamEvent {
 		type?: string;
 		text?: string;
 		thinking?: string;
+		signature?: string;
 		partial_json?: string;
 		stop_reason?: string | null;
 	};
@@ -184,6 +194,9 @@ function buildMessages(req: CanonicalChatRequest): {
 
 		if (message.role === "assistant") {
 			const blocks: Record<string, unknown>[] = [];
+			blocks.push(
+				...(anthropicThinkingFromProviderFields(message.providerFields) ?? []),
+			);
 			const content = contentToAnthropic(message.content);
 			if (typeof content === "string" && content.length > 0)
 				blocks.push({ type: "text", text: content });
@@ -285,6 +298,9 @@ function buildBody(
 	};
 	if (req.temperature !== undefined) body.temperature = req.temperature;
 	if (req.topP !== undefined) body.top_p = req.topP;
+	if (req.topK !== undefined) body.top_k = req.topK;
+	if (req.messagesTransport?.metadata !== undefined)
+		body.metadata = req.messagesTransport.metadata;
 	if (req.stop !== undefined) body.stop_sequences = req.stop;
 	if (req.tools) {
 		body.tools = req.tools.map((tool) => ({
@@ -302,11 +318,36 @@ function buildBody(
 		if (req.toolChoice === "auto") body.tool_choice = { type: "auto" };
 		else if (req.toolChoice === "none") body.tool_choice = { type: "none" };
 		else if (req.toolChoice === "required") body.tool_choice = { type: "any" };
-		else body.tool_choice = { type: "tool", name: req.toolChoice.name };
+		else if ("name" in req.toolChoice)
+			body.tool_choice = { type: "tool", name: req.toolChoice.name };
+		else {
+			const allowed = new Set(req.toolChoice.allowedTools);
+			if (Array.isArray(body.tools))
+				body.tools = body.tools.filter((tool) =>
+					allowed.has(String((tool as { name?: unknown }).name ?? "")),
+				);
+			body.tool_choice = {
+				type: req.toolChoice.mode === "required" ? "any" : "auto",
+			};
+		}
 	}
 	applyReasoning(body, req, ctx);
 	applyResponseFormat(body, req);
-	return mergeExtraBody(body, req.extraBody, ANTHROPIC_BODY_MANAGED_KEYS);
+	const extraBody = req.extraBody ? { ...req.extraBody } : undefined;
+	if (extraBody !== undefined) {
+		if (body.top_k === undefined && typeof extraBody.top_k === "number")
+			body.top_k = extraBody.top_k;
+		if (
+			body.metadata === undefined &&
+			extraBody.metadata !== null &&
+			typeof extraBody.metadata === "object" &&
+			!Array.isArray(extraBody.metadata)
+		)
+			body.metadata = extraBody.metadata;
+		delete extraBody.top_k;
+		delete extraBody.metadata;
+	}
+	return mergeExtraBody(body, extraBody, ANTHROPIC_BODY_MANAGED_KEYS);
 }
 
 function mapUsage(usage: AnthropicUsage | undefined): Usage {
@@ -339,6 +380,7 @@ function mapFinishReason(
 		case "stop_sequence":
 			return "stop";
 		case "max_tokens":
+		case "model_context_window_exceeded":
 			return "length";
 		case "tool_use":
 			return "tool_calls";
@@ -359,14 +401,24 @@ function parseResponse(
 	const message = (raw ?? {}) as AnthropicMessage;
 	const texts: string[] = [];
 	const reasoning: string[] = [];
+	const thinkingBlocks: AnthropicThinkingBlock[] = [];
 	const toolCalls: NonNullable<
 		CanonicalChatResponse["choices"][number]["message"]["toolCalls"]
 	> = [];
 	for (const block of message.content ?? []) {
 		if (block.type === "text" && block.text !== undefined)
 			texts.push(block.text);
-		if (block.type === "thinking" && block.thinking !== undefined)
+		if (block.type === "thinking" && block.thinking !== undefined) {
 			reasoning.push(block.thinking);
+			if (typeof block.signature === "string")
+				thinkingBlocks.push({
+					type: "thinking",
+					thinking: block.thinking,
+					signature: block.signature,
+				});
+		}
+		if (block.type === "redacted_thinking" && typeof block.data === "string")
+			thinkingBlocks.push({ type: "redacted_thinking", data: block.data });
 		if (block.type === "tool_use") {
 			toolCalls.push({
 				id: block.id ?? `toolu_${randomUUID()}`,
@@ -380,6 +432,14 @@ function parseResponse(
 		content: texts.length > 0 ? texts.join("") : null,
 	};
 	if (reasoning.length > 0) outMessage.reasoning = reasoning.join("");
+	if (thinkingBlocks.length > 0) {
+		const providerFields = mergeProviderFields(
+			outMessage.providerFields,
+			providerFieldsWithAnthropicThinking(thinkingBlocks),
+		);
+		if (providerFields !== undefined)
+			outMessage.providerFields = providerFields;
+	}
 	if (toolCalls.length > 0) outMessage.toolCalls = toolCalls;
 	return {
 		id: message.id ?? `msg_${randomUUID()}`,
@@ -425,6 +485,7 @@ async function* parseStream(
 	let cacheReadTokens = 0;
 	let cacheWriteTokens = 0;
 	let completionTokens = 0;
+	const thinkingBlocks = new Map<number, AnthropicThinkingBlock>();
 
 	for await (const sse of parseSSE(stream)) {
 		let event: AnthropicStreamEvent;
@@ -487,6 +548,58 @@ async function* parseStream(
 			};
 			continue;
 		}
+		if (event.type === "content_block_start") {
+			const index = event.index ?? 0;
+			if (event.content_block?.type === "thinking") {
+				thinkingBlocks.set(index, {
+					type: "thinking",
+					thinking: event.content_block.thinking ?? "",
+					signature: event.content_block.signature ?? "",
+				});
+				yield {
+					id,
+					created,
+					model,
+					choices: [
+						{
+							index: 0,
+							delta: {
+								providerFields: { anthropic: { thinking_stream: true } },
+							},
+							finishReason: null,
+						},
+					],
+				};
+				continue;
+			}
+			if (
+				event.content_block?.type === "redacted_thinking" &&
+				typeof event.content_block.data === "string"
+			) {
+				thinkingBlocks.set(index, {
+					type: "redacted_thinking",
+					data: event.content_block.data,
+				});
+				yield {
+					id,
+					created,
+					model,
+					choices: [
+						{
+							index: 0,
+							delta: {
+								providerFields: providerFieldsWithAnthropicThinking([
+									thinkingBlocks.get(index)!,
+								]),
+							},
+							finishReason: null,
+						},
+					],
+				};
+				thinkingBlocks.delete(index);
+				continue;
+			}
+		}
 		if (event.type === "content_block_delta") {
 			if (
 				event.delta?.type === "text_delta" &&
@@ -508,6 +621,8 @@ async function* parseStream(
 				event.delta?.type === "thinking_delta" &&
 				event.delta.thinking !== undefined
 			) {
+				const block = thinkingBlocks.get(event.index ?? 0);
+				if (block?.type === "thinking") block.thinking += event.delta.thinking;
 				yield {
 					id,
 					created,
@@ -520,6 +635,13 @@ async function* parseStream(
 						},
 					],
 				};
+			} else if (
+				event.delta?.type === "signature_delta" &&
+				event.delta.signature !== undefined
+			) {
+				const block = thinkingBlocks.get(event.index ?? 0);
+				if (block?.type === "thinking")
+					block.signature += event.delta.signature;
 			} else if (
 				event.delta?.type === "input_json_delta" &&
 				event.delta.partial_json !== undefined
@@ -538,6 +660,28 @@ async function* parseStream(
 										arguments: event.delta.partial_json,
 									},
 								],
+							},
+							finishReason: null,
+						},
+					],
+				};
+			}
+			continue;
+		}
+		if (event.type === "content_block_stop") {
+			const index = event.index ?? 0;
+			const block = thinkingBlocks.get(index);
+			if (block !== undefined) {
+				thinkingBlocks.delete(index);
+				yield {
+					id,
+					created,
+					model,
+					choices: [
+						{
+							index: 0,
+							delta: {
+								providerFields: providerFieldsWithAnthropicThinking([block]),
 							},
 							finishReason: null,
 						},

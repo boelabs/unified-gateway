@@ -40,7 +40,7 @@ import {
 	routeChat,
 } from "./runtime/parameterPolicy.ts";
 
-/** POST /v1/chat/completions - exact OpenAI contract, stream and non-stream, with logging. */
+/** POST /v1/chat/completions - compatible public contract, stream and non-stream, with logging. */
 export async function chatCompletionsHandler(
 	c: Context<AppEnv>,
 ): Promise<Response> {

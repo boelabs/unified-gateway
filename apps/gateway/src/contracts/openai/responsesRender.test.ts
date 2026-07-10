@@ -7,9 +7,11 @@ import {
 	resolveResponseInputReferences,
 	canonicalToResponsesResponse,
 	responsesRequestToCanonical,
+	responseEventForClient,
 	normalizeResponseInput,
 	expandInputReferences,
 	type RenderOptions,
+	responseForClient,
 } from "./responsesRender.ts";
 
 import type {
@@ -124,14 +126,14 @@ test("contract: rejects background:true, prompt, and conversation+previous_respo
 		}).success,
 		false,
 	);
-	// standalone conversation is accepted; background:false too.
+	// Standalone conversation is rejected explicitly; background:false remains valid.
 	assert.equal(
 		responsesRequestSchema.safeParse({
 			model: "gpt",
 			input: "hi",
 			conversation: "conv_1",
 		}).success,
-		true,
+		false,
 	);
 	assert.equal(
 		responsesRequestSchema.safeParse({
@@ -896,4 +898,129 @@ test("stream->events: accumulated encrypted reasoning emits trailing items befor
 	const rs = completed.output.find((o: any) => o.type === "reasoning");
 	assert.equal(rs.encrypted_content, "enc-1");
 	assert.equal(rs.id, "rs_1");
+});
+
+test("response object: every OpenResponses 2.3 required field is present", () => {
+	const response = canonicalToResponsesResponse(
+		{
+			id: "response-1",
+			created: 1,
+			model: "response-model",
+			choices: [
+				{
+					index: 0,
+					finishReason: "stop",
+					message: { role: "assistant", content: "ok" },
+				},
+			],
+			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+		},
+		{
+			req: parse({ model: "response-model", input: "hi" }),
+			upstreamModel: "response-model",
+		},
+	);
+	for (const field of [
+		"completed_at",
+		"presence_penalty",
+		"frequency_penalty",
+		"top_logprobs",
+		"max_tool_calls",
+		"service_tier",
+		"safety_identifier",
+		"prompt_cache_key",
+	])
+		assert.equal(Object.hasOwn(response, field), true, field);
+});
+
+test("response include: encrypted reasoning is exposed only when requested", () => {
+	const internal = {
+		id: "response-1",
+		output: [
+			{
+				type: "reasoning",
+				id: "reasoning-1",
+				summary: [],
+				encrypted_content: "opaque",
+			},
+		],
+	};
+	const hidden = responseForClient(internal, undefined);
+	assert.equal("encrypted_content" in (hidden.output as any[])[0], false);
+	assert.equal(
+		(
+			responseForClient(internal, ["reasoning.encrypted_content"])
+				.output as any[]
+		)[0].encrypted_content,
+		"opaque",
+	);
+	const event = responseEventForClient(
+		{
+			event: "response.output_item.done",
+			data: JSON.stringify({
+				type: "response.output_item.done",
+				item: internal.output[0],
+			}),
+		},
+		undefined,
+	);
+	assert.equal("encrypted_content" in JSON.parse(event.data).item, false);
+});
+
+test("request fidelity: file URLs, phases, multimodal outputs, and allowed tools survive", () => {
+	const canonical = responsesRequestToCanonical(
+		parse({
+			model: "response-model",
+			input: [
+				{
+					type: "message",
+					role: "assistant",
+					phase: "commentary",
+					content: [
+						{ type: "input_file", file_url: "https://example.com/a.pdf" },
+					],
+				},
+				{
+					type: "function_call_output",
+					call_id: "call-1",
+					output: [{ type: "input_text", text: "done" }],
+				},
+			],
+			tool_choice: {
+				type: "allowed_tools",
+				mode: "required",
+				tools: [{ type: "function", name: "lookup" }],
+			},
+		}),
+	);
+	assert.equal(canonical.messages[0]?.phase, "commentary");
+	assert.equal(
+		(canonical.messages[0]?.content as any[])[0]?.fileUrl,
+		"https://example.com/a.pdf",
+	);
+	assert.deepEqual(canonical.messages[1]?.content, [
+		{ type: "text", text: "done" },
+	]);
+	assert.deepEqual(canonical.toolChoice, {
+		allowedTools: ["lookup"],
+		mode: "required",
+	});
+});
+
+test("request fidelity: native-only items are retained instead of silently dropped", () => {
+	const input = [
+		{
+			type: "computer_call_output",
+			call_id: "call-1",
+			output: {
+				type: "computer_screenshot",
+				image_url: "data:image/png;base64,AA==",
+			},
+		},
+	];
+	const canonical = responsesRequestToCanonical(
+		parse({ model: "response-model", input }),
+	);
+	assert.equal(canonical.requiresNativeWire, true);
+	assert.deepEqual(canonical.responsesTransport?.rawInput, input);
 });

@@ -62,6 +62,18 @@ const CHAT_EXTRA_BODY_MANAGED_KEYS = [
 	"frequency_penalty",
 	"seed",
 	"user",
+	"audio",
+	"logprobs",
+	"top_logprobs",
+	"logit_bias",
+	"metadata",
+	"modalities",
+	"prediction",
+	"service_tier",
+	"safety_identifier",
+	"store",
+	"verbosity",
+	"web_search_options",
 	"tools",
 	"tool_choice",
 	"parallel_tool_calls",
@@ -160,6 +172,20 @@ const toolChoiceSchema = z.union([
 			function: z.object({ name: z.string() }).loose(),
 		})
 		.loose(),
+	z
+		.object({
+			type: z.literal("allowed_tools"),
+			allowed_tools: z.object({
+				mode: z.enum(["auto", "required"]),
+				tools: z.array(
+					z.object({
+						type: z.literal("function"),
+						function: z.object({ name: z.string() }).loose(),
+					}),
+				),
+			}),
+		})
+		.loose(),
 ]);
 
 const responseFormatSchema = z.union([
@@ -186,7 +212,10 @@ export const chatRequestSchema = z
 		messages: z.array(messageSchema).min(1),
 		stream: z.boolean().optional().default(false),
 		stream_options: z
-			.object({ include_usage: z.boolean().optional() })
+			.object({
+				include_usage: z.boolean().optional(),
+				include_obfuscation: z.boolean().optional(),
+			})
 			.loose()
 			.optional(),
 		temperature: z.number().optional(),
@@ -199,6 +228,18 @@ export const chatRequestSchema = z
 		frequency_penalty: z.number().optional(),
 		seed: z.int().optional(),
 		user: z.string().optional(),
+		audio: z.record(z.string(), z.unknown()).optional(),
+		logprobs: z.boolean().optional(),
+		top_logprobs: z.int().min(0).max(20).optional(),
+		logit_bias: z.record(z.string(), z.number()).optional(),
+		metadata: z.record(z.string(), z.string()).optional(),
+		modalities: z.array(z.string()).optional(),
+		prediction: z.record(z.string(), z.unknown()).optional(),
+		service_tier: z.string().optional(),
+		safety_identifier: z.string().max(64).optional(),
+		store: z.boolean().optional(),
+		verbosity: z.string().optional(),
+		web_search_options: z.record(z.string(), z.unknown()).optional(),
 		tools: z.array(toolSchema).optional(),
 		tool_choice: toolChoiceSchema.optional(),
 		parallel_tool_calls: z.boolean().optional(),
@@ -247,6 +288,8 @@ export const chatResponseSchema = z
 						role: z.literal("assistant"),
 						content: z.string().nullable(),
 						refusal: z.string().nullable().optional(),
+						audio: z.record(z.string(), z.unknown()).nullable().optional(),
+						annotations: z.array(z.record(z.string(), z.unknown())).optional(),
 						tool_calls: z
 							.array(
 								z.object({
@@ -261,7 +304,7 @@ export const chatResponseSchema = z
 							.optional(),
 					})
 					.loose(),
-				logprobs: z.null(),
+				logprobs: z.unknown().nullable(),
 			}),
 		),
 		usage: usageSchema,
@@ -290,6 +333,7 @@ export const chatChunkSchema = z
 				finish_reason: z
 					.enum(["stop", "length", "tool_calls", "content_filter"])
 					.nullable(),
+				logprobs: z.unknown().nullable().optional(),
 			}),
 		),
 		usage: usageSchema.nullish(),
@@ -378,10 +422,14 @@ function mapMessage(m: z.infer<typeof messageSchema>): CanonicalMessage {
 		msg.toolCallId = stripThoughtSignatureId(m.tool_call_id);
 	if (m.role === "assistant") {
 		const raw = m as unknown as Record<string, unknown>;
-		const reasoning = openaiReasoningFromProviderFields(
-			extraContent(raw.provider_specific_fields),
+		const providerFields = extraContent(raw.provider_specific_fields);
+		const reasoning = openaiReasoningFromProviderFields(providerFields);
+		const mergedProviderFields = mergeProviderFields(
+			providerFields,
+			reasoning !== undefined ? { openai: { reasoning } } : undefined,
 		);
-		if (reasoning !== undefined) msg.providerFields = { openai: { reasoning } };
+		if (mergedProviderFields !== undefined)
+			msg.providerFields = mergedProviderFields;
 	}
 	return msg;
 }
@@ -389,7 +437,12 @@ function mapMessage(m: z.infer<typeof messageSchema>): CanonicalMessage {
 function mapToolChoice(
 	tc: z.infer<typeof toolChoiceSchema>,
 ): CanonicalToolChoice {
-	return typeof tc === "string" ? tc : { name: tc.function.name };
+	if (typeof tc === "string") return tc;
+	if (tc.type === "function") return { name: tc.function.name };
+	return {
+		allowedTools: tc.allowed_tools.tools.map((tool) => tool.function.name),
+		mode: tc.allowed_tools.mode,
+	};
 }
 
 function mapResponseFormat(
@@ -415,6 +468,7 @@ export function toCanonicalChatRequest(
 ): CanonicalChatRequest {
 	const u: CanonicalChatRequest = {
 		callType: "chat",
+		publicWire: "chat_completions",
 		model: req.model,
 		messages: req.messages.map(mapMessage),
 		stream: req.stream,
@@ -434,6 +488,39 @@ export function toCanonicalChatRequest(
 		u.frequencyPenalty = req.frequency_penalty;
 	if (req.seed !== undefined) u.seed = req.seed;
 	if (req.user !== undefined) u.user = req.user;
+	const chatTransport = {
+		...(req.audio !== undefined ? { audio: req.audio } : {}),
+		...(req.logprobs !== undefined ? { logprobs: req.logprobs } : {}),
+		...(req.top_logprobs !== undefined
+			? { topLogprobs: req.top_logprobs }
+			: {}),
+		...(req.logit_bias !== undefined ? { logitBias: req.logit_bias } : {}),
+		...(req.metadata !== undefined ? { metadata: req.metadata } : {}),
+		...(req.modalities !== undefined ? { modalities: req.modalities } : {}),
+		...(req.prediction !== undefined ? { prediction: req.prediction } : {}),
+		...(req.service_tier !== undefined
+			? { serviceTier: req.service_tier }
+			: {}),
+		...(req.safety_identifier !== undefined
+			? { safetyIdentifier: req.safety_identifier }
+			: {}),
+		...(req.store !== undefined ? { store: req.store } : {}),
+		...(req.verbosity !== undefined ? { verbosity: req.verbosity } : {}),
+		...(req.web_search_options !== undefined
+			? { webSearchOptions: req.web_search_options }
+			: {}),
+		...(req.stream_options?.include_obfuscation !== undefined
+			? {
+					streamOptions: {
+						include_obfuscation: req.stream_options.include_obfuscation,
+					},
+				}
+			: {}),
+	};
+	if (Object.keys(chatTransport).length > 0) {
+		u.chatTransport = chatTransport;
+		u.requiresNativeWire = true;
+	}
 	if (req.parallel_tool_calls !== undefined)
 		u.parallelToolCalls = req.parallel_tool_calls;
 	const reasoningEffort = req.reasoning?.effort ?? req.reasoning_effort;
@@ -592,12 +679,16 @@ export function toOpenAIChatResponse(
 			return {
 				index: c.index,
 				finish_reason: c.finishReason,
-				logprobs: null,
+				logprobs: c.logprobs ?? null,
 				message: {
 					role: "assistant" as const,
 					content: c.message.content,
 					// OpenAI always includes `refusal` (null when the model did not refuse).
 					refusal: c.message.refusal ?? null,
+					...(c.message.audio !== undefined ? { audio: c.message.audio } : {}),
+					...(c.message.annotations !== undefined
+						? { annotations: c.message.annotations }
+						: {}),
 					...(c.message.reasoning !== undefined
 						? { reasoning: c.message.reasoning }
 						: {}),
@@ -637,6 +728,7 @@ export function toOpenAIChatChunk(
 		choices: chunk.choices.map((c) => ({
 			index: c.index,
 			finish_reason: c.finishReason,
+			...(c.logprobs !== undefined ? { logprobs: c.logprobs } : {}),
 			delta: {
 				...(c.delta.role !== undefined ? { role: c.delta.role } : {}),
 				// OpenAI: the first delta (with role) carries content:"" and refusal:null.
@@ -653,6 +745,10 @@ export function toOpenAIChatChunk(
 					: c.delta.role !== undefined
 						? { refusal: null }
 						: {}),
+				...(c.delta.audio !== undefined ? { audio: c.delta.audio } : {}),
+				...(c.delta.annotations !== undefined
+					? { annotations: c.delta.annotations }
+					: {}),
 				...(c.delta.toolCalls
 					? {
 							tool_calls: c.delta.toolCalls.map((tc) =>

@@ -63,6 +63,16 @@ test("thought signature id: separator cannot collide with base64 signatures", ()
 	});
 });
 
+test("thought signature id: long signatures stay in extension fields without invalidating ids", () => {
+	const signature = "a".repeat(200);
+	assert.equal(
+		encodeThoughtSignatureId("call_1", {
+			google: { thought_signature: signature },
+		}),
+		"call_1",
+	);
+});
+
 test("thought signature id: strip removes the suffix from tool-result references", () => {
 	assert.equal(stripThoughtSignatureId("call_1__thought__sig"), "call_1");
 	assert.equal(stripThoughtSignatureId("call_1"), "call_1");

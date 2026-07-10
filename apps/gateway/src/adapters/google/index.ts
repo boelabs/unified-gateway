@@ -41,6 +41,11 @@ import type {
 	Adapter,
 } from "#adapters/types.ts";
 
+import {
+	providerFieldsWithGoogleContentParts,
+	googleContentPartsFromProviderFields,
+} from "#core/providerSpecificFields.ts";
+
 import type {
 	CanonicalEmbeddingsResponse,
 	CanonicalEmbeddingsRequest,
@@ -233,10 +238,22 @@ function buildGeminiBody(
 			continue;
 		}
 		if (m.role === "assistant") {
-			const parts: Record<string, unknown>[] = [];
-			if (m.content) parts.push(...contentToParts(m.content));
+			const nativeParts = googleContentPartsFromProviderFields(
+				m.providerFields,
+			);
+			const parts: Record<string, unknown>[] = nativeParts ?? [];
+			for (const part of nativeParts ?? []) {
+				const call = part.functionCall as
+					| { id?: unknown; name?: unknown }
+					| undefined;
+				if (typeof call?.id === "string" && typeof call.name === "string")
+					toolNameById.set(call.id, call.name);
+			}
+			if (nativeParts === undefined && m.content)
+				parts.push(...contentToParts(m.content));
 			for (const tc of m.toolCalls ?? []) {
 				toolNameById.set(tc.id, tc.name);
+				if (nativeParts !== undefined) continue;
 				let args: unknown = {};
 				try {
 					args = tc.arguments ? JSON.parse(tc.arguments) : {};
@@ -294,9 +311,17 @@ function buildGeminiBody(
 	const gen: Record<string, unknown> = {};
 	if (req.temperature !== undefined) gen.temperature = req.temperature;
 	if (req.topP !== undefined) gen.topP = req.topP;
+	const extraTopK = req.extraBody?.top_k;
+	if (req.topK !== undefined) gen.topK = req.topK;
+	else if (typeof extraTopK === "number") gen.topK = extraTopK;
 	if (req.maxTokens !== undefined) gen.maxOutputTokens = req.maxTokens;
 	if (req.stop !== undefined) gen.stopSequences = req.stop;
 	if (req.n !== undefined) gen.candidateCount = req.n;
+	if (req.presencePenalty !== undefined)
+		gen.presencePenalty = req.presencePenalty;
+	if (req.frequencyPenalty !== undefined)
+		gen.frequencyPenalty = req.frequencyPenalty;
+	if (req.seed !== undefined) gen.seed = req.seed;
 	const thinkingConfig = geminiThinkingConfig(req, ctx);
 	if (thinkingConfig !== undefined) gen.thinkingConfig = thinkingConfig;
 	applyResponseFormat(gen, req);
@@ -322,15 +347,20 @@ function buildGeminiBody(
 		if (req.toolChoice === "auto") fc.mode = "AUTO";
 		else if (req.toolChoice === "none") fc.mode = "NONE";
 		else if (req.toolChoice === "required") fc.mode = "ANY";
-		else {
+		else if ("name" in req.toolChoice) {
 			fc.mode = "ANY";
 			fc.allowedFunctionNames = [req.toolChoice.name];
+		} else {
+			fc.mode = req.toolChoice.mode === "required" ? "ANY" : "AUTO";
+			fc.allowedFunctionNames = req.toolChoice.allowedTools;
 		}
 		body.toolConfig = { functionCallingConfig: fc };
 	}
 
 	body.safetySettings = DEFAULT_SAFETY_SETTINGS.map((s) => ({ ...s }));
-	return mergeExtraBody(body, req.extraBody, GEMINI_BODY_MANAGED_KEYS);
+	const extraBody = req.extraBody ? { ...req.extraBody } : undefined;
+	if (extraBody !== undefined) delete extraBody.top_k;
+	return mergeExtraBody(body, extraBody, GEMINI_BODY_MANAGED_KEYS);
 }
 
 /* --------------------------------------------------- Gemini -> canonical parse */
@@ -709,6 +739,10 @@ function candidateToChoice(
 	};
 	if (reasoning.length > 0) message.reasoning = reasoning.join("");
 	if (toolCalls.length > 0) message.toolCalls = toolCalls;
+	if (parts.some((part) => geminiPartThoughtSignature(part) !== undefined))
+		message.providerFields = providerFieldsWithGoogleContentParts(
+			parts as unknown as Record<string, unknown>[],
+		);
 	return {
 		index: c.index ?? index,
 		finishReason: mapGeminiFinish(c.finishReason, toolCalls.length > 0),
@@ -756,7 +790,8 @@ const chat: ChatHandler = {
 	async *parseStream(stream, ctx) {
 		const id = `gen-${randomUUID()}`;
 		const created = Math.floor(Date.now() / 1000);
-		let roleSent = false;
+		const roleSent = new Set<number>();
+		const contentParts = new Map<number, Record<string, unknown>[]>();
 		for await (const event of parseSSE(stream)) {
 			if (event.data === "[DONE]") return;
 			let json: GeminiResponse;
@@ -765,50 +800,68 @@ const chat: ChatHandler = {
 			} catch {
 				continue;
 			}
-			const candidate = json.candidates?.[0];
-			const parts = candidate?.content?.parts ?? [];
-			// Exclude reasoning (thought) parts: they are not visible content and do not count as the first token.
-			const text = parts
-				.filter((p) => !p.thought)
-				.map((p) => p.text ?? "")
-				.join("");
-			const reasoning = parts
-				.filter((p) => p.thought)
-				.map((p) => p.text ?? "")
-				.join("");
-			const hasToolCall = parts.some((p) => p.functionCall);
-			const delta: CanonicalChatStreamChunk["choices"][number]["delta"] = {};
-			if (!roleSent) {
-				delta.role = "assistant";
-				roleSent = true;
-			}
-			if (text) delta.content = text;
-			if (reasoning) delta.reasoning = reasoning;
-			if (hasToolCall) {
-				delta.toolCalls = parts
-					.filter((p) => p.functionCall)
-					.map((p, i) => {
-						const extraContent = geminiToolCallExtra(p);
-						return {
-							index: i,
-							id: p.functionCall!.id ?? `call_0_${i}`,
-							name: p.functionCall!.name ?? "",
-							arguments: JSON.stringify(p.functionCall!.args ?? {}),
-							...(extraContent !== undefined ? { extraContent } : {}),
-						};
-					});
-			}
+			const choices = (json.candidates ?? []).map(
+				(candidate, fallbackIndex) => {
+					const index = candidate.index ?? fallbackIndex;
+					const parts = candidate.content?.parts ?? [];
+					const accumulated = contentParts.get(index) ?? [];
+					accumulated.push(
+						...(parts as unknown as Record<string, unknown>[]).map((part) =>
+							structuredClone(part),
+						),
+					);
+					contentParts.set(index, accumulated);
+					const text = parts
+						.filter((part) => !part.thought)
+						.map((part) => part.text ?? "")
+						.join("");
+					const reasoning = parts
+						.filter((part) => part.thought)
+						.map((part) => part.text ?? "")
+						.join("");
+					const hasToolCall = parts.some((part) => part.functionCall);
+					const delta: CanonicalChatStreamChunk["choices"][number]["delta"] =
+						{};
+					if (!roleSent.has(index)) {
+						delta.role = "assistant";
+						roleSent.add(index);
+					}
+					if (text) delta.content = text;
+					if (reasoning) delta.reasoning = reasoning;
+					if (hasToolCall) {
+						delta.toolCalls = parts
+							.filter((part) => part.functionCall)
+							.map((part, toolIndex) => {
+								const extraContent = geminiToolCallExtra(part);
+								return {
+									index: toolIndex,
+									id: part.functionCall!.id ?? `call_${index}_${toolIndex}`,
+									name: part.functionCall!.name ?? "",
+									arguments: JSON.stringify(part.functionCall!.args ?? {}),
+									...(extraContent !== undefined ? { extraContent } : {}),
+								};
+							});
+					}
+					if (
+						candidate.finishReason != null &&
+						accumulated.some((part) =>
+							geminiPartThoughtSignature(part as GeminiPart),
+						)
+					)
+						delta.providerFields =
+							providerFieldsWithGoogleContentParts(accumulated);
+					return {
+						index,
+						delta,
+						finishReason: mapGeminiFinish(candidate.finishReason, hasToolCall),
+					};
+				},
+			);
 			const chunk: CanonicalChatStreamChunk = {
 				id,
 				created,
 				model: json.modelVersion ?? ctx.upstreamModel,
-				choices: [
-					{
-						index: 0,
-						delta,
-						finishReason: mapGeminiFinish(candidate?.finishReason, hasToolCall),
-					},
-				],
+				choices,
 			};
 			if (json.usageMetadata) chunk.usage = mapGeminiUsage(json.usageMetadata);
 			yield chunk;

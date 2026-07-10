@@ -14,7 +14,7 @@ curl -X POST "$GATEWAY/v1/chat/completions" \
   }'
 ```
 
-Exact OpenAI-compatible request/response shape. Every field below is normalized into the same
+OpenAI-compatible request/response shape. Every field below is normalized into the same
 canonical request regardless of which endpoint or provider ultimately serves it — see
 [Architecture](/docs/architecture) for the full pipeline.
 
@@ -24,7 +24,9 @@ canonical request regardless of which endpoint or provider ultimately serves it 
 text, image, audio, file), `stream`, `stream_options.include_usage`, `temperature`, `top_p`,
 `max_tokens`/`max_completion_tokens`, `stop`, `n`, `presence_penalty`, `frequency_penalty`, `seed`,
 `user`, `tools`, `tool_choice`, `parallel_tool_calls`, `response_format`, `reasoning_effort`,
-`prompt_cache_key`, and `extra_body` for provider-specific fields the gateway doesn't manage itself.
+`prompt_cache_key`, `audio`, `logprobs`, `top_logprobs`, `logit_bias`, `metadata`, `modalities`,
+`prediction`, `service_tier`, `safety_identifier`, `store`, `verbosity`, `web_search_options`, and
+`extra_body` for provider-specific fields the gateway doesn't manage itself.
 
 Whether a given deployment actually **supports** a field you send is a per-model catalog declaration —
 see [Parameter policy](/docs/parameter-policy) for what happens when it doesn't (`drop`, `error`, or
@@ -33,8 +35,9 @@ see [Parameter policy](/docs/parameter-policy) for what happens when it doesn't 
 ## Tools and tool choice
 
 `tools` (JSON Schema `parameters`) and `tool_choice` (`"auto"`, `"none"`, `"required"`, or
-`{"type": "function", "function": {"name": "..."}}`) follow the OpenAI shape. Provider translation
-happens per-adapter — notably Google AI Studio narrows tool `parameters` to its own OpenAPI subset; see
+`{"type": "function", "function": {"name": "..."}}`) follow the OpenAI shape. The
+`allowed_tools` form is also accepted and retains both the allowed subset and its `auto` or `required`
+mode. Provider translation happens per-adapter — notably Google AI Studio narrows tool `parameters` to its own OpenAPI subset; see
 [Google AI Studio](/docs/providers-google).
 
 Some providers return opaque tool-call state that must round-trip with the tool call (e.g. Gemini
@@ -74,7 +77,9 @@ declares support. Video generation is exposed through the dedicated `/v1/videos`
 ## Streaming
 
 `"stream": true` returns Server-Sent Events with the standard `chat.completion.chunk` shape, including
-`delta.reasoning` for a visible reasoning summary where the model/contract supports it. See
+log probabilities, audio, annotations, usage, and `delta.reasoning` where the model/contract supports
+them. An error sent inside an otherwise successful upstream stream terminates the request as an error
+instead of being mistaken for a clean end. See
 [Streaming](/docs/streaming) for the full SSE contract shared across endpoints.
 
 ## What to read next

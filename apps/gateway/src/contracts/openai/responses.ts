@@ -25,7 +25,7 @@ const textConfigSchema = z
 	.loose();
 
 /**
- * Contract of the OpenResponses API (/v1/responses), identical to OpenAI's Responses API.
+ * Contract of the OpenResponses API (/v1/responses), compatible with OpenAI's Responses API.
  * Spec: https://www.openresponses.org/specification
  *
  * The `input`, `tools`, and `output` items are complex and evolve; we validate the top-level
@@ -69,6 +69,7 @@ export const responsesRequestSchema = z
 		extra_body: z.record(z.string(), z.unknown()).optional(),
 		/** Server-side conversation objects: accepted standalone, but not combinable with previous_response_id. */
 		conversation: z.unknown().optional(),
+		context_management: z.array(z.record(z.string(), z.unknown())).optional(),
 		/** Prompt templates (registry-backed): not supported by this gateway. */
 		prompt: z.unknown().optional(),
 	})
@@ -88,6 +89,33 @@ export const responsesRequestSchema = z
 	.refine((d) => !(d.conversation != null && d.previous_response_id != null), {
 		error: "'conversation' cannot be combined with 'previous_response_id'",
 		path: ["conversation"],
+	})
+	.refine((d) => d.conversation == null, {
+		error:
+			"Conversation objects are not supported; use previous_response_id for gateway-managed state",
+		path: ["conversation"],
 	});
 
 export type ResponsesRequest = z.infer<typeof responsesRequestSchema>;
+
+export const compactResponseRequestSchema = z
+	.object({
+		model: z.string(),
+		input: z
+			.union([z.string(), z.array(z.record(z.string(), z.unknown()))])
+			.optional(),
+		previous_response_id: z.string().nullish(),
+		instructions: z.string().nullish(),
+		prompt_cache_key: z.string().max(64).optional(),
+	})
+	.strict()
+	.refine(
+		(data) => data.input !== undefined || data.previous_response_id != null,
+		{
+			error: "Either 'input' or 'previous_response_id' is required",
+		},
+	);
+
+export type CompactResponseRequest = z.infer<
+	typeof compactResponseRequestSchema
+>;

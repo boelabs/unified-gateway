@@ -22,6 +22,7 @@
  * can never occur inside a signature and splitting on its first occurrence is unambiguous.
  */
 export const LITELLM_THOUGHT_SEPARATOR = "__thought__";
+const MAX_PUBLIC_TOOL_CALL_ID_LENGTH = 64;
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
 	if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -64,6 +65,82 @@ export function mergeProviderExtraContent(
 
 /** Alias: message/choice-level providerFields records merge with the same semantics. */
 export const mergeProviderFields = mergeProviderExtraContent;
+
+/** Native Responses output items retained when the canonical subset cannot represent them. */
+export function responsesOutputFromProviderFields(
+	fields: Record<string, unknown> | undefined,
+): Record<string, unknown>[] | undefined {
+	const openai = recordValue(fields?.openai);
+	const output = openai?.response_output;
+	return Array.isArray(output)
+		? output
+				.filter(
+					(item): item is Record<string, unknown> =>
+						item !== null && typeof item === "object" && !Array.isArray(item),
+				)
+				.map((item) => structuredClone(item))
+		: undefined;
+}
+
+export function providerFieldsWithResponsesOutput(
+	output: Record<string, unknown>[],
+): Record<string, unknown> {
+	return { openai: { response_output: structuredClone(output) } };
+}
+
+export type AnthropicThinkingBlock =
+	| { type: "thinking"; thinking: string; signature: string }
+	| { type: "redacted_thinking"; data: string };
+
+function isAnthropicThinkingBlock(
+	value: unknown,
+): value is AnthropicThinkingBlock {
+	const block = recordValue(value);
+	if (block?.type === "thinking")
+		return (
+			typeof block.thinking === "string" && typeof block.signature === "string"
+		);
+	return block?.type === "redacted_thinking" && typeof block.data === "string";
+}
+
+export function anthropicThinkingFromProviderFields(
+	fields: Record<string, unknown> | undefined,
+): AnthropicThinkingBlock[] | undefined {
+	const anthropic = recordValue(fields?.anthropic);
+	const blocks = anthropic?.thinking_blocks;
+	return Array.isArray(blocks)
+		? blocks
+				.filter(isAnthropicThinkingBlock)
+				.map((block) => structuredClone(block))
+		: undefined;
+}
+
+export function providerFieldsWithAnthropicThinking(
+	blocks: AnthropicThinkingBlock[],
+): Record<string, unknown> {
+	return { anthropic: { thinking_blocks: structuredClone(blocks) } };
+}
+
+export function googleContentPartsFromProviderFields(
+	fields: Record<string, unknown> | undefined,
+): Record<string, unknown>[] | undefined {
+	const google = recordValue(fields?.google);
+	const parts = google?.content_parts;
+	return Array.isArray(parts)
+		? parts
+				.filter(
+					(part): part is Record<string, unknown> =>
+						part !== null && typeof part === "object" && !Array.isArray(part),
+				)
+				.map((part) => structuredClone(part))
+		: undefined;
+}
+
+export function providerFieldsWithGoogleContentParts(
+	parts: Record<string, unknown>[],
+): Record<string, unknown> {
+	return { google: { content_parts: structuredClone(parts) } };
+}
 
 /* ===================================================== THOUGHT SIGNATURES ===
  * Gemini per-tool-call signatures, canonical form `extraContent.google.thought_signature`.
@@ -108,7 +185,9 @@ export function encodeThoughtSignatureId(
 	if (id.length === 0 || id.includes(LITELLM_THOUGHT_SEPARATOR)) return id;
 	const signature = thoughtSignatureFromExtraContent(extraContent);
 	if (signature === undefined) return id;
-	return `${id}${LITELLM_THOUGHT_SEPARATOR}${signature}`;
+	const encoded = `${id}${LITELLM_THOUGHT_SEPARATOR}${signature}`;
+	// Preserve the extension carriers instead of emitting an invalid public id.
+	return encoded.length <= MAX_PUBLIC_TOOL_CALL_ID_LENGTH ? encoded : id;
 }
 
 /**

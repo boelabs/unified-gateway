@@ -1,9 +1,12 @@
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
 import type { RouteOptions, RouteResult } from "#router/index.ts";
+import { nativeTransportForPublicWire } from "#core/transport.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { EffectiveSettings } from "#router/settings.ts";
 import type { ChatExecResult } from "#gateway/executor.ts";
+import { resolveTransport } from "#router/transport.ts";
 import { executeChat } from "#gateway/executor.ts";
+import { GatewayError } from "#core/errors.ts";
 import type { AppEnv } from "#auth/types.ts";
 import { route } from "#router/index.ts";
 import type { Context } from "hono";
@@ -56,13 +59,39 @@ export async function routeChat(
 		canonical,
 		settings.unsupportedParameterStrategy,
 	);
+	const publicWire = canonical.publicWire ?? "chat_completions";
+	const preferredTransport = nativeTransportForPublicWire(publicWire);
+	const nativeEligibility: RouteOptions["candidateEligibility"] | undefined =
+		canonical.requiresNativeWire
+			? (candidate) => {
+					if (
+						resolveTransport(candidate, "chat", preferredTransport) !==
+						preferredTransport
+					) {
+						throw new GatewayError({
+							class: "bad_request",
+							code: "native_transport_required",
+							param: null,
+							message: `The request uses ${publicWire} features that require its native transport`,
+						});
+					}
+				}
+			: undefined;
+	const candidateEligibility: RouteOptions["candidateEligibility"] | undefined =
+		eligibility || nativeEligibility
+			? (candidate) => {
+					eligibility?.(candidate);
+					nativeEligibility?.(candidate);
+				}
+			: undefined;
 	const routing = await route<ChatExecResult>(
 		canonical.model,
 		"chat",
 		{
 			clientSignal: c.req.raw.signal,
 			requestId,
-			...(eligibility ? { candidateEligibility: eligibility } : {}),
+			preferredTransport,
+			...(candidateEligibility ? { candidateEligibility } : {}),
 		},
 		(cand, ctx) =>
 			executeChat(

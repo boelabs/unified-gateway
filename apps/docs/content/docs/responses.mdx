@@ -15,6 +15,10 @@ shape: `input` instead of `messages`, `text.format` instead of `response_format`
 `reasoning: { effort, summary }` instead of `reasoning_effort`, plus multi-turn state the client doesn't
 have to resend by hand.
 
+The router prefers the native Responses transport when a deployment supports it. Inputs that only
+exist on this wire, such as built-in tools or native item types, are preserved verbatim and require a
+native deployment; they are never silently erased during conversion to another text protocol.
+
 ## Persisted state
 
 Unlike Chat Completions, a Response can be **stored** and referenced later:
@@ -40,10 +44,18 @@ variable and [Operations → `response_states` GC](/docs/operations#response_sta
 actually runs.
 
 When `store: false`, the client owns the full conversation state. Echo output items back as they were
-returned: opaque provider state rides inside `function_call.call_id` (Gemini thought signatures, as
-`<id>__thought__<signature>`) and inside `reasoning` items (`encrypted_content` for OpenAI reasoning
-models), so clients that replay ids and items verbatim need no special handling. See
+returned: opaque provider state rides inside function calls and reasoning items, so clients that replay
+ids and items verbatim need no provider-specific handling. Encrypted reasoning content is included in
+the public response only when `include` requests it; internal persisted state retains it for faithful
+continuation. See
 [Provider-specific fields](/docs/provider-specific-fields).
+
+## Compaction
+
+`POST /v1/responses/compact` accepts `model` plus `input`, `previous_response_id`, `instructions`, and
+`prompt_cache_key`. It returns a `response.compaction` resource whose opaque output item can be sent
+back in a later Responses request. The capsule is encrypted locally, contains a concise continuation
+summary rather than the full transcript, and is expanded only by the same gateway instance.
 
 ## `text.format`
 
@@ -60,12 +72,15 @@ surfaced back (`auto`, `none`, `concise`, `detailed`).
 
 Fields specific to the Responses wire contract that don't have a Chat Completions equivalent —
 `include`, `metadata`, `service_tier`, `safety_identifier`, `prompt_cache_key`, `top_logprobs`,
-`max_tool_calls` — are threaded through as-is to providers that support the Responses transport
-natively (currently OpenAI and Azure OpenAI).
+`max_tool_calls`, `truncation`, `context_management`, and `user` — are threaded through as-is to
+providers that support the Responses transport natively. Response resources include the complete
+nullable and defaulted field set required by the current OpenResponses resource schema.
 
 ## Streaming
 
-Same SSE mechanics as every other endpoint — see [Streaming](/docs/streaming).
+Same SSE mechanics as every other endpoint. Terminal upstream failure events are surfaced as errors,
+and a stored stream is committed before its terminal success event is emitted. See
+[Streaming](/docs/streaming).
 
 ## What to read next
 

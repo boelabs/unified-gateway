@@ -25,6 +25,12 @@ import type {
 } from "#core/canonical.ts";
 
 import {
+	providerFieldsWithAnthropicThinking,
+	anthropicThinkingFromProviderFields,
+	type AnthropicThinkingBlock,
+} from "#core/providerSpecificFields.ts";
+
+import {
 	effortFromBudgetTokens,
 	type ReasoningEffort,
 	isReasoningEffort,
@@ -47,9 +53,11 @@ const MESSAGES_EXTRA_BODY_MANAGED_KEYS = [
 	"stream",
 	"temperature",
 	"top_p",
+	"top_k",
 	"stop_sequences",
 	"tools",
 	"tool_choice",
+	"metadata",
 	"thinking",
 	"output_config",
 	"extra_body",
@@ -68,6 +76,9 @@ interface Block {
 	content?: unknown;
 	provider_specific_fields?: Record<string, unknown>;
 	cache_control?: Record<string, unknown>;
+	thinking?: string;
+	signature?: string;
+	data?: string;
 }
 
 /** Attaches the prompt-caching breakpoint to the canonical part if the block carries it. */
@@ -209,8 +220,24 @@ export function messagesRequestToCanonical(
 		if (m.role === "assistant") {
 			const parts: CanonicalContentPart[] = [];
 			const toolCalls: NonNullable<CanonicalMessage["toolCalls"]> = [];
+			const thinkingBlocks: AnthropicThinkingBlock[] = [];
 			for (const b of blocks) {
-				if (b.type === "tool_use") {
+				if (
+					b.type === "thinking" &&
+					typeof b.thinking === "string" &&
+					typeof b.signature === "string"
+				) {
+					thinkingBlocks.push({
+						type: "thinking",
+						thinking: b.thinking,
+						signature: b.signature,
+					});
+				} else if (
+					b.type === "redacted_thinking" &&
+					typeof b.data === "string"
+				) {
+					thinkingBlocks.push({ type: "redacted_thinking", data: b.data });
+				} else if (b.type === "tool_use") {
 					const decoded = decodeThoughtSignatureId(b.id ?? "");
 					const extraContent = mergeProviderExtraContent(
 						decoded.extraContent,
@@ -232,6 +259,9 @@ export function messagesRequestToCanonical(
 				content: parts.length > 0 ? parts : null,
 			};
 			if (toolCalls.length > 0) msg.toolCalls = toolCalls;
+			if (thinkingBlocks.length > 0)
+				msg.providerFields =
+					providerFieldsWithAnthropicThinking(thinkingBlocks);
 			messages.push(msg);
 			continue;
 		}
@@ -262,6 +292,7 @@ export function messagesRequestToCanonical(
 
 	const u: CanonicalChatRequest = {
 		callType: "chat",
+		publicWire: "messages",
 		model: req.model,
 		messages,
 		stream: req.stream,
@@ -269,7 +300,12 @@ export function messagesRequestToCanonical(
 	u.maxTokens = req.max_tokens;
 	if (req.temperature !== undefined) u.temperature = req.temperature;
 	if (req.top_p !== undefined) u.topP = req.top_p;
+	if (req.top_k !== undefined) u.topK = req.top_k;
 	if (req.stop_sequences !== undefined) u.stop = req.stop_sequences;
+	if (req.metadata !== undefined) {
+		u.messagesTransport = { metadata: req.metadata };
+		u.requiresNativeWire = true;
+	}
 	const effort = reasoningEffortFromMessages(req);
 	const display = displayFromThinking(req.thinking);
 	const summary =
@@ -318,6 +354,20 @@ export function messagesRequestToCanonical(
 	}
 	const tc = mapToolChoice(req.tool_choice);
 	if (tc !== undefined) u.toolChoice = tc;
+	const carriesNativeMessageState = messages.some((message) => {
+		if (
+			anthropicThinkingFromProviderFields(message.providerFields) !== undefined
+		)
+			return true;
+		return Array.isArray(message.content)
+			? message.content.some((part) => part.cacheControl !== undefined)
+			: false;
+	});
+	const carriesNativeToolState = u.tools?.some(
+		(tool) => tool.cacheControl !== undefined,
+	);
+	if (carriesNativeMessageState || carriesNativeToolState)
+		u.requiresNativeWire = true;
 	return u;
 }
 
@@ -367,13 +417,10 @@ export function canonicalToMessagesResponse(
 	const choice = resp.choices[0];
 	const content = choice?.message.content;
 	const blocks: Record<string, unknown>[] = [];
-	if (choice?.message.reasoning) {
-		blocks.push({
-			type: "thinking",
-			thinking: choice.message.reasoning,
-			signature: "",
-		});
-	}
+	blocks.push(
+		...(anthropicThinkingFromProviderFields(choice?.message.providerFields) ??
+			[]),
+	);
 	if (content) blocks.push({ type: "text", text: content });
 	for (const tc of choice?.message.toolCalls ?? []) {
 		const providerSpecificFields = providerSpecificFieldsFromExtraContent(
@@ -420,6 +467,7 @@ export async function* canonicalChunksToMessagesEvents(
 	let nextIndex = 0;
 	let textOpen = false;
 	let thinkingOpen = false;
+	let nativeThinking = false;
 	let textIndex = 0;
 	let thinkingIndex = 0;
 	const toolBlock = new Map<number, number>(); // canonical toolCall index -> anthropic block index
@@ -451,8 +499,36 @@ export async function* canonicalChunksToMessagesEvents(
 		if (!choice) continue;
 		if (choice.finishReason) finish = choice.finishReason;
 		const delta = choice.delta;
+		const anthropic = delta.providerFields?.anthropic as
+			| { thinking_stream?: unknown }
+			| undefined;
+		if (anthropic?.thinking_stream === true) nativeThinking = true;
+		for (const block of anthropicThinkingFromProviderFields(
+			delta.providerFields,
+		) ?? []) {
+			if (block.type === "thinking") {
+				nativeThinking = true;
+				if (thinkingOpen && block.signature.length > 0) {
+					yield sse("content_block_delta", {
+						index: thinkingIndex,
+						delta: { type: "signature_delta", signature: block.signature },
+					});
+				}
+			} else {
+				if (thinkingOpen) {
+					yield sse("content_block_stop", { index: thinkingIndex });
+					thinkingOpen = false;
+				}
+				const index = nextIndex++;
+				yield sse("content_block_start", {
+					index,
+					content_block: block,
+				});
+				yield sse("content_block_stop", { index });
+			}
+		}
 
-		if (delta.reasoning) {
+		if (delta.reasoning && nativeThinking) {
 			if (!thinkingOpen) {
 				thinkingIndex = nextIndex++;
 				thinkingOpen = true;
