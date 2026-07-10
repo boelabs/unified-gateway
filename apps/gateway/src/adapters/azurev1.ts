@@ -90,7 +90,7 @@ export function makeAzurev1Adapter(
 		| "label"
 		| "defaultTransport"
 		| "supportedChatTransports"
-		| "fileInputs"
+		| "contentInputs"
 		| "embeddings"
 	>,
 ) {

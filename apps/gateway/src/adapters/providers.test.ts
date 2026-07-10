@@ -80,6 +80,20 @@ test("chat-compatible providers do not advertise an unimplemented Responses tran
 	}
 });
 
+test("OpenAI-style transports declare portable image source capabilities", () => {
+	for (const adapter of [
+		deepseekAdapter,
+		moonshotAdapter,
+		zaiAdapter,
+		minimaxAdapter,
+		openaicompatibleAdapter,
+	]) {
+		assert.deepEqual(adapter.contentInputs?.chat_completions?.image, {
+			sources: ["url", "data_url"],
+		});
+	}
+});
+
 test("catalog: current models for each provider exist with their limits", () => {
 	assert.ok(getCatalogEntry("deepseek", "deepseek-v4-flash"));
 	assert.ok(getCatalogEntry("moonshot", "kimi-k2.7-code"));

@@ -26,9 +26,9 @@ interface CanonicalTextPart extends CanonicalCacheControlled {
 	type: "text";
 	text: string;
 }
-interface CanonicalImagePart extends CanonicalCacheControlled {
+export interface CanonicalImagePart extends CanonicalCacheControlled {
 	type: "image";
-	/** http(s) URL or data URL (base64). */
+	/** Public HTTPS URL or base64 data URL. */
 	url: string;
 	detail?: "auto" | "low" | "high";
 }

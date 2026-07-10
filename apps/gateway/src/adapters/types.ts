@@ -44,15 +44,24 @@ export interface UpstreamError {
 /** HTTP request built toward the upstream. The executor runs it with fetch. */
 type UpstreamBody = NonNullable<RequestInit["body"]>;
 
-export type FileInputSource = "file_id" | "file_url" | "file_data";
+export type ContentInputSource = "provider_file_id" | "url" | "data_url";
 
-export interface FileInputTransportSupport {
-	/** Source forms the transport can receive without provider-side uploads. */
-	sources: readonly FileInputSource[];
+export interface ContentPartInputSupport {
+	/** Source forms the transport can receive without gateway-side materialization. */
+	sources: readonly ContentInputSource[];
 	/** Optional MIME allowlist. Supports exact values and type wildcards such as text/*. */
 	mimeTypes?: readonly string[];
 	/** Inline byte limit enforced before the adapter serializes the request. */
 	maxBytes?: number;
+}
+
+/**
+ * Multimodal input capabilities for one upstream transport. New canonical content kinds belong here
+ * instead of in provider-specific routing branches.
+ */
+export interface ContentInputTransportSupport {
+	file?: ContentPartInputSupport;
+	image?: ContentPartInputSupport;
 }
 
 export interface UpstreamHttpRequest<TBody extends UpstreamBody = string> {
@@ -189,8 +198,10 @@ export interface Adapter {
 	embeddings?: EmbeddingsHandler;
 	/** Upstream transports per CallType. */
 	transports?: Partial<Record<CallType, AdapterTransports>>;
-	/** Native file-input support by upstream transport. Missing means text fallback only. */
-	fileInputs?: Partial<Record<UpstreamTransport, FileInputTransportSupport>>;
+	/** Native multimodal-input support by upstream transport. */
+	contentInputs?: Partial<
+		Record<UpstreamTransport, ContentInputTransportSupport>
+	>;
 	/**
 	 * Reasoning-control families this adapter can emit to the upstream. Validated at boot against the
 	 * catalog: a model with a `reasoning.kind` outside this set fails at startup (it used to fail at

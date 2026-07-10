@@ -1,27 +1,30 @@
 ---
-title: "File inputs"
-description: "Portable PDF, JSON, and text attachments across text contracts and upstream transports."
+title: "Content inputs"
+description: "Portable images, PDFs, JSON, and text attachments across contracts and transports."
 ---
 
-File inputs travel through the canonical text pipeline instead of being tied to one public endpoint.
-The gateway accepts them from:
+Multimodal inputs travel through the canonical text pipeline instead of being tied to one public
+endpoint or provider. The gateway accepts:
 
+- Image URL/data-URL parts from Chat Completions, Responses, and Messages.
 - Chat Completions `type: "file"` parts (`file_id` or a base64 `file_data`; an HTTPS URL in
   `file_data` is accepted for OpenRouter compatibility).
 - Responses `type: "input_file"` parts (`file_id`, `file_url`, or base64 `file_data`).
 - Messages `type: "document"` blocks with `base64`, `url`, or `file` sources.
 
-For every part, exactly one source is required. A `file_id` belongs to the provider that created it;
-without a gateway Files API there is no safe way to replay that opaque identifier on another provider.
+For every file part, exactly one source is required. A `file_id` belongs to the provider that created
+it; without a gateway Files API there is no safe way to replay that opaque identifier on another
+provider.
 
 ## Portable routing
 
-The resolver is request-scoped and memoized. It declares native support per adapter transport, then
-chooses the least destructive path for each routing candidate:
+The resolver is request-scoped and memoized. Every adapter transport declares a capability matrix for
+each canonical content kind (`image` and `file`) and source (`url`, `data_url`, or
+`provider_file_id`). The resolver then chooses the least destructive path for each routing candidate:
 
-1. Keep a native URL or provider file reference when the transport accepts it.
-2. Materialize an HTTPS URL once as base64 when the provider accepts inline data but not external
-   URLs. This is the path used by the Gemini `generateContent` adapter.
+1. Keep a native URL, data URL, or provider file reference when the transport accepts it.
+2. Materialize an HTTPS image or file URL once as base64 when the provider accepts inline data but not
+   external URLs. This is the compatibility baseline used by Gemini `generateContent`.
 3. Convert UTF-8 text formats to a text content part when the candidate has no native file input.
 4. Extract text from a text-based PDF for a non-native candidate.
 
@@ -78,22 +81,23 @@ curl -X POST "$GATEWAY/v1/responses" \
 
 Portable materialization is intentionally bounded:
 
-- 20 MB per URL materialization or local parser input. Inline native inputs may be larger when the
+- 20 MB per image/file URL materialization or local parser input. Inline native inputs may be larger when the
   declared transport allows it (up to the 50 MB gateway ceiling).
 - 50 MB combined per request.
 - 200 pages per locally parsed PDF.
 - 2,000,000 characters of extracted text.
 - 15 seconds per URL fetch and at most three redirects.
+- At most four concurrent URL fetches per request; output order always matches input order.
 
 Only public HTTPS URLs are fetched. Credentials and fragments are rejected, and every redirect and
 resolved address is checked against loopback, private, link-local, reserved, documentation, multicast,
 and other non-public ranges. Production deployments should still enforce an outbound network policy;
 application checks complement egress controls rather than replace them.
 
-Requests containing file inputs bypass the response cache: URL contents can change while the URL stays
-the same, and large base64 payloads are poor cache keys. Parser activity is recorded in request log
-metadata (`engine`, native/parsed counts, and URL materialization count) without logging extracted
-content.
+Requests containing image, audio, or file inputs bypass the response cache: URL contents can change
+while the URL stays the same, and large base64 payloads are poor cache keys. Resolution activity is
+recorded in request-log `contentInputs` metadata (native/parsed/materialized counts by content kind)
+without logging extracted content.
 
 ## Why there is no gateway Files API yet
 

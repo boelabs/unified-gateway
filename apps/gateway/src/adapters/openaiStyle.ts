@@ -75,8 +75,8 @@ export interface OpenAIStyleConfig {
 	defaultTransport: "chat_completions" | "responses";
 	/** Text transports actually exposed by this provider. Defaults to only the default transport. */
 	supportedChatTransports?: readonly ("chat_completions" | "responses")[];
-	/** Native file-input forms exposed by each configured text transport. */
-	fileInputs?: Adapter["fileInputs"];
+	/** Native multimodal-input forms exposed by each configured text transport. */
+	contentInputs?: Adapter["contentInputs"];
 	/** Output-limit field (chat_completions transport only). OpenAI: max_completion_tokens; compatibles: max_tokens. */
 	maxTokensField: "max_completion_tokens" | "max_tokens";
 	/** OpenAI uses Bearer; Azure v1 with a key uses the api-key header. */
@@ -781,6 +781,14 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 	const chatTransports = config.supportedChatTransports ?? [
 		config.defaultTransport,
 	];
+	const contentInputs: NonNullable<Adapter["contentInputs"]> = {};
+	for (const transport of chatTransports) {
+		contentInputs[transport] = {
+			// Both OpenAI text wires represent remote and inline images with the same URL field.
+			image: { sources: ["url", "data_url"] },
+			...(config.contentInputs?.[transport] ?? {}),
+		};
+	}
 	if (!chatTransports.includes(config.defaultTransport)) {
 		throw new Error(
 			`${config.label}: default transport "${config.defaultTransport}" is not supported`,
@@ -830,9 +838,7 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 			"fixed",
 			"chat_template_flag",
 		]),
-		...(config.fileInputs !== undefined
-			? { fileInputs: config.fileInputs }
-			: {}),
+		contentInputs,
 		...(imageTransportConfig
 			? {
 					imageGeneration: makeImageHandler("generation"),

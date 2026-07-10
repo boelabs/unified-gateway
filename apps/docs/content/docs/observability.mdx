@@ -23,7 +23,7 @@ Every request writes one row, queryable via `GET /admin/logs` (paginated) or agg
 | `promptTokens`, `completionTokens`, `totalTokens`, `costCents` | Usage and its computed cost — see [Cost accounting](/docs/cost-accounting). |
 | `durationMs`, `ttftMs`, `upstreamTtftMs` | End-to-end duration, time-to-first-token, and the **upstream-only** TTFT (isolated from the gateway's own overhead) — the same timing [Routing](/docs/routing)'s latency-based strategy uses. |
 | `cacheHit`, `retries`, `fallbackUsed` | Whether this was a cache hit (logged with `cost: null` — see [Cost accounting](/docs/cost-accounting)), how many router retries it took, and whether a fallback chain was used. |
-| `metadata` | Free-form: deployment `label` at the time of the request, `parameterPolicy` (which parameters were dropped, if any), reasoning `requested`/`effective`/`clamped`. |
+| `metadata` | Free-form: deployment `label`, `parameterPolicy`, reasoning `requested`/`effective`/`clamped`, and `contentInputs` native/parsed/materialized counts. |
 | `attempts` | The same per-attempt log exposed via `x-unified-routing-metadata` (see [Headers](/docs/headers)) — every deployment tried, not just the winner. |
 | `requestBody`, `responseBody` | Truncated at `MAX_STRING_LENGTH_PROMPT_IN_DB` (default 8000 chars) — storage only, never affects what's sent upstream. |
 

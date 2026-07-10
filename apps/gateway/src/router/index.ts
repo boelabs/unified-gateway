@@ -51,6 +51,8 @@ interface AttemptRecord {
 	ok: boolean;
 	errorClass?: string;
 	httpStatus?: number;
+	/** Present for failures intentionally excluded from deployment health and cooldown accounting. */
+	deploymentHealth?: "neutral";
 	/** Raw provider status (if the failure came from upstream). */
 	providerStatus?: number;
 	/** Raw provider body (truncated before storage). */
@@ -125,6 +127,8 @@ export async function route<T>(
 	let attempts = 0;
 	let lastError: GatewayError | undefined;
 	let eligibilityError: GatewayError | undefined;
+	let neutralCandidateError: GatewayError | undefined;
+	let deploymentFailureCount = 0;
 	const attemptLog: AttemptRecord[] = [];
 
 	type PublicModelAttempt =
@@ -262,12 +266,14 @@ export async function route<T>(
 						ms: Date.now() - startedAt,
 						ok: false,
 						errorClass: "client_closed_request",
+						deploymentHealth: "neutral",
 					});
 					const cancelled = new GatewayError({
 						class: "bad_request",
 						status: 499,
 						code: "client_closed_request",
 						message: "Client closed the request before completion",
+						routingScope: "request",
 					});
 					cancelled.attempts = attemptLog;
 					throw cancelled;
@@ -290,27 +296,34 @@ export async function route<T>(
 						ok: false,
 						errorClass: ge.class,
 						httpStatus: ge.httpStatus,
+						deploymentHealth: "neutral",
 					});
 					ge.attempts = attemptLog;
 					throw ge;
 				}
-				// Attach upstream detail to the cooldown cause (if this failure triggers it).
-				const cause: CooldownCause = {
-					class: ge.class,
-					message: ge.message,
-					...(ge.provider?.status !== undefined
-						? { status: ge.provider.status }
-						: {}),
-					...(ge.provider?.body !== undefined
-						? { body: ge.provider.body }
-						: {}),
-				};
-				await onAttemptFail(
-					chosen.row.id,
-					settings.allowedFails,
-					settings.cooldownSeconds,
-					cause,
-				);
+				if (ge.deploymentHealth === "neutral") {
+					await onAttemptCancel(chosen.row.id);
+					neutralCandidateError ??= ge;
+				} else {
+					// Attach upstream detail to the cooldown cause (if this failure triggers it).
+					const cause: CooldownCause = {
+						class: ge.class,
+						message: ge.message,
+						...(ge.provider?.status !== undefined
+							? { status: ge.provider.status }
+							: {}),
+						...(ge.provider?.body !== undefined
+							? { body: ge.provider.body }
+							: {}),
+					};
+					await onAttemptFail(
+						chosen.row.id,
+						settings.allowedFails,
+						settings.cooldownSeconds,
+						cause,
+					);
+					deploymentFailureCount += 1;
+				}
 				lastError = ge;
 				attemptLog.push({
 					deploymentId: chosen.row.id,
@@ -321,6 +334,9 @@ export async function route<T>(
 					ok: false,
 					errorClass: ge.class,
 					httpStatus: ge.httpStatus,
+					...(ge.deploymentHealth === "neutral"
+						? { deploymentHealth: "neutral" as const }
+						: {}),
 					...(ge.provider?.status !== undefined
 						? { providerStatus: ge.provider.status }
 						: {}),
@@ -390,6 +406,10 @@ export async function route<T>(
 	if (attempts === 0 && eligibilityError) {
 		eligibilityError.attempts = attemptLog;
 		throw eligibilityError;
+	}
+	if (deploymentFailureCount === 0 && neutralCandidateError) {
+		neutralCandidateError.attempts = attemptLog;
+		throw neutralCandidateError;
 	}
 
 	// If it cut on cooldown (possibly with no attempts in THIS request), retrieve the stored causes

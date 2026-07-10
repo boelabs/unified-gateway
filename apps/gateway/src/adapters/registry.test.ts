@@ -69,3 +69,55 @@ test("rejects chat support declaration without handler implementation", () => {
 	};
 	assert.throws(() => registerAdapter(broken), /does not implement/);
 });
+
+test("rejects content inputs declared for an unsupported transport", () => {
+	__resetRegistry();
+	const broken: Adapter = {
+		key: "brokeninputs",
+		credentials: { required: [] },
+		supportedCallTypes: new Set(["chat"]),
+		chat: fakeChat,
+		transports: {
+			chat: { supported: ["chat_completions"], default: "chat_completions" },
+		},
+		contentInputs: {
+			responses: { image: { sources: ["url"] } },
+		},
+	};
+	assert.throws(() => registerAdapter(broken), /unsupported chat transport/);
+});
+
+test("rejects malformed content input limits and source lists", () => {
+	__resetRegistry();
+	const base: Adapter = {
+		key: "brokeninputs",
+		credentials: { required: [] },
+		supportedCallTypes: new Set(["chat"]),
+		chat: fakeChat,
+		transports: {
+			chat: { supported: ["chat_completions"], default: "chat_completions" },
+		},
+	};
+	assert.throws(
+		() =>
+			registerAdapter({
+				...base,
+				contentInputs: {
+					chat_completions: { image: { sources: [] } },
+				},
+			}),
+		/no sources/,
+	);
+	assert.throws(
+		() =>
+			registerAdapter({
+				...base,
+				contentInputs: {
+					chat_completions: {
+						file: { sources: ["data_url"], maxBytes: 0 },
+					},
+				},
+			}),
+		/invalid file maxBytes/,
+	);
+});

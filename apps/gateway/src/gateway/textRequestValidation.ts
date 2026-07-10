@@ -24,6 +24,7 @@ export function assertTextRequestSupported(
 	if (req.tools && req.tools.length > 0 && !meta.capabilities.tools) {
 		throw new GatewayError({
 			class: "bad_request",
+			deploymentHealth: "neutral",
 			message: "The selected model does not support tools",
 			code: "unsupported_model_capability",
 			param: "tools",
@@ -36,6 +37,7 @@ export function assertTextRequestSupported(
 	) {
 		throw new GatewayError({
 			class: "bad_request",
+			deploymentHealth: "neutral",
 			message: "The selected model does not support vision inputs",
 			code: "unsupported_model_capability",
 			param: "messages",
@@ -48,6 +50,7 @@ export function assertTextRequestSupported(
 	) {
 		throw new GatewayError({
 			class: "bad_request",
+			deploymentHealth: "neutral",
 			message:
 				"The selected model does not support JSON Schema structured outputs",
 			code: "unsupported_model_capability",
@@ -66,6 +69,7 @@ export function assertTextRequestSupported(
 	if (requestedEffort !== undefined && requestedEffort !== "none" && !reasons) {
 		throw new GatewayError({
 			class: "bad_request",
+			deploymentHealth: "neutral",
 			message: "The selected model does not support reasoning controls",
 			code: "unsupported_model_capability",
 			param: "reasoning",

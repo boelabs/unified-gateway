@@ -48,6 +48,7 @@ Requested via the `x-unified-routing-metadata` header, added to the JSON body:
 
 `attempts` includes every deployment the router tried for this request (including ones that failed
 before the winning attempt), each with its latency and, on failure, `error_class` and `http_status`.
+An attempt rejected as candidate-incompatible also carries `health_impact: "neutral"`.
 See [Routing](/docs/routing) for what `routing_strategy` and `fallback_used` mean, and
 [Parameter policy](/docs/parameter-policy) for `unsupported_parameter_strategy`.
 

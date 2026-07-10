@@ -116,6 +116,7 @@ function partToGemini(p: CanonicalContentPart): Record<string, unknown> {
 			if (!inline) {
 				throw new GatewayError({
 					class: "bad_request",
+					deploymentHealth: "neutral",
 					message:
 						"Google adapter: images are only supported as base64 data URLs (not http URLs)",
 					param: "messages",
@@ -137,6 +138,7 @@ function partToGemini(p: CanonicalContentPart): Record<string, unknown> {
 			}
 			throw new GatewayError({
 				class: "bad_request",
+				deploymentHealth: "neutral",
 				message:
 					"Google adapter: 'file' is only supported as a file_data base64 data URL",
 				param: "messages",
@@ -1324,8 +1326,21 @@ export const googleAdapter: Adapter = {
 		"gemini_level",
 		"gemini_budget",
 	]),
-	fileInputs: {
-		generate_content: { sources: ["file_data"], maxBytes: 20_000_000 },
+	contentInputs: {
+		generate_content: {
+			file: { sources: ["data_url"], maxBytes: 20_000_000 },
+			image: {
+				sources: ["data_url"],
+				mimeTypes: [
+					"image/png",
+					"image/jpeg",
+					"image/webp",
+					"image/heic",
+					"image/heif",
+				],
+				maxBytes: 20_000_000,
+			},
+		},
 	},
 	transports: {
 		chat: { supported: ["generate_content"], default: "generate_content" },

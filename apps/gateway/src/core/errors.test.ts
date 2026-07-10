@@ -74,3 +74,47 @@ test("allows status override and recognizes instances", () => {
 	assert.equal(GatewayError.is(err), true);
 	assert.equal(GatewayError.is(new Error("x")), false);
 });
+
+test("health-neutral and request-scoped dispositions stay internal to logs", () => {
+	const err = new GatewayError({
+		class: "bad_request",
+		message: "candidate cannot consume this image source",
+		deploymentHealth: "neutral",
+		routingScope: "request",
+	});
+	assert.equal(err.deploymentHealth, "neutral");
+	assert.equal(err.routingScope, "request");
+	assert.deepEqual(err.toLog(), {
+		class: "bad_request",
+		code: null,
+		http_status: 400,
+		message: "candidate cannot consume this image source",
+		routing_scope: "request",
+		deployment_health: "neutral",
+	});
+	assert.equal("deployment_health" in err.toOpenAI().error, false);
+});
+
+test("provider request rejections do not count as deployment failures", () => {
+	for (const cls of [
+		"bad_request",
+		"context_window",
+		"content_policy",
+	] as const) {
+		const err = new GatewayError({
+			class: cls,
+			message: "provider rejected this input",
+			provider: { status: 400, body: {} },
+		});
+		assert.equal(err.deploymentHealth, "neutral");
+	}
+
+	for (const cls of ["auth", "rate_limit", "server"] as const) {
+		const err = new GatewayError({
+			class: cls,
+			message: "deployment failure",
+			provider: { status: 500, body: {} },
+		});
+		assert.equal(err.deploymentHealth, "penalize");
+	}
+});

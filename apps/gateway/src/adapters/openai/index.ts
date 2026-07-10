@@ -29,14 +29,18 @@ export const openaiAdapter = makeOpenAIStyleAdapter({
 	defaultBaseUrl: "https://api.openai.com/v1",
 	defaultTransport: "responses",
 	supportedChatTransports: ["responses", "chat_completions"],
-	fileInputs: {
+	contentInputs: {
 		responses: {
-			sources: ["file_id", "file_url", "file_data"],
-			maxBytes: 50_000_000,
+			file: {
+				sources: ["provider_file_id", "url", "data_url"],
+				maxBytes: 50_000_000,
+			},
 		},
 		chat_completions: {
-			sources: ["file_id", "file_data"],
-			maxBytes: 50_000_000,
+			file: {
+				sources: ["provider_file_id", "data_url"],
+				maxBytes: 50_000_000,
+			},
 		},
 	},
 	maxTokensField: "max_completion_tokens",
