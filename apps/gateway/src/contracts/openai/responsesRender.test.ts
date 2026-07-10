@@ -39,6 +39,35 @@ test("request->canonical: instructions->system, input string->user", () => {
 	assert.equal(u.maxTokens, 100);
 });
 
+test("request->canonical: file parser and PDF detail are preserved", () => {
+	const canonical = responsesRequestToCanonical(
+		parse({
+			model: "response-model",
+			input: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "input_file",
+							file_url: "https://assets.example/report.pdf",
+							detail: "high",
+						},
+					],
+				},
+			],
+			plugins: [{ id: "file-parser", pdf: { engine: "native" } }],
+		}),
+	);
+	assert.deepEqual(canonical.fileParser, { pdfEngine: "native" });
+	const content = canonical.messages[0]?.content;
+	assert.ok(Array.isArray(content));
+	assert.deepEqual(content[0], {
+		type: "file",
+		fileUrl: "https://assets.example/report.pdf",
+		detail: "high",
+	});
+});
+
 test("request->canonical: items message/function_call/function_call_output", () => {
 	const u = responsesRequestToCanonical(
 		parse({

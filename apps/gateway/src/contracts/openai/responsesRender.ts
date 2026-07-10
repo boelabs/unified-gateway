@@ -1,3 +1,4 @@
+import { fileParserOptionsFromPlugins } from "#contracts/fileParser.ts";
 import { assertNoManagedExtraBodyKeys } from "#core/extraBody.ts";
 import type { ResponsesRequest } from "./responses.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -71,6 +72,7 @@ const RESPONSES_EXTRA_BODY_MANAGED_KEYS = [
 	"prompt_cache_key",
 	"top_logprobs",
 	"user",
+	"plugins",
 	"conversation",
 	"context_management",
 	"prompt",
@@ -163,8 +165,13 @@ function mapInputPart(
 			const f: CanonicalContentPart = { type: "file" };
 			if (typeof part.file_id === "string") f.fileId = part.file_id;
 			if (typeof part.file_url === "string") f.fileUrl = part.file_url;
-			if (typeof part.file_data === "string") f.fileData = part.file_data;
+			if (typeof part.file_data === "string") {
+				if (/^https:\/\//i.test(part.file_data)) f.fileUrl = part.file_data;
+				else f.fileData = part.file_data;
+			}
 			if (typeof part.filename === "string") f.filename = part.filename;
+			if (["auto", "low", "high"].includes(String(part.detail)))
+				f.detail = part.detail as "auto" | "low" | "high";
 			return f;
 		}
 		case "input_audio": {
@@ -466,6 +473,8 @@ export function responsesRequestToCanonical(
 		messages,
 		stream: req.stream,
 	};
+	const fileParser = fileParserOptionsFromPlugins(req.plugins);
+	if (fileParser !== undefined) u.fileParser = fileParser;
 	if (req.max_output_tokens !== undefined) u.maxTokens = req.max_output_tokens;
 	if (req.temperature !== undefined) u.temperature = req.temperature;
 	if (req.top_p !== undefined) u.topP = req.top_p;

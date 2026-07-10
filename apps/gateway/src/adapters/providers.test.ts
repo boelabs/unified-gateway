@@ -1,5 +1,6 @@
 import { assertTextRequestSupported } from "#gateway/textRequestValidation.ts";
 import { resolveModelMetadata, getCatalogEntry } from "#catalog/index.ts";
+import { openaicompatibleAdapter } from "./openaicompatible/index.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { Adapter, AdapterContext } from "./types.ts";
 import { deepseekAdapter } from "./deepseek/index.ts";
@@ -61,6 +62,21 @@ test("new providers: default base URL, max_tokens, and auth", () => {
 		assert.equal(body.max_tokens, 64, adapter.key);
 		assert.equal(body.max_completion_tokens, undefined, adapter.key);
 		assert.equal(body.model, model);
+	}
+});
+
+test("chat-compatible providers do not advertise an unimplemented Responses transport", () => {
+	for (const adapter of [
+		deepseekAdapter,
+		moonshotAdapter,
+		zaiAdapter,
+		minimaxAdapter,
+		openaicompatibleAdapter,
+	]) {
+		assert.deepEqual(adapter.transports?.chat, {
+			supported: ["chat_completions"],
+			default: "chat_completions",
+		});
 	}
 });
 

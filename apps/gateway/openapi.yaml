@@ -125,6 +125,20 @@ paths:
                   model: gemini
                   stream: true
                   input: Count from 1 to 5
+              pdf:
+                value:
+                  model: gemini
+                  input:
+                    - role: user
+                      content:
+                        - type: input_file
+                          file_url: https://assets.example/document.pdf
+                        - type: input_text
+                          text: Summarize this document.
+                  plugins:
+                    - id: file-parser
+                      pdf:
+                        engine: auto
       responses:
         "200":
           description: response (or SSE stream of response.* events)
@@ -1268,6 +1282,11 @@ components:
         tool_choice: {}
         response_format:
           $ref: "#/components/schemas/ChatResponseFormat"
+        plugins:
+          maxItems: 1
+          type: array
+          items:
+            $ref: "#/components/schemas/FileParserPlugin"
       required:
         - model
         - messages
@@ -1317,6 +1336,28 @@ components:
         type: string
       additionalProperties: {}
       description: JSON Schema the model output must satisfy.
+    FileParserPlugin:
+      type: object
+      properties:
+        id:
+          type: string
+          const: file-parser
+        enabled:
+          type: boolean
+        pdf:
+          type: object
+          properties:
+            engine:
+              type: string
+              enum:
+                - auto
+                - native
+                - pdf-text
+          additionalProperties: true
+      required:
+        - id
+      description: Request-scoped file portability. auto prefers native handling; pdf-text extracts UTF-8 text locally.
+      additionalProperties: true
     ResponsesRequest:
       type: object
       properties:
@@ -1404,6 +1445,11 @@ components:
           description: "Unsupported: use previous_response_id for gateway-managed state."
         prompt:
           description: Prompt templates are unsupported (400).
+        plugins:
+          maxItems: 1
+          type: array
+          items:
+            $ref: "#/components/schemas/FileParserPlugin"
       required:
         - model
       additionalProperties: true

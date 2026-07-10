@@ -66,6 +66,7 @@ export const responsesRequestSchema = z
 		prompt_cache_key: z.string().optional(),
 		top_logprobs: z.int().optional(),
 		user: z.string().optional(),
+		plugins: z.array(z.record(z.string(), z.unknown())).optional(),
 		extra_body: z.record(z.string(), z.unknown()).optional(),
 		/** Server-side conversation objects: accepted standalone, but not combinable with previous_response_id. */
 		conversation: z.unknown().optional(),

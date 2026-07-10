@@ -38,7 +38,7 @@ interface CanonicalAudioPart extends CanonicalCacheControlled {
 	data: string;
 	format: "wav" | "mp3";
 }
-interface CanonicalFilePart extends CanonicalCacheControlled {
+export interface CanonicalFilePart extends CanonicalCacheControlled {
 	type: "file";
 	/** Reference to a previously uploaded file (Files API). */
 	fileId?: string;
@@ -47,6 +47,8 @@ interface CanonicalFilePart extends CanonicalCacheControlled {
 	/** Inline content as a base64 data URL (e.g. "data:application/pdf;base64,..."). */
 	fileData?: string;
 	filename?: string;
+	/** Responses-only PDF rendering hint; ignored by transports that do not expose it. */
+	detail?: "auto" | "low" | "high";
 }
 export type CanonicalContentPart =
 	| CanonicalTextPart
@@ -162,6 +164,12 @@ interface CanonicalMessagesTransportOptions {
 
 export type PublicChatWire = "chat_completions" | "responses" | "messages";
 
+export type PdfParserEngine = "auto" | "native" | "pdf-text";
+
+export interface CanonicalFileParserOptions {
+	pdfEngine: PdfParserEngine;
+}
+
 export interface CanonicalChatRequest {
 	callType: "chat";
 	/** Public wire used by the client; routing uses it as a native-transport preference. */
@@ -209,6 +217,8 @@ export interface CanonicalChatRequest {
 	chatTransport?: CanonicalChatTransportOptions;
 	/** Options consumed only by the upstream /messages transport. */
 	messagesTransport?: CanonicalMessagesTransportOptions;
+	/** Gateway-side file portability policy, normalized from the file-parser plugin. */
+	fileParser?: CanonicalFileParserOptions;
 }
 
 interface CanonicalChatResponseChoice {

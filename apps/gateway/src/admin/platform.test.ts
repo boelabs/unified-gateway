@@ -42,6 +42,10 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 					publicEndpoints: string[];
 					transports: string[];
 					defaultTransport: string | null;
+					fileInputs: Record<
+						string,
+						{ sources: string[]; maxBytes?: number; mimeTypes?: string[] }
+					>;
 				}>;
 			}>;
 		};
@@ -74,6 +78,17 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 		assert.equal(operation?.defaultTransport, expectedDefault);
 		assert.ok(operation?.transports.includes(expectedDefault));
 	}
+
+	const google = body.data.adapters.find(
+		(adapter) => adapter.id === "googleaistudio",
+	);
+	const googleText = google?.operations.find(
+		(operation) => operation.id === "text.generate",
+	);
+	assert.deepEqual(googleText?.fileInputs.generate_content, {
+		sources: ["file_data"],
+		maxBytes: 20_000_000,
+	});
 });
 
 test("admin platform: rejects legacy provider field", async () => {

@@ -190,6 +190,12 @@ platformAdminApp.get("/operations", (c) =>
 						callType,
 						transports: transports?.supported ?? [],
 						defaultTransport: transports?.default ?? null,
+						fileInputs: Object.fromEntries(
+							(transports?.supported ?? []).flatMap((transport) => {
+								const support = adapter.fileInputs?.[transport];
+								return support ? [[transport, support]] : [];
+							}),
+						),
 					},
 				];
 			}),

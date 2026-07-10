@@ -215,6 +215,27 @@ export function buildOpenApiDocument() {
 								input: "Count from 1 to 5",
 							},
 						},
+						pdf: {
+							value: {
+								model: "gemini",
+								input: [
+									{
+										role: "user",
+										content: [
+											{
+												type: "input_file",
+												file_url: "https://assets.example/document.pdf",
+											},
+											{
+												type: "input_text",
+												text: "Summarize this document.",
+											},
+										],
+									},
+								],
+								plugins: [{ id: "file-parser", pdf: { engine: "auto" } }],
+							},
+						},
 					}),
 					responses: {
 						"200": {

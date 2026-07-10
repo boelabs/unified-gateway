@@ -141,6 +141,8 @@ export interface GatewayErrorOptions {
 	provider?: { status?: number; body?: unknown };
 	/** Public headers the global handler must copy to the response. */
 	headers?: Record<string, string>;
+	/** Request-scoped failures cannot become valid by trying another deployment. */
+	routingScope?: "candidate" | "request";
 	cause?: unknown;
 }
 
@@ -156,6 +158,7 @@ export class GatewayError extends Error {
 	/** Raw provider detail (for logs; never exposed to the client). */
 	readonly provider?: { status?: number; body?: unknown };
 	readonly headers?: Record<string, string>;
+	readonly routingScope: "candidate" | "request";
 	/** Router attempts that led to this error (attached by the router; for logs). */
 	attempts?: unknown[];
 
@@ -176,6 +179,7 @@ export class GatewayError extends Error {
 		this.publicMessage = opts.publicMessage ?? GENERIC_PUBLIC[opts.class];
 		if (opts.provider !== undefined) this.provider = opts.provider;
 		if (opts.headers !== undefined) this.headers = opts.headers;
+		this.routingScope = opts.routingScope ?? "candidate";
 	}
 
 	/** Rich representation for LOGS: gateway classification + raw provider detail. */

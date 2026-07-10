@@ -10,6 +10,16 @@ const base = makeAzurev1Adapter({
 	label: LABEL,
 	defaultTransport: "responses",
 	supportedChatTransports: ["responses", "chat_completions"],
+	fileInputs: {
+		responses: {
+			sources: ["file_id", "file_data"],
+			maxBytes: 50_000_000,
+		},
+		chat_completions: {
+			sources: ["file_id", "file_data"],
+			maxBytes: 50_000_000,
+		},
+	},
 	embeddings: true,
 });
 

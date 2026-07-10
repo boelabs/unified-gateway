@@ -1,3 +1,4 @@
+import { fileParserOptionsFromPlugins } from "#contracts/fileParser.ts";
 import { assertNoManagedExtraBodyKeys } from "#core/extraBody.ts";
 import { summaryForEffort } from "#core/reasoning.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -81,6 +82,7 @@ const CHAT_EXTRA_BODY_MANAGED_KEYS = [
 	"reasoning",
 	"reasoning_effort",
 	"prompt_cache_key",
+	"plugins",
 	"extra_body",
 ] as const;
 
@@ -247,6 +249,7 @@ export const chatRequestSchema = z
 		reasoning_effort: reasoningEffortSchema.optional(),
 		reasoning: reasoningSchema.optional(),
 		prompt_cache_key: z.string().optional(),
+		plugins: z.array(z.record(z.string(), z.unknown())).optional(),
 		extra_body: z.record(z.string(), z.unknown()).optional(),
 	})
 	.loose();
@@ -381,7 +384,11 @@ function mapContent(
 			case "file": {
 				const f: CanonicalContentPart = { type: "file" };
 				if (part.file.file_id !== undefined) f.fileId = part.file.file_id;
-				if (part.file.file_data !== undefined) f.fileData = part.file.file_data;
+				if (part.file.file_data !== undefined) {
+					if (/^https:\/\//i.test(part.file.file_data))
+						f.fileUrl = part.file.file_data;
+					else f.fileData = part.file.file_data;
+				}
 				if (part.file.filename !== undefined) f.filename = part.file.filename;
 				return f;
 			}
@@ -473,6 +480,8 @@ export function toCanonicalChatRequest(
 		messages: req.messages.map(mapMessage),
 		stream: req.stream,
 	};
+	const fileParser = fileParserOptionsFromPlugins(req.plugins);
+	if (fileParser !== undefined) u.fileParser = fileParser;
 	const maxTokens = req.max_completion_tokens ?? req.max_tokens;
 	if (maxTokens !== undefined) u.maxTokens = maxTokens;
 	if (req.stream_options?.include_usage !== undefined)

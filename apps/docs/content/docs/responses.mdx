@@ -15,6 +15,10 @@ shape: `input` instead of `messages`, `text.format` instead of `response_format`
 `reasoning: { effort, summary }` instead of `reasoning_effort`, plus multi-turn state the client doesn't
 have to resend by hand.
 
+`input_file` accepts provider file IDs, HTTPS URLs, and base64 data. Native transports receive the
+original file form when possible; Gemini URLs are materialized to inline data, and text-only
+deployments receive an explicit parser fallback. See [File inputs](/docs/file-inputs).
+
 The router prefers the native Responses transport when a deployment supports it. Inputs that only
 exist on this wire, such as built-in tools or native item types, are preserved verbatim and require a
 native deployment; they are never silently erased during conversion to another text protocol.
