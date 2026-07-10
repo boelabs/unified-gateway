@@ -20,12 +20,16 @@ as [Chat completions](/docs/chat-completions) and [Responses](/docs/responses). 
 provider through this contract, not just Anthropic models; the reverse also works (Anthropic models are
 reachable through Chat Completions and Responses too).
 
+The router prefers the native Messages transport when it is available. `top_k` is canonicalized and
+translated to providers that expose the same control. Request metadata is native-only and requires a
+Messages-capable deployment instead of being silently dropped.
+
 ## Prompt-caching breakpoints
 
 `cache_control: { "type": "ephemeral" }` on a system block, content block, or tool is preserved
 end-to-end as an opaque pass-through — the canonical core doesn't interpret it, only the Anthropic
-adapter emits it. Transports that don't support this concept (OpenAI, Google) simply ignore it rather
-than erroring.
+adapter emits it. Because dropping a cache breakpoint changes billing and latency semantics, requests
+that contain one require a native Messages deployment instead of silently degrading on another wire.
 
 ## Structured output
 
@@ -38,6 +42,10 @@ Anthropic's `thinking` block is resolved from the same canonical `reasoning.effo
 other contract. Two distinct kinds exist in the catalog — `anthropic_adaptive` (the model picks its own
 depth, driven by `output_config.effort`) and `anthropic_budget` (an explicit `budget_tokens` per
 level) — see [Reasoning](/docs/reasoning) for the exact wire shape of each and which models use which.
+
+Signed thinking and redacted thinking blocks are opaque provider state. The gateway preserves and
+replays the complete blocks, including signatures and redacted data, but does not fabricate signed
+blocks when a different provider only returns a visible reasoning summary.
 
 ## Error shape
 

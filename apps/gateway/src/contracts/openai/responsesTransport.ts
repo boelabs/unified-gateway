@@ -17,6 +17,14 @@ import type { SSEEvent } from "#core/sse.ts";
 import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 
+import {
+	providerFieldsWithResponsesOutput,
+	providerFieldsWithOpenAIReasoning,
+	openaiReasoningFromProviderFields,
+	type OpenAIReasoningStateItem,
+	mergeProviderFields,
+} from "#core/providerSpecificFields.ts";
+
 import type {
 	CanonicalChatStreamChunk,
 	CanonicalResponseFormat,
@@ -26,12 +34,6 @@ import type {
 	CanonicalContentPart,
 	CanonicalMessage,
 } from "#core/canonical.ts";
-
-import {
-	providerFieldsWithOpenAIReasoning,
-	openaiReasoningFromProviderFields,
-	type OpenAIReasoningStateItem,
-} from "#core/providerSpecificFields.ts";
 
 import {
 	toUpstreamReasoningEffort,
@@ -67,6 +69,9 @@ const OPENAI_RESPONSES_TRANSPORT_MANAGED_KEYS = [
 	"prompt_cache_key",
 	"top_logprobs",
 	"max_tool_calls",
+	"user",
+	"truncation",
+	"context_management",
 ] as const;
 
 /* ------------------------------------------------- canonical -> /responses body */
@@ -132,11 +137,15 @@ function partToInput(
 			return {
 				type: "input_file",
 				...(p.fileId !== undefined ? { file_id: p.fileId } : {}),
+				...(p.fileUrl !== undefined ? { file_url: p.fileUrl } : {}),
 				...(p.fileData !== undefined ? { file_data: p.fileData } : {}),
 				...(p.filename !== undefined ? { filename: p.filename } : {}),
 			};
 		case "audio":
-			return null; // /responses has no standard audio input
+			return {
+				type: "input_audio",
+				input_audio: { data: p.data, format: p.format },
+			};
 	}
 }
 
@@ -186,7 +195,9 @@ export function buildResponsesRequestBody(
 				output:
 					typeof m.content === "string"
 						? m.content
-						: JSON.stringify(m.content ?? ""),
+						: m.content === null
+							? ""
+							: contentToInput(m.content, "user"),
 			});
 			continue;
 		}
@@ -207,6 +218,7 @@ export function buildResponsesRequestBody(
 					type: "message",
 					role: "assistant",
 					content: contentToInput(m.content, "assistant"),
+					...(m.phase !== undefined ? { phase: m.phase } : {}),
 				});
 			for (const tc of m.toolCalls ?? []) {
 				input.push({
@@ -227,7 +239,7 @@ export function buildResponsesRequestBody(
 
 	const body: Record<string, unknown> = {
 		model: upstreamModel,
-		input,
+		input: req.responsesTransport?.rawInput ?? input,
 		stream: req.stream,
 	};
 	if (instructions.length > 0) body.instructions = instructions.join("\n");
@@ -238,9 +250,17 @@ export function buildResponsesRequestBody(
 		body.presence_penalty = req.presencePenalty;
 	if (req.frequencyPenalty !== undefined)
 		body.frequency_penalty = req.frequencyPenalty;
+	if (req.responsesTransport?.user !== undefined)
+		body.user = req.responsesTransport.user;
+	if (req.responsesTransport?.truncation !== undefined)
+		body.truncation = req.responsesTransport.truncation;
+	if (req.responsesTransport?.contextManagement !== undefined)
+		body.context_management = req.responsesTransport.contextManagement;
 	if (req.parallelToolCalls !== undefined)
 		body.parallel_tool_calls = req.parallelToolCalls;
-	if (req.tools) {
+	if (req.responsesTransport?.rawTools) {
+		body.tools = req.responsesTransport.rawTools;
+	} else if (req.tools) {
 		body.tools = req.tools.map((t) => ({
 			type: "function",
 			name: t.name,
@@ -250,10 +270,18 @@ export function buildResponsesRequestBody(
 		}));
 	}
 	if (req.toolChoice !== undefined) {
-		body.tool_choice =
-			typeof req.toolChoice === "string"
-				? req.toolChoice
-				: { type: "function", name: req.toolChoice.name };
+		if (typeof req.toolChoice === "string") body.tool_choice = req.toolChoice;
+		else if ("name" in req.toolChoice)
+			body.tool_choice = { type: "function", name: req.toolChoice.name };
+		else
+			body.tool_choice = {
+				type: "allowed_tools",
+				mode: req.toolChoice.mode,
+				tools: req.toolChoice.allowedTools.map((name) => ({
+					type: "function",
+					name,
+				})),
+			};
 	}
 	// Encrypted reasoning state: request it for reasoning-capable models so multi-turn tool flows
 	// can replay it. OpenAI only returns encrypted_content for unstored responses; the gateway is
@@ -339,6 +367,7 @@ function mapUsage(u: RWUsage | undefined | null): Usage {
 }
 
 interface RWOutputItem {
+	[key: string]: unknown;
 	type?: string;
 	content?: Array<{ type?: string; text?: string }>;
 	summary?: Array<{ type?: string; text?: string } | string>;
@@ -346,6 +375,7 @@ interface RWOutputItem {
 	id?: string;
 	name?: string;
 	arguments?: string;
+	phase?: "commentary" | "final_answer";
 	extra_content?: Record<string, unknown>;
 	encrypted_content?: string;
 }
@@ -426,9 +456,23 @@ export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 		role: "assistant",
 		content: content.length > 0 ? content : null,
 	};
+	const responseMessage = (r.output ?? []).find(
+		(item) => item.type === "message" && item.phase !== undefined,
+	);
+	if (responseMessage?.phase !== undefined)
+		message.phase = responseMessage.phase;
 	if (reasoning.length > 0) message.reasoning = reasoning.join("\n\n");
 	if (reasoningState.length > 0)
 		message.providerFields = providerFieldsWithOpenAIReasoning(reasoningState);
+	if ((r.output?.length ?? 0) > 0) {
+		const providerFields = mergeProviderFields(
+			message.providerFields,
+			providerFieldsWithResponsesOutput(
+				r.output as unknown as Record<string, unknown>[],
+			),
+		);
+		if (providerFields !== undefined) message.providerFields = providerFields;
+	}
 	if (toolCalls.length > 0) message.toolCalls = toolCalls;
 	return {
 		id: r.id ?? `resp-${randomUUID()}`,
@@ -465,6 +509,16 @@ export async function* responsesEventsToCanonicalChunks(
 			continue;
 		}
 		const type = (ev.event ?? d.type) as string | undefined;
+		if (type === "error" || type === "response.failed") {
+			const response = d.response as Record<string, unknown> | undefined;
+			const error = (d.error ?? response?.error ?? d) as unknown;
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_stream_error",
+				message: "Responses upstream emitted a terminal stream error",
+				provider: { status: 502, body: error },
+			});
+		}
 
 		if (type === "response.created" || type === "response.in_progress") {
 			const resp = d.response as { id?: string; model?: string } | undefined;
@@ -562,6 +616,27 @@ export async function* responsesEventsToCanonicalChunks(
 							index: 0,
 							delta: {
 								providerFields: providerFieldsWithOpenAIReasoning([state]),
+							},
+							finishReason: null,
+						},
+					],
+				};
+			}
+			if (
+				item !== undefined &&
+				item.type !== "message" &&
+				item.type !== "reasoning" &&
+				item.type !== "function_call"
+			) {
+				yield {
+					...base(),
+					choices: [
+						{
+							index: 0,
+							delta: {
+								providerFields: providerFieldsWithResponsesOutput([
+									item as unknown as Record<string, unknown>,
+								]),
 							},
 							finishReason: null,
 						},

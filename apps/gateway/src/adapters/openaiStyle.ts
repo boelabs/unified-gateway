@@ -255,6 +255,9 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 			} catch {
 				continue;
 			}
+			if (json !== null && typeof json === "object" && "error" in json) {
+				throw mapError({ status: 502, body: json });
+			}
 			yield parseOpenAIChatChunk(json);
 		}
 	}

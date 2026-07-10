@@ -120,12 +120,25 @@ export const ChatCompletionRequest = loose(
 		),
 		stream: z.boolean().default(false),
 		stream_options: z
-			.object({ include_usage: z.boolean().optional() })
+			.object({
+				include_usage: z.boolean().optional(),
+				include_obfuscation: z.boolean().optional(),
+			})
 			.optional(),
 		temperature: z.number().optional(),
 		top_p: z.number().optional(),
 		max_tokens: z.int().optional(),
 		max_completion_tokens: z.int().optional(),
+		logprobs: z.boolean().optional(),
+		top_logprobs: z.int().min(0).max(20).optional(),
+		logit_bias: z.record(z.string(), z.number()).optional(),
+		metadata: z.record(z.string(), z.string()).optional(),
+		modalities: z.array(z.string()).optional(),
+		prediction: loose({}, {}).optional(),
+		service_tier: z.string().optional(),
+		store: z.boolean().optional(),
+		verbosity: z.string().optional(),
+		web_search_options: loose({}, {}).optional(),
 		tools: z.array(loose({}, {})).optional(),
 		tool_choice: z.unknown().optional(),
 		response_format: ChatResponseFormat.optional(),
@@ -158,6 +171,7 @@ export const MessagesRequest = loose(
 		tools: z.array(loose({}, {})).optional(),
 		tool_choice: loose({}, {}).optional(),
 		output_config: MessagesOutputConfig.optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
 	},
 	{ id: "MessagesRequest" },
 );
@@ -174,8 +188,21 @@ export const ResponsesRequest = loose(
 		instructions: nullableString.optional(),
 		stream: z.boolean().default(false),
 		max_output_tokens: z.int().optional(),
+		max_tool_calls: z.int().min(1).optional(),
 		temperature: z.number().optional(),
 		top_p: z.number().optional(),
+		presence_penalty: z.number().optional(),
+		frequency_penalty: z.number().optional(),
+		top_logprobs: z.int().min(0).max(20).optional(),
+		parallel_tool_calls: z.boolean().optional(),
+		include: z.array(z.string()).optional(),
+		metadata: z.record(z.string(), z.unknown()).optional(),
+		service_tier: z.string().optional(),
+		stream_options: loose({}, {}).optional(),
+		safety_identifier: z.string().max(64).optional(),
+		prompt_cache_key: z.string().max(64).optional(),
+		truncation: z.string().optional(),
+		context_management: z.array(loose({}, {})).optional(),
 		tools: z.array(loose({}, {})).optional(),
 		tool_choice: z.unknown().optional(),
 		text: ResponsesTextConfig.optional(),
@@ -191,7 +218,8 @@ export const ResponsesRequest = loose(
 			description: "Unsupported: background:true is rejected with 400.",
 		}),
 		conversation: z.unknown().optional().meta({
-			description: "Cannot be combined with previous_response_id (400).",
+			description:
+				"Unsupported: use previous_response_id for gateway-managed state.",
 		}),
 		prompt: z.unknown().optional().meta({
 			description: "Prompt templates are unsupported (400).",
@@ -199,6 +227,74 @@ export const ResponsesRequest = loose(
 	},
 	{ id: "ResponsesRequest" },
 );
+
+export const ResponsesUsage = z
+	.object({
+		input_tokens: z.int(),
+		input_tokens_details: z.object({ cached_tokens: z.int() }),
+		output_tokens: z.int(),
+		output_tokens_details: z.object({ reasoning_tokens: z.int() }),
+		total_tokens: z.int(),
+	})
+	.meta({ id: "ResponsesUsage" });
+
+export const ResponseObject = loose(
+	{
+		id: z.string(),
+		object: z.literal("response"),
+		created_at: z.int(),
+		completed_at: nullableInteger,
+		status: z.string(),
+		incomplete_details: z.union([loose({}, {}), z.null()]),
+		model: z.string(),
+		previous_response_id: nullableString,
+		instructions: nullableString,
+		output: z.array(loose({}, {})),
+		error: z.union([loose({}, {}), z.null()]),
+		tools: z.array(loose({}, {})),
+		tool_choice: z.unknown(),
+		truncation: z.string(),
+		parallel_tool_calls: z.boolean(),
+		text: loose({}, {}),
+		top_p: z.number(),
+		presence_penalty: z.number(),
+		frequency_penalty: z.number(),
+		top_logprobs: z.int(),
+		temperature: z.number(),
+		reasoning: z.union([loose({}, {}), z.null()]),
+		usage: z.union([ResponsesUsage, z.null()]),
+		max_output_tokens: nullableInteger,
+		max_tool_calls: nullableInteger,
+		store: z.boolean(),
+		background: z.boolean(),
+		service_tier: z.string(),
+		metadata: loose({}, {}),
+		safety_identifier: nullableString,
+		prompt_cache_key: nullableString,
+	},
+	{ id: "ResponseObject" },
+);
+
+export const CompactResponseRequest = z
+	.object({
+		model: z.string(),
+		input: z.unknown().optional(),
+		previous_response_id: nullableString.optional(),
+		instructions: nullableString.optional(),
+		prompt_cache_key: z.string().max(64).optional(),
+	})
+	.strict()
+	.meta({ id: "CompactResponseRequest" });
+
+export const CompactResponseObject = z
+	.object({
+		id: z.string(),
+		object: z.literal("response.compaction"),
+		created_at: z.int(),
+		output: z.array(loose({}, {})),
+		usage: ResponsesUsage,
+	})
+	.meta({ id: "CompactResponseObject" });
 
 /* ---------------------------------------------------------------- embeddings */
 

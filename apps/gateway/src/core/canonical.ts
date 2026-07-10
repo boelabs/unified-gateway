@@ -42,6 +42,8 @@ interface CanonicalFilePart extends CanonicalCacheControlled {
 	type: "file";
 	/** Reference to a previously uploaded file (Files API). */
 	fileId?: string;
+	/** Direct file URL used by Responses-style inputs. */
+	fileUrl?: string;
 	/** Inline content as a base64 data URL (e.g. "data:application/pdf;base64,..."). */
 	fileData?: string;
 	filename?: string;
@@ -72,6 +74,8 @@ export interface CanonicalMessage {
 	toolCalls?: CanonicalToolCall[];
 	/** Only on role=tool messages: which tool_call it answers. */
 	toolCallId?: string;
+	/** Responses assistant-message phase; preserved across continuation and native transports. */
+	phase?: "commentary" | "final_answer";
 	/**
 	 * Opaque provider-namespaced per-message state that must round-trip with the assistant message
 	 * (e.g. OpenAI encrypted reasoning items as `providerFields.openai.reasoning`). Filled and
@@ -92,7 +96,11 @@ export type CanonicalToolChoice =
 	| "auto"
 	| "none"
 	| "required"
-	| { name: string };
+	| { name: string }
+	| {
+			allowedTools: string[];
+			mode: "auto" | "required";
+	  };
 
 export type CanonicalResponseFormat =
 	| { type: "text" }
@@ -123,10 +131,43 @@ interface CanonicalResponsesTransportOptions {
 	promptCacheKey?: string;
 	topLogprobs?: number;
 	maxToolCalls?: number;
+	user?: string;
+	truncation?: string;
+	contextManagement?: Record<string, unknown>[];
+	/** Exact wire items retained when canonical emulation cannot represent them losslessly. */
+	rawInput?: Record<string, unknown>[];
+	/** Exact wire tools retained for native Responses transports. */
+	rawTools?: Record<string, unknown>[];
 }
+
+interface CanonicalChatTransportOptions {
+	audio?: Record<string, unknown>;
+	logprobs?: boolean;
+	topLogprobs?: number;
+	logitBias?: Record<string, number>;
+	metadata?: Record<string, string>;
+	modalities?: string[];
+	prediction?: Record<string, unknown>;
+	serviceTier?: string;
+	safetyIdentifier?: string;
+	store?: boolean;
+	verbosity?: string;
+	webSearchOptions?: Record<string, unknown>;
+	streamOptions?: Record<string, unknown>;
+}
+
+interface CanonicalMessagesTransportOptions {
+	metadata?: Record<string, unknown>;
+}
+
+export type PublicChatWire = "chat_completions" | "responses" | "messages";
 
 export interface CanonicalChatRequest {
 	callType: "chat";
+	/** Public wire used by the client; routing uses it as a native-transport preference. */
+	publicWire?: PublicChatWire;
+	/** True when exact semantics require the native transport instead of canonical emulation. */
+	requiresNativeWire?: boolean;
 	/** Public model requested by the client. */
 	model: string;
 	messages: CanonicalMessage[];
@@ -135,6 +176,7 @@ export interface CanonicalChatRequest {
 	includeUsage?: boolean;
 	temperature?: number;
 	topP?: number;
+	topK?: number;
 	/** Normalized from max_tokens / max_completion_tokens. */
 	maxTokens?: number;
 	stop?: string[];
@@ -163,18 +205,28 @@ export interface CanonicalChatRequest {
 	extraBody?: Record<string, unknown>;
 	/** Options of the /responses contract consumed only by the upstream /responses transport. */
 	responsesTransport?: CanonicalResponsesTransportOptions;
+	/** Options consumed only by the upstream /chat/completions transport. */
+	chatTransport?: CanonicalChatTransportOptions;
+	/** Options consumed only by the upstream /messages transport. */
+	messagesTransport?: CanonicalMessagesTransportOptions;
 }
 
 interface CanonicalChatResponseChoice {
 	index: number;
 	finishReason: CanonicalFinishReason | null;
+	/** Provider-native token log probabilities when available. */
+	logprobs?: unknown;
 	message: {
 		role: "assistant";
 		content: string | null;
+		phase?: "commentary" | "final_answer";
 		/** Visible reasoning/thinking summary, never the raw chain of thought. */
 		reasoning?: string | null;
 		toolCalls?: CanonicalToolCall[];
 		refusal?: string | null;
+		/** Native audio output object when the public/upstream chat wire supports it. */
+		audio?: Record<string, unknown> | null;
+		annotations?: Record<string, unknown>[];
 		/** Opaque provider-namespaced per-message state (see CanonicalMessage.providerFields). */
 		providerFields?: Record<string, unknown>;
 	};
@@ -195,13 +247,19 @@ export interface CanonicalChatStreamChunk {
 	model: string;
 	choices: Array<{
 		index: number;
+		/** Provider-native token log probabilities when available. */
+		logprobs?: unknown;
 		delta: {
 			role?: "assistant";
+			phase?: "commentary" | "final_answer";
 			content?: string;
 			/** Visible reasoning/thinking summary delta. */
 			reasoning?: string;
 			toolCalls?: Array<{ index: number } & Partial<CanonicalToolCall>>;
 			refusal?: string;
+			/** Native streaming audio delta when available. */
+			audio?: Record<string, unknown>;
+			annotations?: Record<string, unknown>[];
 			/** Opaque provider-namespaced per-message state (see CanonicalMessage.providerFields). */
 			providerFields?: Record<string, unknown>;
 		};

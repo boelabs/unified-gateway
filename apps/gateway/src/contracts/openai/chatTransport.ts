@@ -43,6 +43,18 @@ const OPENAI_CHAT_TRANSPORT_MANAGED_KEYS = [
 	"frequency_penalty",
 	"seed",
 	"user",
+	"audio",
+	"logprobs",
+	"top_logprobs",
+	"logit_bias",
+	"metadata",
+	"modalities",
+	"prediction",
+	"service_tier",
+	"safety_identifier",
+	"store",
+	"verbosity",
+	"web_search_options",
 	"parallel_tool_calls",
 	"tools",
 	"tool_choice",
@@ -178,7 +190,11 @@ export function buildOpenAIChatBody(
 	};
 	// We ALWAYS request usage in streaming so we can account for it (TPM/budget/cost). If the client
 	// did not request include_usage, the endpoint strips usage from the chunks it forwards (fidelity).
-	if (req.stream) body.stream_options = { include_usage: true };
+	if (req.stream)
+		body.stream_options = {
+			...(req.chatTransport?.streamOptions ?? {}),
+			include_usage: true,
+		};
 	if (req.maxTokens !== undefined) body[maxTokensField] = req.maxTokens;
 	if (req.temperature !== undefined) body.temperature = req.temperature;
 	if (req.topP !== undefined) body.top_p = req.topP;
@@ -190,6 +206,27 @@ export function buildOpenAIChatBody(
 		body.frequency_penalty = req.frequencyPenalty;
 	if (req.seed !== undefined) body.seed = req.seed;
 	if (req.user !== undefined) body.user = req.user;
+	const chatOptions = req.chatTransport;
+	if (chatOptions?.audio !== undefined) body.audio = chatOptions.audio;
+	if (chatOptions?.logprobs !== undefined) body.logprobs = chatOptions.logprobs;
+	if (chatOptions?.topLogprobs !== undefined)
+		body.top_logprobs = chatOptions.topLogprobs;
+	if (chatOptions?.logitBias !== undefined)
+		body.logit_bias = chatOptions.logitBias;
+	if (chatOptions?.metadata !== undefined) body.metadata = chatOptions.metadata;
+	if (chatOptions?.modalities !== undefined)
+		body.modalities = chatOptions.modalities;
+	if (chatOptions?.prediction !== undefined)
+		body.prediction = chatOptions.prediction;
+	if (chatOptions?.serviceTier !== undefined)
+		body.service_tier = chatOptions.serviceTier;
+	if (chatOptions?.safetyIdentifier !== undefined)
+		body.safety_identifier = chatOptions.safetyIdentifier;
+	if (chatOptions?.store !== undefined) body.store = chatOptions.store;
+	if (chatOptions?.verbosity !== undefined)
+		body.verbosity = chatOptions.verbosity;
+	if (chatOptions?.webSearchOptions !== undefined)
+		body.web_search_options = chatOptions.webSearchOptions;
 	if (req.parallelToolCalls !== undefined)
 		body.parallel_tool_calls = req.parallelToolCalls;
 	if (req.tools) {
@@ -204,10 +241,23 @@ export function buildOpenAIChatBody(
 		}));
 	}
 	if (req.toolChoice !== undefined) {
-		body.tool_choice =
-			typeof req.toolChoice === "string"
-				? req.toolChoice
-				: { type: "function", function: { name: req.toolChoice.name } };
+		if (typeof req.toolChoice === "string") body.tool_choice = req.toolChoice;
+		else if ("name" in req.toolChoice)
+			body.tool_choice = {
+				type: "function",
+				function: { name: req.toolChoice.name },
+			};
+		else
+			body.tool_choice = {
+				type: "allowed_tools",
+				allowed_tools: {
+					mode: req.toolChoice.mode,
+					tools: req.toolChoice.allowedTools.map((name) => ({
+						type: "function",
+						function: { name },
+					})),
+				},
+			};
 	}
 	if (req.responseFormat)
 		body.response_format = toTransportResponseFormat(req.responseFormat);
@@ -302,11 +352,14 @@ interface TransportResponse {
 	choices?: Array<{
 		index?: number;
 		finish_reason?: unknown;
+		logprobs?: unknown;
 		message?: {
 			content?: string | null;
 			reasoning?: string | null;
 			reasoning_content?: string | null;
 			refusal?: string | null;
+			audio?: Record<string, unknown> | null;
+			annotations?: Record<string, unknown>[];
 			tool_calls?: TransportToolCall[];
 		};
 	}>;
@@ -327,6 +380,9 @@ export function parseOpenAIChatResponse(raw: unknown): CanonicalChatResponse {
 			const reasoning = c.message?.reasoning ?? c.message?.reasoning_content;
 			if (reasoning !== undefined) message.reasoning = reasoning;
 			if (c.message?.refusal != null) message.refusal = c.message.refusal;
+			if (c.message?.audio !== undefined) message.audio = c.message.audio;
+			if (c.message?.annotations !== undefined)
+				message.annotations = c.message.annotations;
 			if (c.message?.tool_calls) {
 				message.toolCalls = c.message.tool_calls.map((tc) => ({
 					id: tc.id ?? "",
@@ -340,6 +396,7 @@ export function parseOpenAIChatResponse(raw: unknown): CanonicalChatResponse {
 			return {
 				index: c.index ?? i,
 				finishReason: mapFinishReason(c.finish_reason),
+				...(c.logprobs !== undefined ? { logprobs: c.logprobs } : {}),
 				message,
 			};
 		}),
@@ -354,12 +411,15 @@ interface TransportChunk {
 	choices?: Array<{
 		index?: number;
 		finish_reason?: unknown;
+		logprobs?: unknown;
 		delta?: {
 			role?: string;
 			content?: string;
 			reasoning?: string;
 			reasoning_content?: string;
 			refusal?: string;
+			audio?: Record<string, unknown>;
+			annotations?: Record<string, unknown>[];
 			tool_calls?: TransportToolCall[];
 		};
 	}>;
@@ -380,6 +440,9 @@ export function parseOpenAIChatChunk(raw: unknown): CanonicalChatStreamChunk {
 			else if (c.delta?.reasoning_content !== undefined)
 				delta.reasoning = c.delta.reasoning_content;
 			if (c.delta?.refusal !== undefined) delta.refusal = c.delta.refusal;
+			if (c.delta?.audio !== undefined) delta.audio = c.delta.audio;
+			if (c.delta?.annotations !== undefined)
+				delta.annotations = c.delta.annotations;
 			if (c.delta?.tool_calls) {
 				delta.toolCalls = c.delta.tool_calls.map((tc, j) => ({
 					index: tc.index ?? j,
@@ -399,6 +462,7 @@ export function parseOpenAIChatChunk(raw: unknown): CanonicalChatStreamChunk {
 				index: c.index ?? i,
 				delta,
 				finishReason: mapFinishReason(c.finish_reason),
+				...(c.logprobs !== undefined ? { logprobs: c.logprobs } : {}),
 			};
 		}),
 	};

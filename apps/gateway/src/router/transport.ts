@@ -12,6 +12,7 @@ import {
 export function resolveTransport(
 	candidate: DeploymentCandidate,
 	callType: CallType,
+	preferredTransport?: UpstreamTransport,
 ): UpstreamTransport {
 	const transports = candidate.adapter.transports?.[callType];
 	const operation = operationForCallType(callType);
@@ -27,9 +28,16 @@ export function resolveTransport(
 			message: `Deployment "${candidate.row.id}" has unknown transport "${configuredOverride}" for ${operation?.id ?? callType}`,
 		});
 	}
-	const transport =
-		configuredOverride ?? transports?.default ?? "chat_completions";
 	const supported = transports?.supported;
+	const nativePreference =
+		preferredTransport !== undefined && supported?.includes(preferredTransport)
+			? preferredTransport
+			: undefined;
+	const transport =
+		configuredOverride ??
+		nativePreference ??
+		transports?.default ??
+		"chat_completions";
 	if (supported && !supported.includes(transport)) {
 		throw new GatewayError({
 			class: "server",

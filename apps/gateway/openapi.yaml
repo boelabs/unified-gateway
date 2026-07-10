@@ -5,12 +5,12 @@ info:
   title: Unified Gateway API
   version: 1.0.0
   description: |-
-    Provider-agnostic AI gateway with exact OpenAI/OpenResponses public contracts. Importable in Postman, Insomnia, Bruno, and similar tools.
+    Provider-agnostic AI gateway with OpenAI/OpenResponses-compatible public contracts. Importable in Postman, Insomnia, Bruno, and similar tools.
 
     AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or ?api_key=<key> query parameter (for browser EventSource clients). The master key is required for /admin/*.
 
     RESPONSE CONVENTIONS:
-    - Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/models): exact OpenAI/OpenResponses contracts.
+    - Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/models): documented OpenAI/OpenResponses-compatible contracts with explicit native-only features.
     - Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], "pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.
 
     RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). Virtual-key inference responses can also include x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.
@@ -64,7 +64,7 @@ paths:
     post:
       tags:
         - Inference
-      summary: Chat Completions (exact OpenAI contract, stream + no-stream)
+      summary: Chat Completions (OpenAI-compatible, stream + no-stream)
       parameters:
         - &a2
           $ref: "#/components/parameters/CacheHeader"
@@ -128,7 +128,36 @@ paths:
       responses:
         "200":
           description: response (or SSE stream of response.* events)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseObject"
+            text/event-stream:
+              schema:
+                type: string
         "400": *a1
+  /v1/responses/compact:
+    post:
+      tags:
+        - Inference
+      summary: Compact a Responses conversation
+      description: Produces a provider-agnostic response.compaction item that can be replayed through the gateway.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompactResponseRequest"
+      responses:
+        "200":
+          description: Compacted response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompactResponseObject"
+        "400": *a1
+        "401": *a1
+        "429": *a1
   /v1/responses/{id}:
     get:
       tags:
@@ -140,6 +169,10 @@ paths:
       responses:
         "200":
           description: response object (OpenResponses contract)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResponseObject"
         "404": *a1
     delete:
       tags:
@@ -167,7 +200,7 @@ paths:
       tags:
         - Inference
       summary: Anthropic Messages API (provider-agnostic, stream + no-stream)
-      description: Exact Anthropic Messages contract, serviceable by any provider through the canonical hub. Errors and SSE events are rendered in Anthropic format.
+      description: Anthropic-compatible Messages contract, serviceable by any provider through the canonical hub. Native-only fields are routed only to a messages transport; errors and SSE events use the Anthropic format.
       requestBody:
         required: true
         content:
@@ -1176,6 +1209,8 @@ components:
           properties:
             include_usage:
               type: boolean
+            include_obfuscation:
+              type: boolean
         temperature:
           type: number
         top_p:
@@ -1188,6 +1223,42 @@ components:
           type: integer
           minimum: -9007199254740991
           maximum: 9007199254740991
+        logprobs:
+          type: boolean
+        top_logprobs:
+          type: integer
+          minimum: 0
+          maximum: 20
+        logit_bias:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties:
+            type: number
+        metadata:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties:
+            type: string
+        modalities:
+          type: array
+          items:
+            type: string
+        prediction:
+          type: object
+          properties: {}
+          additionalProperties: true
+        service_tier:
+          type: string
+        store:
+          type: boolean
+        verbosity:
+          type: string
+        web_search_options:
+          type: object
+          properties: {}
+          additionalProperties: true
         tools:
           type: array
           items:
@@ -1264,10 +1335,53 @@ components:
           type: integer
           minimum: -9007199254740991
           maximum: 9007199254740991
+        max_tool_calls:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
         temperature:
           type: number
         top_p:
           type: number
+        presence_penalty:
+          type: number
+        frequency_penalty:
+          type: number
+        top_logprobs:
+          type: integer
+          minimum: 0
+          maximum: 20
+        parallel_tool_calls:
+          type: boolean
+        include:
+          type: array
+          items:
+            type: string
+        metadata:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        service_tier:
+          type: string
+        stream_options:
+          type: object
+          properties: {}
+          additionalProperties: true
+        safety_identifier:
+          type: string
+          maxLength: 64
+        prompt_cache_key:
+          type: string
+          maxLength: 64
+        truncation:
+          type: string
+        context_management:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
         tools:
           type: array
           items:
@@ -1287,7 +1401,7 @@ components:
           description: "Unsupported: background:true is rejected with 400."
           type: boolean
         conversation:
-          description: Cannot be combined with previous_response_id (400).
+          description: "Unsupported: use previous_response_id for gateway-managed state."
         prompt:
           description: Prompt templates are unsupported (400).
       required:
@@ -1334,6 +1448,26 @@ components:
             - type
             - name
             - schema
+    CompactResponseRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        input: {}
+        previous_response_id:
+          anyOf:
+            - type: string
+            - type: "null"
+        instructions:
+          anyOf:
+            - type: string
+            - type: "null"
+        prompt_cache_key:
+          type: string
+          maxLength: 64
+      required:
+        - model
+      additionalProperties: false
     MessagesRequest:
       type: object
       properties:
@@ -1386,6 +1520,11 @@ components:
           additionalProperties: true
         output_config:
           $ref: "#/components/schemas/MessagesOutputConfig"
+        metadata:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
       required:
         - model
         - max_tokens
@@ -2263,6 +2402,223 @@ components:
           additionalProperties: false
       required:
         - error
+      additionalProperties: false
+    ResponseObject:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: response
+        created_at:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        completed_at:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        status:
+          type: string
+        incomplete_details:
+          anyOf:
+            - type: object
+              properties: {}
+              additionalProperties: true
+            - type: "null"
+        model:
+          type: string
+        previous_response_id:
+          anyOf:
+            - type: string
+            - type: "null"
+        instructions:
+          anyOf:
+            - type: string
+            - type: "null"
+        output:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        error:
+          anyOf:
+            - type: object
+              properties: {}
+              additionalProperties: true
+            - type: "null"
+        tools:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        tool_choice: {}
+        truncation:
+          type: string
+        parallel_tool_calls:
+          type: boolean
+        text:
+          type: object
+          properties: {}
+          additionalProperties: true
+        top_p:
+          type: number
+        presence_penalty:
+          type: number
+        frequency_penalty:
+          type: number
+        top_logprobs:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        temperature:
+          type: number
+        reasoning:
+          anyOf:
+            - type: object
+              properties: {}
+              additionalProperties: true
+            - type: "null"
+        usage:
+          anyOf:
+            - $ref: "#/components/schemas/ResponsesUsage"
+            - type: "null"
+        max_output_tokens:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        max_tool_calls:
+          anyOf:
+            - type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            - type: "null"
+        store:
+          type: boolean
+        background:
+          type: boolean
+        service_tier:
+          type: string
+        metadata:
+          type: object
+          properties: {}
+          additionalProperties: true
+        safety_identifier:
+          anyOf:
+            - type: string
+            - type: "null"
+        prompt_cache_key:
+          anyOf:
+            - type: string
+            - type: "null"
+      required:
+        - id
+        - object
+        - created_at
+        - completed_at
+        - status
+        - incomplete_details
+        - model
+        - previous_response_id
+        - instructions
+        - output
+        - error
+        - tools
+        - tool_choice
+        - truncation
+        - parallel_tool_calls
+        - text
+        - top_p
+        - presence_penalty
+        - frequency_penalty
+        - top_logprobs
+        - temperature
+        - reasoning
+        - usage
+        - max_output_tokens
+        - max_tool_calls
+        - store
+        - background
+        - service_tier
+        - metadata
+        - safety_identifier
+        - prompt_cache_key
+      additionalProperties: true
+    ResponsesUsage:
+      type: object
+      properties:
+        input_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        input_tokens_details:
+          type: object
+          properties:
+            cached_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+          required:
+            - cached_tokens
+          additionalProperties: false
+        output_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        output_tokens_details:
+          type: object
+          properties:
+            reasoning_tokens:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+          required:
+            - reasoning_tokens
+          additionalProperties: false
+        total_tokens:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+      required:
+        - input_tokens
+        - input_tokens_details
+        - output_tokens
+        - output_tokens_details
+        - total_tokens
+      additionalProperties: false
+    CompactResponseObject:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          const: response.compaction
+        created_at:
+          type: integer
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        output:
+          type: array
+          items:
+            type: object
+            properties: {}
+            additionalProperties: true
+        usage:
+          $ref: "#/components/schemas/ResponsesUsage"
+      required:
+        - id
+        - object
+        - created_at
+        - output
+        - usage
       additionalProperties: false
     EmbeddingsResponse:
       type: object

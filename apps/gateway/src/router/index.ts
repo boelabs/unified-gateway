@@ -1,4 +1,5 @@
 import { getEffectiveSettings, type EffectiveSettings } from "./settings.ts";
+import type { UpstreamTransport } from "#core/transport.ts";
 import type { AdapterContext } from "#adapters/types.ts";
 import { getFallbackPolicy } from "#db/repos/router.ts";
 import type { CallType } from "#core/callType.ts";
@@ -27,6 +28,8 @@ import {
 export interface RouteOptions {
 	clientSignal: AbortSignal;
 	requestId: string;
+	/** Preferred native transport when the selected adapter supports it. */
+	preferredTransport?: UpstreamTransport;
 	/** Excludes deployments incompatible with the request before balancing, without cooldown. */
 	candidateEligibility?: (candidate: DeploymentCandidate) => void;
 }
@@ -99,7 +102,7 @@ function buildContext(
 		upstreamModel: candidate.upstreamModel,
 		credentials: decryptDeploymentCredentials(candidate),
 		meta: candidate.meta,
-		transport: resolveTransport(candidate, callType),
+		transport: resolveTransport(candidate, callType, opts.preferredTransport),
 		requestId: opts.requestId,
 		signal: AbortSignal.any([
 			opts.clientSignal,
@@ -203,7 +206,11 @@ export async function route<T>(
 					(attemptsByDeployment.get(candidate.row.id) ?? 0) === minAttempts,
 			);
 			const chosen = pickDeployment(settings.routingStrategy, pool, metrics);
-			const transport = resolveTransport(chosen, callType);
+			const transport = resolveTransport(
+				chosen,
+				callType,
+				opts.preferredTransport,
+			);
 
 			attemptsByDeployment.set(
 				chosen.row.id,

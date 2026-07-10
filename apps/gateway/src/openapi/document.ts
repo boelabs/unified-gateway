@@ -36,14 +36,14 @@ export function buildOpenApiDocument() {
 			title: "Unified Gateway API",
 			version: "1.0.0",
 			description:
-				"Provider-agnostic AI gateway with exact OpenAI/OpenResponses public contracts. " +
+				"Provider-agnostic AI gateway with OpenAI/OpenResponses-compatible public contracts. " +
 				"Importable in Postman, Insomnia, Bruno, and similar tools.\n\n" +
 				"AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or " +
 				"?api_key=<key> query parameter (for browser EventSource clients). The master key is " +
 				"required for /admin/*.\n\n" +
 				"RESPONSE CONVENTIONS:\n" +
 				"- Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, " +
-				"/v1/models): exact OpenAI/OpenResponses contracts.\n" +
+				"/v1/models): documented OpenAI/OpenResponses-compatible contracts with explicit native-only features.\n" +
 				'- Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], ' +
 				'"pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.\n\n' +
 				"RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). " +
@@ -164,8 +164,7 @@ export function buildOpenApiDocument() {
 			"/v1/chat/completions": {
 				post: {
 					tags: ["Inference"],
-					summary:
-						"Chat Completions (exact OpenAI contract, stream + no-stream)",
+					summary: "Chat Completions (OpenAI-compatible, stream + no-stream)",
 					parameters: cacheParams,
 					requestBody: jsonBody(c.ChatCompletionRequest, {
 						simple: {
@@ -220,8 +219,32 @@ export function buildOpenApiDocument() {
 					responses: {
 						"200": {
 							description: "response (or SSE stream of response.* events)",
+							content: {
+								"application/json": { schema: c.ResponseObject },
+								"text/event-stream": { schema: z.string() },
+							},
 						},
 						"400": errorResponse,
+					},
+				},
+			},
+			"/v1/responses/compact": {
+				post: {
+					tags: ["Inference"],
+					summary: "Compact a Responses conversation",
+					description:
+						"Produces a provider-agnostic response.compaction item that can be replayed through the gateway.",
+					requestBody: jsonBody(c.CompactResponseRequest),
+					responses: {
+						"200": {
+							description: "Compacted response",
+							content: {
+								"application/json": { schema: c.CompactResponseObject },
+							},
+						},
+						"400": errorResponse,
+						"401": errorResponse,
+						"429": errorResponse,
 					},
 				},
 			},
@@ -233,7 +256,12 @@ export function buildOpenApiDocument() {
 						"Returns the stored canonical `response` object when store=true. Scope is per key: a virtual key only sees its own responses; the master key sees responses created with the master key.",
 					parameters: [{ $ref: "#/components/parameters/ResponseIdPath" }],
 					responses: {
-						"200": { description: "response object (OpenResponses contract)" },
+						"200": {
+							description: "response object (OpenResponses contract)",
+							content: {
+								"application/json": { schema: c.ResponseObject },
+							},
+						},
 						"404": errorResponse,
 					},
 				},
@@ -269,7 +297,7 @@ export function buildOpenApiDocument() {
 					summary:
 						"Anthropic Messages API (provider-agnostic, stream + no-stream)",
 					description:
-						"Exact Anthropic Messages contract, serviceable by any provider through the canonical hub. Errors and SSE events are rendered in Anthropic format.",
+						"Anthropic-compatible Messages contract, serviceable by any provider through the canonical hub. Native-only fields are routed only to a messages transport; errors and SSE events use the Anthropic format.",
 					requestBody: jsonBody(c.MessagesRequest, {
 						simple: {
 							value: {

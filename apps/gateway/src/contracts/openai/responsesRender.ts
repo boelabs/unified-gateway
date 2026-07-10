@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import {
 	providerSpecificFieldsFromExtraContent,
 	extraContentFromProviderSpecificFields,
+	responsesOutputFromProviderFields,
 	providerFieldsWithOpenAIReasoning,
 	openaiReasoningFromProviderFields,
 	type OpenAIReasoningStateItem,
@@ -15,6 +16,7 @@ import {
 	decodeThoughtSignatureId,
 	encodeThoughtSignatureId,
 	stripThoughtSignatureId,
+	mergeProviderFields,
 } from "#core/providerSpecificFields.ts";
 
 import type {
@@ -70,9 +72,66 @@ const RESPONSES_EXTRA_BODY_MANAGED_KEYS = [
 	"top_logprobs",
 	"user",
 	"conversation",
+	"context_management",
 	"prompt",
 	"extra_body",
 ] as const;
+const ENCRYPTED_REASONING_INCLUDE = "reasoning.encrypted_content";
+
+function stripEncryptedReasoningItem(
+	item: Record<string, unknown>,
+): Record<string, unknown> {
+	if (item.type !== "reasoning" || !("encrypted_content" in item)) return item;
+	const copy = structuredClone(item);
+	delete copy.encrypted_content;
+	return copy;
+}
+
+export function responseForClient(
+	response: Record<string, unknown>,
+	include: string[] | undefined,
+): Record<string, unknown> {
+	if (include?.includes(ENCRYPTED_REASONING_INCLUDE)) return response;
+	const copy = structuredClone(response);
+	if (Array.isArray(copy.output))
+		copy.output = copy.output.map((item) =>
+			item !== null && typeof item === "object" && !Array.isArray(item)
+				? stripEncryptedReasoningItem(item as Record<string, unknown>)
+				: item,
+		);
+	return copy;
+}
+
+export function responseEventForClient(
+	event: SSEEvent,
+	include: string[] | undefined,
+): SSEEvent {
+	if (include?.includes(ENCRYPTED_REASONING_INCLUDE)) return event;
+	let data: Record<string, unknown>;
+	try {
+		data = JSON.parse(event.data) as Record<string, unknown>;
+	} catch {
+		return event;
+	}
+	if (
+		data.item !== null &&
+		typeof data.item === "object" &&
+		!Array.isArray(data.item)
+	)
+		data.item = stripEncryptedReasoningItem(
+			data.item as Record<string, unknown>,
+		);
+	if (
+		data.response !== null &&
+		typeof data.response === "object" &&
+		!Array.isArray(data.response)
+	)
+		data.response = responseForClient(
+			data.response as Record<string, unknown>,
+			include,
+		);
+	return { ...event, data: JSON.stringify(data) };
+}
 
 /* ---------------------------------------------- request -> canonical */
 
@@ -103,9 +162,21 @@ function mapInputPart(
 		case "input_file": {
 			const f: CanonicalContentPart = { type: "file" };
 			if (typeof part.file_id === "string") f.fileId = part.file_id;
+			if (typeof part.file_url === "string") f.fileUrl = part.file_url;
 			if (typeof part.file_data === "string") f.fileData = part.file_data;
 			if (typeof part.filename === "string") f.filename = part.filename;
 			return f;
+		}
+		case "input_audio": {
+			const input = part.input_audio as
+				| { data?: unknown; format?: unknown }
+				| undefined;
+			if (
+				typeof input?.data === "string" &&
+				(input.format === "wav" || input.format === "mp3")
+			)
+				return { type: "audio", data: input.data, format: input.format };
+			return null;
 		}
 		default:
 			return null;
@@ -136,7 +207,23 @@ function mapToolChoice(
 		return tc === "auto" || tc === "none" || tc === "required" ? tc : "auto";
 	}
 	const name = (tc as { name?: string }).name;
-	return name ? { name } : "auto";
+	if (name) return { name };
+	const allowed = tc as {
+		type?: string;
+		mode?: string;
+		tools?: Array<{ type?: string; name?: string }>;
+	};
+	if (allowed.type === "allowed_tools" && Array.isArray(allowed.tools)) {
+		return {
+			allowedTools: allowed.tools
+				.filter(
+					(tool) => tool.type === "function" && typeof tool.name === "string",
+				)
+				.map((tool) => tool.name!),
+			mode: allowed.mode === "required" ? "required" : "auto",
+		};
+	}
+	return "auto";
 }
 
 export type ResponseInputItem = Record<string, unknown>;
@@ -245,6 +332,7 @@ export function responsesRequestToCanonical(
 	req: ResponsesRequest,
 ): CanonicalChatRequest {
 	const messages: CanonicalMessage[] = [];
+	let requiresNativeInput = false;
 	if (req.instructions)
 		messages.push({ role: "system", content: req.instructions });
 
@@ -275,6 +363,23 @@ export function responsesRequestToCanonical(
 						role,
 						content: mapMessageContent(item.content),
 					};
+					if (
+						Array.isArray(item.content) &&
+						Array.isArray(message.content) &&
+						message.content.length !== item.content.length
+					)
+						requiresNativeInput = true;
+					if (
+						role === "assistant" &&
+						(item.phase === "commentary" || item.phase === "final_answer")
+					)
+						message.phase = item.phase;
+					const providerFields = mergeProviderFields(
+						message.providerFields,
+						extraContent(item.provider_specific_fields),
+					);
+					if (providerFields !== undefined)
+						message.providerFields = providerFields;
 					if (role === "assistant") attachPendingReasoning(message);
 					messages.push(message);
 					break;
@@ -316,7 +421,7 @@ export function responsesRequestToCanonical(
 					messages.push({
 						role: "tool",
 						toolCallId: stripThoughtSignatureId(String(item.call_id ?? "")),
-						content: typeof out === "string" ? out : JSON.stringify(out ?? ""),
+						content: typeof out === "string" ? out : mapMessageContent(out),
 					});
 					break;
 				}
@@ -342,6 +447,7 @@ export function responsesRequestToCanonical(
 						param: "input",
 					});
 				default:
+					requiresNativeInput = true;
 					break;
 			}
 		}
@@ -355,6 +461,7 @@ export function responsesRequestToCanonical(
 
 	const u: CanonicalChatRequest = {
 		callType: "chat",
+		publicWire: "responses",
 		model: req.model,
 		messages,
 		stream: req.stream,
@@ -443,7 +550,11 @@ export function responsesRequestToCanonical(
 		req.safety_identifier !== undefined ||
 		req.prompt_cache_key !== undefined ||
 		req.top_logprobs !== undefined ||
-		req.max_tool_calls !== undefined
+		req.max_tool_calls !== undefined ||
+		req.user !== undefined ||
+		req.truncation !== undefined ||
+		req.context_management !== undefined ||
+		requiresNativeInput
 	) {
 		const reasoningTransport =
 			req.reasoning === undefined
@@ -481,11 +592,33 @@ export function responsesRequestToCanonical(
 			...(req.max_tool_calls !== undefined
 				? { maxToolCalls: req.max_tool_calls }
 				: {}),
+			...(req.user !== undefined ? { user: req.user } : {}),
+			...(req.truncation !== undefined ? { truncation: req.truncation } : {}),
+			...(req.context_management !== undefined
+				? { contextManagement: req.context_management }
+				: {}),
+			...(requiresNativeInput && Array.isArray(req.input)
+				? { rawInput: structuredClone(req.input) }
+				: {}),
 		};
 	}
+	if (req.prompt_cache_key !== undefined)
+		u.promptCacheKey = req.prompt_cache_key;
+	if (
+		req.service_tier !== undefined ||
+		req.safety_identifier !== undefined ||
+		req.top_logprobs !== undefined ||
+		req.max_tool_calls !== undefined ||
+		req.user !== undefined ||
+		req.context_management !== undefined ||
+		(req.truncation !== undefined && req.truncation !== "disabled") ||
+		(textTransport !== undefined && Object.keys(textTransport).length > 0)
+	)
+		u.requiresNativeWire = true;
 
 	if (Array.isArray(req.tools)) {
 		const tools = [];
+		let requiresNativeTools = false;
 		for (const t of req.tools) {
 			const tool = t as Record<string, unknown>;
 			if (tool.type === "function" && typeof tool.name === "string") {
@@ -499,10 +632,18 @@ export function responsesRequestToCanonical(
 				}
 				if (typeof tool.strict === "boolean") entry.strict = tool.strict;
 				tools.push(entry);
-			}
+			} else requiresNativeTools = true;
 		}
 		if (tools.length > 0) u.tools = tools;
+		if (requiresNativeTools) {
+			u.requiresNativeWire = true;
+			u.responsesTransport = {
+				...(u.responsesTransport ?? {}),
+				rawTools: structuredClone(req.tools),
+			};
+		}
 	}
+	if (requiresNativeInput) u.requiresNativeWire = true;
 	const tc = mapToolChoice(req.tool_choice);
 	if (tc !== undefined) u.toolChoice = tc;
 
@@ -518,7 +659,7 @@ export interface RenderOptions {
 	upstreamModel: string;
 }
 
-function toResponsesUsage(usage: Usage): Record<string, unknown> {
+export function toResponsesUsage(usage: Usage): Record<string, unknown> {
 	return {
 		input_tokens: usage.promptTokens,
 		input_tokens_details: { cached_tokens: usage.cacheReadTokens ?? 0 },
@@ -542,12 +683,21 @@ function statusFor(finish: CanonicalFinishReason | null): {
 	return { status: "completed", incomplete: null };
 }
 
-function messageItem(content: string, id: string): Record<string, unknown> {
+function messageItem(
+	content: string,
+	id: string,
+	phase?: "commentary" | "final_answer",
+	providerFields?: Record<string, unknown>,
+): Record<string, unknown> {
 	return {
 		type: "message",
 		id,
 		status: "completed",
 		role: "assistant",
+		...(phase !== undefined ? { phase } : {}),
+		...(providerFields !== undefined
+			? { provider_specific_fields: providerFields }
+			: {}),
 		content: [{ type: "output_text", text: content, annotations: [] }],
 	};
 }
@@ -654,12 +804,15 @@ function buildResponse(
 		id: parts.id,
 		object: "response",
 		created_at: parts.createdAt,
+		completed_at:
+			parts.status === "in_progress" ? null : Math.floor(Date.now() / 1000),
 		status: parts.status,
 		background: req.background ?? false,
 		error: null,
 		incomplete_details: parts.incomplete,
 		instructions: req.instructions ?? null,
 		max_output_tokens: req.max_output_tokens ?? null,
+		max_tool_calls: req.max_tool_calls ?? null,
 		model: parts.model,
 		output: parts.output,
 		output_text: parts.outputText,
@@ -667,14 +820,20 @@ function buildResponse(
 		previous_response_id: req.previous_response_id ?? null,
 		reasoning: reasoningEcho(req),
 		store: req.store === true,
-		temperature: req.temperature ?? null,
+		temperature: req.temperature ?? 1,
 		text: req.text ?? { format: { type: "text" } },
 		tool_choice: req.tool_choice ?? "auto",
 		tools: req.tools ?? [],
-		top_p: req.top_p ?? null,
+		top_p: req.top_p ?? 1,
+		presence_penalty: req.presence_penalty ?? 0,
+		frequency_penalty: req.frequency_penalty ?? 0,
+		top_logprobs: req.top_logprobs ?? 0,
 		truncation: req.truncation ?? "disabled",
 		usage: parts.usage ? toResponsesUsage(parts.usage) : null,
 		metadata: req.metadata ?? {},
+		service_tier: req.service_tier ?? "default",
+		safety_identifier: req.safety_identifier ?? null,
+		prompt_cache_key: req.prompt_cache_key ?? null,
 		...(providerSpecificFields !== undefined
 			? { provider_specific_fields: providerSpecificFields }
 			: {}),
@@ -706,16 +865,32 @@ export function canonicalToResponsesResponse(
 	const reasoningState = openaiReasoningFromProviderFields(
 		choice?.message.providerFields,
 	);
-	if (reasoningState !== undefined) {
-		output.push(
-			...reasoningStateItems(reasoningState, choice?.message.reasoning),
-		);
-	} else if (choice?.message.reasoning) {
-		output.push(reasoningItem(choice.message.reasoning, `rs_${randomUUID()}`));
-	}
-	if (content) output.push(messageItem(content, `msg_${randomUUID()}`));
-	for (const tc of choice?.message.toolCalls ?? []) {
-		output.push(functionCallItem(tc, `fc_${randomUUID()}`));
+	const nativeOutput = responsesOutputFromProviderFields(
+		choice?.message.providerFields,
+	);
+	if (nativeOutput !== undefined) output.push(...nativeOutput);
+	else {
+		if (reasoningState !== undefined) {
+			output.push(
+				...reasoningStateItems(reasoningState, choice?.message.reasoning),
+			);
+		} else if (choice?.message.reasoning) {
+			output.push(
+				reasoningItem(choice.message.reasoning, `rs_${randomUUID()}`),
+			);
+		}
+		if (content)
+			output.push(
+				messageItem(
+					content,
+					`msg_${randomUUID()}`,
+					choice?.message.phase,
+					choice?.message.providerFields,
+				),
+			);
+		for (const tc of choice?.message.toolCalls ?? []) {
+			output.push(functionCallItem(tc, `fc_${randomUUID()}`));
+		}
 	}
 
 	return buildResponse(opts, {
@@ -788,6 +963,8 @@ export async function* canonicalChunksToResponsesEvents(
 	// OpenAI encrypted reasoning state accumulated across deltas (concatenated, deduped by item
 	// id) and emitted as complete reasoning items before the tool-call items.
 	const reasoningState: OpenAIReasoningStateItem[] = [];
+	const nativeOutput: Record<string, unknown>[] = [];
+	let messageProviderFields: Record<string, unknown> | undefined;
 	const appendReasoningState = (
 		fields: Record<string, unknown> | undefined,
 	): void => {
@@ -922,8 +1099,17 @@ export async function* canonicalChunksToResponsesEvents(
 			toolCalls.set(tc.index, cur);
 		}
 
-		if (delta.providerFields !== undefined)
+		if (delta.providerFields !== undefined) {
 			appendReasoningState(delta.providerFields);
+			messageProviderFields = mergeProviderFields(
+				messageProviderFields,
+				delta.providerFields,
+			);
+		}
+		for (const item of responsesOutputFromProviderFields(
+			delta.providerFields,
+		) ?? [])
+			nativeOutput.push(item);
 	}
 
 	if (reasoningOpen) yield* reasoningSummaryDone();
@@ -941,7 +1127,7 @@ export async function* canonicalChunksToResponsesEvents(
 			content_index: 0,
 			part: { type: "output_text", text: content, annotations: [] },
 		});
-		const item = messageItem(content, msgId);
+		const item = messageItem(content, msgId, undefined, messageProviderFields);
 		output.push(item);
 		yield sse("response.output_item.done", next(), {
 			output_index: msgIndex,
@@ -987,6 +1173,19 @@ export async function* canonicalChunksToResponsesEvents(
 			item: stateItem,
 		});
 		output.push(stateItem);
+	}
+
+	for (const item of nativeOutput) {
+		const outputIndex = nextOutputIndex++;
+		yield sse("response.output_item.added", next(), {
+			output_index: outputIndex,
+			item,
+		});
+		yield sse("response.output_item.done", next(), {
+			output_index: outputIndex,
+			item,
+		});
+		output.push(item);
 	}
 
 	for (const tc of toolCalls.values()) {

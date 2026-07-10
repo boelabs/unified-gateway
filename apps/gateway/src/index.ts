@@ -31,19 +31,20 @@ import type { AppEnv } from "./auth/types.ts";
 import { adminApp } from "./admin/index.ts";
 
 import {
+	listResponseInputItemsHandler,
+	retrieveResponseHandler,
+	compactResponseHandler,
+	deleteResponseHandler,
+	responsesHandler,
+} from "./endpoints/responses.ts";
+
+import {
 	videoRetrieveHandler,
 	videoContentHandler,
 	videoDeleteHandler,
 	videoCreateHandler,
 	videoListHandler,
 } from "./endpoints/videos.ts";
-
-import {
-	listResponseInputItemsHandler,
-	retrieveResponseHandler,
-	deleteResponseHandler,
-	responsesHandler,
-} from "./endpoints/responses.ts";
 
 import {
 	startExtensionReloadJob,
@@ -195,6 +196,7 @@ app.route("/admin", adminApp);
 app.use("/v1/*", authMiddleware());
 app.post("/v1/chat/completions", chatCompletionsHandler);
 app.post("/v1/responses", responsesHandler);
+app.post("/v1/responses/compact", compactResponseHandler);
 app.get("/v1/responses/:id", retrieveResponseHandler);
 app.delete("/v1/responses/:id", deleteResponseHandler);
 app.get("/v1/responses/:id/input_items", listResponseInputItemsHandler);

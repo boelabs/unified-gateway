@@ -8,9 +8,9 @@ description: "Adapter key openai. Credentials, transport, and quirks."
 ```
 
 - **Credentials**: `apiKey` only.
-- **Default transport**: Responses API for text, `images` for image generate/edit, `videos` for video
-  generation, and `embeddings` for embeddings. `transportOverrides` can pin `text.generate` to `chat_completions`
-  if you need the older contract's exact behavior for a specific deployment.
+- **Text transports**: both Responses and Chat Completions are supported. Without an operator
+  override, each public endpoint prefers its matching native transport. `transportOverrides` can pin
+  `text.generate` when a deployment intentionally needs one transport for every public text contract.
 - **Reasoning**: `openai_effort` (`reasoning_effort`) on reasoning-family models. `-chat` suffixed
   variants (e.g. `gpt-5.2-chat`) are non-reasoning — the real API rejects `reasoning_effort` on them,
   and the catalog declares them without a `reasoning` spec accordingly.

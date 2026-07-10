@@ -1,4 +1,3 @@
-import { buildOpenAIChatBody } from "./chatTransport.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -15,6 +14,11 @@ import type {
 	CanonicalChatStreamChunk,
 	CanonicalChatResponse,
 } from "#core/canonical.ts";
+
+import {
+	parseOpenAIChatResponse,
+	buildOpenAIChatBody,
+} from "./chatTransport.ts";
 
 test("prompt_cache_key: from chat contract to canonical request and OpenAI transport", () => {
 	const u = toCanonicalChatRequest(
@@ -622,4 +626,94 @@ test("chat surface: message-level provider_specific_fields carry OpenAI reasonin
 	assert.deepEqual(u.messages[0]!.providerFields, {
 		openai: { reasoning: [{ encrypted_content: "enc-1", id: "rs_1" }] },
 	});
+});
+
+test("chat native options: advanced request fields are preserved by the transport", () => {
+	const canonical = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "chat-model",
+			messages: [{ role: "user", content: "hi" }],
+			stream: true,
+			stream_options: { include_usage: true, include_obfuscation: false },
+			logprobs: true,
+			top_logprobs: 4,
+			logit_bias: { "42": -1 },
+			metadata: { trace: "a" },
+			modalities: ["text"],
+			prediction: { type: "content", content: "prefix" },
+			service_tier: "default",
+			safety_identifier: "user-1",
+			store: false,
+			verbosity: "low",
+			web_search_options: { search_context_size: "low" },
+		}),
+	);
+	assert.equal(canonical.requiresNativeWire, true);
+	const body = buildOpenAIChatBody(canonical, "upstream-model");
+	assert.equal(body.logprobs, true);
+	assert.equal(body.top_logprobs, 4);
+	assert.deepEqual(body.stream_options, {
+		include_obfuscation: false,
+		include_usage: true,
+	});
+	assert.deepEqual(body.logit_bias, { "42": -1 });
+	assert.deepEqual(body.metadata, { trace: "a" });
+	assert.deepEqual(body.modalities, ["text"]);
+	assert.deepEqual(body.prediction, { type: "content", content: "prefix" });
+	assert.equal(body.service_tier, "default");
+	assert.equal(body.safety_identifier, "user-1");
+	assert.equal(body.store, false);
+	assert.equal(body.verbosity, "low");
+	assert.deepEqual(body.web_search_options, { search_context_size: "low" });
+});
+
+test("chat response: log probabilities and annotations survive canonical rendering", () => {
+	const canonical = parseOpenAIChatResponse({
+		id: "response-1",
+		created: 1,
+		model: "chat-model",
+		choices: [
+			{
+				index: 0,
+				finish_reason: "stop",
+				logprobs: { content: [{ token: "ok", logprob: -0.1 }] },
+				message: {
+					content: "ok",
+					annotations: [{ type: "url_citation", url: "https://example.com" }],
+				},
+			},
+		],
+		usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+	});
+	const rendered = toOpenAIChatResponse(canonical);
+	assert.deepEqual(rendered.choices[0]?.logprobs, {
+		content: [{ token: "ok", logprob: -0.1 }],
+	});
+	assert.equal(rendered.choices[0]?.message.annotations?.length, 1);
+});
+
+test("chat tool choice: allowed tools keep the official nested shape", () => {
+	const canonical = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "chat-model",
+			messages: [{ role: "user", content: "hi" }],
+			tool_choice: {
+				type: "allowed_tools",
+				allowed_tools: {
+					mode: "required",
+					tools: [{ type: "function", function: { name: "lookup" } }],
+				},
+			},
+		}),
+	);
+	assert.deepEqual(
+		buildOpenAIChatBody(canonical, "upstream-model").tool_choice,
+		{
+			type: "allowed_tools",
+			allowed_tools: {
+				mode: "required",
+				tools: [{ type: "function", function: { name: "lookup" } }],
+			},
+		},
+	);
 });

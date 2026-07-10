@@ -478,17 +478,52 @@ test("openai.parseResponse: reasoning encrypted_content -> message providerField
 	);
 	const message = canonical.choices[0]!.message;
 	assert.equal(message.reasoning, "thinking");
-	assert.deepEqual(message.providerFields, {
-		openai: {
-			reasoning: [
-				{
-					encrypted_content: "enc-1",
-					id: "rs_1",
-					summary: [{ type: "summary_text", text: "thinking" }],
-				},
-			],
+	const fields = message.providerFields?.openai as Record<string, unknown>;
+	assert.deepEqual(fields.reasoning, [
+		{
+			encrypted_content: "enc-1",
+			id: "rs_1",
+			summary: [{ type: "summary_text", text: "thinking" }],
 		},
-	});
+	]);
+	assert.equal((fields.response_output as unknown[]).length, 2);
+});
+
+test("openai.parseStream: terminal failures throw instead of completing", async () => {
+	async function* events() {
+		yield {
+			event: "response.failed",
+			data: JSON.stringify({
+				type: "response.failed",
+				response: {
+					status: "failed",
+					error: { code: "server_error", message: "boom" },
+				},
+			}),
+		};
+	}
+	const { responsesEventsToCanonicalChunks } = await import(
+		"#contracts/openai/responsesTransport.ts"
+	);
+	await assert.rejects(async () => {
+		for await (const _chunk of responsesEventsToCanonicalChunks(events())) {
+			// consume
+		}
+	}, /terminal stream error/);
+});
+
+test("openai chat stream: in-band error objects throw", async () => {
+	const stream = new Response(
+		`data: {"error":{"message":"boom","type":"server_error"}}\n\n`,
+	).body!;
+	await assert.rejects(async () => {
+		for await (const _chunk of openaiAdapter.chat!.parseStream(stream, {
+			...ctx,
+			transport: "chat_completions",
+		})) {
+			// consume
+		}
+	}, /boom/);
 });
 
 test("openai.parseStream: reasoning output_item.done -> delta.providerFields (deduped)", async () => {
