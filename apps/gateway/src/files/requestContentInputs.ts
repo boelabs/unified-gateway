@@ -1,5 +1,7 @@
+/** Candidate-aware normalization for canonical file and image inputs. */
+
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
-import type { FileInputTransportSupport } from "#adapters/types.ts";
+import type { ContentPartInputSupport } from "#adapters/types.ts";
 import type { UpstreamTransport } from "#core/transport.ts";
 import { GatewayError } from "#core/errors.ts";
 import { lookup } from "node:dns/promises";
@@ -8,41 +10,65 @@ import { isIP } from "node:net";
 import type {
 	CanonicalContentPart,
 	CanonicalChatRequest,
+	CanonicalImagePart,
 	CanonicalFilePart,
 	PdfParserEngine,
 } from "#core/canonical.ts";
 
-const MAX_INLINE_FILE_BYTES = 50_000_000;
-const MAX_PORTABLE_FILE_BYTES = 20_000_000;
+const MAX_INLINE_INPUT_BYTES = 50_000_000;
+const MAX_MATERIALIZED_INPUT_BYTES = 20_000_000;
 const MAX_TOTAL_BYTES = 50_000_000;
 const MAX_TEXT_CHARACTERS = 2_000_000;
 const MAX_PDF_PAGES = 200;
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_REDIRECTS = 3;
+const MAX_CONCURRENT_FETCHES = 4;
+const SIGNATURED_IMAGE_MIME_TYPES = new Set([
+	"image/avif",
+	"image/bmp",
+	"image/gif",
+	"image/heic",
+	"image/heif",
+	"image/jpeg",
+	"image/png",
+	"image/tiff",
+	"image/webp",
+]);
 
 const MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+	".avif": "image/avif",
 	".bat": "text/x-bat",
+	".bmp": "image/bmp",
 	".conf": "text/plain",
 	".csv": "text/csv",
 	".css": "text/css",
 	".eml": "message/rfc822",
+	".gif": "image/gif",
+	".heic": "image/heic",
+	".heif": "image/heif",
 	".html": "text/html",
 	".htm": "text/html",
 	".js": "text/javascript",
 	".json": "application/json",
+	".jpeg": "image/jpeg",
+	".jpg": "image/jpeg",
 	".jsx": "text/jsx",
 	".log": "text/plain",
 	".md": "text/markdown",
 	".pdf": "application/pdf",
+	".png": "image/png",
 	".py": "text/x-python",
 	".sh": "text/x-shellscript",
 	".sql": "application/x-sql",
 	".srt": "text/srt",
 	".toml": "application/toml",
+	".tif": "image/tiff",
+	".tiff": "image/tiff",
 	".ts": "text/typescript",
 	".tsx": "text/tsx",
 	".txt": "text/plain",
 	".vtt": "text/vtt",
+	".webp": "image/webp",
 	".xml": "application/xml",
 	".yaml": "application/yaml",
 	".yml": "application/yaml",
@@ -77,28 +103,32 @@ interface ResolverDependencies {
 	resolveHostname: ResolveHostname;
 }
 
-interface MaterializedFile {
+interface MaterializedInput {
 	bytes: Uint8Array;
 	dataUrl: string;
 	filename?: string;
 	mimeType: string;
 }
 
-interface FileSource {
-	kind: "file_id" | "file_url" | "file_data";
+type MaterializablePart = CanonicalFilePart | CanonicalImagePart;
+
+interface ContentSource {
+	kind: "provider_file_id" | "url" | "data_url";
 	value: string;
 }
 
-export interface FileResolutionMetadata {
-	engine: PdfParserEngine;
-	materializedUrls: number;
+export interface ContentInputResolutionMetadata {
+	pdfEngine: PdfParserEngine;
+	materializedFiles: number;
+	materializedImages: number;
 	nativeFiles: number;
+	nativeImages: number;
 	parsedFiles: number;
 }
 
-export interface ResolvedFileRequest {
+export interface ResolvedContentInputRequest {
 	request: CanonicalChatRequest;
-	metadata?: FileResolutionMetadata;
+	metadata?: ContentInputResolutionMetadata;
 }
 
 const DEFAULT_DEPENDENCIES: ResolverDependencies = {
@@ -123,11 +153,28 @@ function requestError(
 	});
 }
 
-function fileSource(part: CanonicalFilePart): FileSource {
-	const present: Array<[FileSource["kind"], string]> = [];
-	if (part.fileId !== undefined) present.push(["file_id", part.fileId]);
-	if (part.fileUrl !== undefined) present.push(["file_url", part.fileUrl]);
-	if (part.fileData !== undefined) present.push(["file_data", part.fileData]);
+function candidateInputError(
+	message: string,
+	code: string,
+	publicMessage: string,
+	param = "messages",
+): GatewayError {
+	return new GatewayError({
+		class: "bad_request",
+		code,
+		param,
+		message,
+		publicMessage,
+		deploymentHealth: "neutral",
+	});
+}
+
+function fileSource(part: CanonicalFilePart): ContentSource {
+	const present: Array<[ContentSource["kind"], string]> = [];
+	if (part.fileId !== undefined)
+		present.push(["provider_file_id", part.fileId]);
+	if (part.fileUrl !== undefined) present.push(["url", part.fileUrl]);
+	if (part.fileData !== undefined) present.push(["data_url", part.fileData]);
 	if (present.length !== 1) {
 		throw requestError(
 			`File input must contain exactly one source; received ${present.length}`,
@@ -143,25 +190,42 @@ function fileSource(part: CanonicalFilePart): FileSource {
 			"File input sources cannot be empty.",
 		);
 	}
-	if (kind === "file_data" && /^https:\/\//i.test(value)) {
-		return { kind: "file_url", value };
+	if (kind === "data_url" && /^https:\/\//i.test(value)) {
+		return { kind: "url", value };
 	}
 	return { kind, value };
 }
 
-function fileParts(req: CanonicalChatRequest): CanonicalFilePart[] {
-	const parts: CanonicalFilePart[] = [];
+function imageSource(part: CanonicalImagePart): ContentSource {
+	if (part.url.length === 0) {
+		throw requestError(
+			"Image input source is empty",
+			"invalid_image_url",
+			"Image input sources cannot be empty.",
+		);
+	}
+	return /^data:/i.test(part.url)
+		? { kind: "data_url", value: part.url }
+		: { kind: "url", value: part.url };
+}
+
+function inputParts(req: CanonicalChatRequest): MaterializablePart[] {
+	const parts: MaterializablePart[] = [];
 	for (const message of req.messages) {
 		if (!Array.isArray(message.content)) continue;
 		for (const part of message.content) {
-			if (part.type === "file") parts.push(part);
+			if (part.type === "file" || part.type === "image") parts.push(part);
 		}
 	}
 	return parts;
 }
 
-export function hasFileInputs(req: CanonicalChatRequest): boolean {
-	return fileParts(req).length > 0;
+export function hasContentInputs(req: CanonicalChatRequest): boolean {
+	return req.messages.some(
+		(message) =>
+			Array.isArray(message.content) &&
+			message.content.some((part) => part.type !== "text"),
+	);
 }
 
 function normalizedMimeType(
@@ -190,13 +254,20 @@ function dataUrlMime(value: string): string | undefined {
 	return normalizedMimeType(/^data:([^;,]+)/i.exec(value)?.[1]);
 }
 
-function hintedMimeType(part: CanonicalFilePart): string | undefined {
+function hintedFileMimeType(part: CanonicalFilePart): string | undefined {
 	const source = fileSource(part);
 	return (
-		(source.kind === "file_data" ? dataUrlMime(source.value) : undefined) ??
+		(source.kind === "data_url" ? dataUrlMime(source.value) : undefined) ??
 		extensionMime(part.filename) ??
-		(source.kind === "file_url" ? extensionMime(source.value) : undefined)
+		(source.kind === "url" ? extensionMime(source.value) : undefined)
 	);
+}
+
+function hintedImageMimeType(part: CanonicalImagePart): string | undefined {
+	const source = imageSource(part);
+	return source.kind === "data_url"
+		? dataUrlMime(source.value)
+		: extensionMime(source.value);
 }
 
 function isBlockedHostname(hostname: string): boolean {
@@ -209,15 +280,18 @@ function isBlockedHostname(hostname: string): boolean {
 	);
 }
 
-function parseSafeHttpsUrl(value: string): URL {
+type RemoteInputKind = "file" | "image";
+
+function parseSafeHttpsUrl(value: string, kind: RemoteInputKind): URL {
+	const param = kind === "file" ? "file_url" : "image_url";
 	let url: URL;
 	try {
 		url = new URL(value);
 	} catch {
 		throw requestError(
-			`Invalid file URL: ${value}`,
-			"invalid_file_url",
-			"file_url must be a valid public HTTPS URL.",
+			`Invalid ${kind} URL: ${value}`,
+			`invalid_${kind}_url`,
+			`${param} must be a valid public HTTPS URL.`,
 		);
 	}
 	const literalHost =
@@ -233,9 +307,9 @@ function parseSafeHttpsUrl(value: string): URL {
 		(isIP(literalHost) !== 0 && isBlockedAddress(literalHost))
 	) {
 		throw requestError(
-			`Unsafe file URL: ${url.href}`,
-			"unsafe_file_url",
-			"file_url must be a public HTTPS URL without credentials or a fragment.",
+			`Unsafe ${kind} URL: ${url.href}`,
+			`unsafe_${kind}_url`,
+			`${param} must be a public HTTPS URL without credentials or a fragment.`,
 		);
 	}
 	return url;
@@ -317,8 +391,10 @@ function isBlockedAddress(address: string): boolean {
 async function assertPublicUrl(
 	value: string,
 	resolveHostname: ResolveHostname,
+	kind: RemoteInputKind,
 ): Promise<URL> {
-	const url = parseSafeHttpsUrl(value);
+	const url = parseSafeHttpsUrl(value, kind);
+	const param = kind === "file" ? "file_url" : "image_url";
 
 	const literalHost =
 		url.hostname.startsWith("[") && url.hostname.endsWith("]")
@@ -328,10 +404,10 @@ async function assertPublicUrl(
 	const addresses = literalFamily
 		? [{ address: literalHost, family: literalFamily }]
 		: await resolveHostname(url.hostname).catch((cause: unknown) => {
-				throw requestError(
-					`Could not resolve file URL hostname ${url.hostname}: ${String(cause)}`,
-					"file_fetch_failed",
-					"The file URL hostname could not be resolved.",
+				throw candidateInputError(
+					`Could not resolve ${kind} URL hostname ${url.hostname}: ${String(cause)}`,
+					`${kind}_fetch_failed`,
+					`The ${kind} URL hostname could not be resolved.`,
 				);
 			});
 	if (
@@ -339,9 +415,9 @@ async function assertPublicUrl(
 		addresses.some(({ address }) => isBlockedAddress(address))
 	) {
 		throw requestError(
-			`File URL resolved to a non-public address: ${url.hostname}`,
-			"unsafe_file_url",
-			"file_url must resolve only to public network addresses.",
+			`${kind} URL resolved to a non-public address: ${url.hostname}`,
+			`unsafe_${kind}_url`,
+			`${param} must resolve only to public network addresses.`,
 		);
 	}
 	return url;
@@ -362,20 +438,56 @@ function effectiveMimeType(
 	filename: string | undefined,
 	bytes: Uint8Array,
 ): string {
-	if (Buffer.from(bytes.subarray(0, 1_024)).indexOf("%PDF-", 0, "ascii") >= 0)
-		return "application/pdf";
+	const sniffed = sniffMimeType(bytes);
+	if (sniffed !== undefined) return sniffed;
 	if (declared === undefined || declared === "application/octet-stream")
 		return extensionMime(filename) ?? declared ?? "application/octet-stream";
 	return declared;
 }
 
-async function readLimitedBody(response: Response): Promise<Uint8Array> {
+function startsWith(bytes: Uint8Array, signature: readonly number[]): boolean {
+	return signature.every((value, index) => bytes[index] === value);
+}
+
+function ascii(bytes: Uint8Array, start: number, length: number): string {
+	return Buffer.from(bytes.subarray(start, start + length)).toString("ascii");
+}
+
+function sniffMimeType(bytes: Uint8Array): string | undefined {
+	if (Buffer.from(bytes.subarray(0, 1_024)).indexOf("%PDF-", 0, "ascii") >= 0)
+		return "application/pdf";
+	if (startsWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+		return "image/png";
+	if (startsWith(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg";
+	if (ascii(bytes, 0, 6) === "GIF87a" || ascii(bytes, 0, 6) === "GIF89a")
+		return "image/gif";
+	if (ascii(bytes, 0, 4) === "RIFF" && ascii(bytes, 8, 4) === "WEBP")
+		return "image/webp";
+	if (startsWith(bytes, [0x42, 0x4d])) return "image/bmp";
+	if (
+		startsWith(bytes, [0x49, 0x49, 0x2a, 0x00]) ||
+		startsWith(bytes, [0x4d, 0x4d, 0x00, 0x2a])
+	)
+		return "image/tiff";
+	if (ascii(bytes, 4, 4) === "ftyp") {
+		const brand = ascii(bytes, 8, 4).toLowerCase();
+		if (brand === "avif" || brand === "avis") return "image/avif";
+		if (["heic", "heix", "hevc", "hevx"].includes(brand)) return "image/heic";
+		if (["mif1", "msf1", "heif"].includes(brand)) return "image/heif";
+	}
+	return undefined;
+}
+
+async function readLimitedBody(
+	response: Response,
+	kind: RemoteInputKind,
+): Promise<Uint8Array> {
 	const declared = Number(response.headers.get("content-length"));
-	if (Number.isFinite(declared) && declared > MAX_PORTABLE_FILE_BYTES) {
-		throw requestError(
-			`Remote file declares ${declared} bytes, above the ${MAX_PORTABLE_FILE_BYTES} byte limit`,
-			"file_too_large",
-			"The file is too large for portable processing.",
+	if (Number.isFinite(declared) && declared > MAX_MATERIALIZED_INPUT_BYTES) {
+		throw candidateInputError(
+			`Remote ${kind} declares ${declared} bytes, above the ${MAX_MATERIALIZED_INPUT_BYTES} byte limit`,
+			`${kind}_too_large`,
+			`The ${kind} is too large for gateway materialization.`,
 		);
 	}
 	if (!response.body) return new Uint8Array();
@@ -388,12 +500,12 @@ async function readLimitedBody(response: Response): Promise<Uint8Array> {
 			const { done, value } = await reader.read();
 			if (done) break;
 			total += value.byteLength;
-			if (total > MAX_PORTABLE_FILE_BYTES) {
+			if (total > MAX_MATERIALIZED_INPUT_BYTES) {
 				await reader.cancel();
-				throw requestError(
-					`Remote file exceeded the ${MAX_PORTABLE_FILE_BYTES} byte limit`,
-					"file_too_large",
-					"The file is too large for portable processing.",
+				throw candidateInputError(
+					`Remote ${kind} exceeded the ${MAX_MATERIALIZED_INPUT_BYTES} byte limit`,
+					`${kind}_too_large`,
+					`The ${kind} is too large for gateway materialization.`,
 				);
 			}
 			chunks.push(value);
@@ -411,14 +523,19 @@ async function readLimitedBody(response: Response): Promise<Uint8Array> {
 	return bytes;
 }
 
-async function fetchFile(
+async function fetchInput(
 	value: string,
 	signal: AbortSignal,
 	dependencies: ResolverDependencies,
-): Promise<MaterializedFile> {
+	kind: RemoteInputKind,
+): Promise<MaterializedInput> {
 	let current = value;
 	for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-		const url = await assertPublicUrl(current, dependencies.resolveHostname);
+		const url = await assertPublicUrl(
+			current,
+			dependencies.resolveHostname,
+			kind,
+		);
 		let response: Response;
 		try {
 			response = await dependencies.fetch(url, {
@@ -429,24 +546,27 @@ async function fetchFile(
 					AbortSignal.timeout(FETCH_TIMEOUT_MS),
 				]),
 				headers: {
-					accept: "application/pdf, text/*, application/json, */*;q=0.1",
+					accept:
+						kind === "image"
+							? "image/*, */*;q=0.1"
+							: "application/pdf, text/*, application/json, */*;q=0.1",
 				},
 			});
 		} catch (cause) {
-			throw requestError(
-				`Could not fetch file URL ${url.href}: ${String(cause)}`,
-				"file_fetch_failed",
-				"The file URL could not be fetched.",
+			throw candidateInputError(
+				`Could not fetch ${kind} URL ${url.href}: ${String(cause)}`,
+				`${kind}_fetch_failed`,
+				`The ${kind} URL could not be fetched.`,
 			);
 		}
 
 		if ([301, 302, 303, 307, 308].includes(response.status)) {
 			const location = response.headers.get("location");
 			if (!location || redirects === MAX_REDIRECTS) {
-				throw requestError(
-					`File URL exceeded ${MAX_REDIRECTS} redirects`,
-					"file_fetch_failed",
-					"The file URL has too many redirects.",
+				throw candidateInputError(
+					`${kind} URL exceeded ${MAX_REDIRECTS} redirects`,
+					`${kind}_fetch_failed`,
+					`The ${kind} URL has too many redirects.`,
 				);
 			}
 			await response.body?.cancel();
@@ -455,19 +575,19 @@ async function fetchFile(
 		}
 		if (!response.ok) {
 			await response.body?.cancel();
-			throw requestError(
-				`File URL returned HTTP ${response.status}`,
-				"file_fetch_failed",
-				"The file URL could not be fetched.",
+			throw candidateInputError(
+				`${kind} URL returned HTTP ${response.status}`,
+				`${kind}_fetch_failed`,
+				`The ${kind} URL could not be fetched.`,
 			);
 		}
 
-		const bytes = await readLimitedBody(response);
+		const bytes = await readLimitedBody(response, kind);
 		if (bytes.byteLength === 0) {
 			throw requestError(
-				"Remote file is empty",
-				"invalid_file_data",
-				"The remote file cannot be empty.",
+				`Remote ${kind} is empty`,
+				`invalid_${kind}_data`,
+				`The remote ${kind} cannot be empty.`,
 			);
 		}
 		const filename = filenameFromUrl(url);
@@ -486,40 +606,44 @@ async function fetchFile(
 	throw new Error("unreachable");
 }
 
-function decodeDataUrl(value: string, filename?: string): MaterializedFile {
+function decodeDataUrl(
+	value: string,
+	filename: string | undefined,
+	kind: RemoteInputKind,
+): MaterializedInput {
 	const match =
 		/^data:([^;,]+)(?:;charset=[^;,]+)?;base64,([a-z0-9+/]*={0,2})$/i.exec(
 			value,
 		);
 	if (!match) {
 		throw requestError(
-			"file_data is not a valid base64 data URL",
-			"invalid_file_data",
-			"file_data must be a valid base64 data URL.",
+			`${kind} data is not a valid base64 data URL`,
+			`invalid_${kind}_data`,
+			`${kind} data must be a valid base64 data URL.`,
 		);
 	}
 	const mimeType = normalizedMimeType(match[1]);
 	if (!mimeType) {
 		throw requestError(
-			`Invalid file_data MIME type: ${String(match[1])}`,
-			"invalid_file_data",
-			"file_data must include a valid MIME type.",
+			`Invalid ${kind} data MIME type: ${String(match[1])}`,
+			`invalid_${kind}_data`,
+			`${kind} data must include a valid MIME type.`,
 		);
 	}
 	const encoded = match[2]!;
 	if (encoded.length % 4 !== 0) {
 		throw requestError(
-			"file_data base64 has invalid padding",
-			"invalid_file_data",
-			"file_data must contain valid padded base64.",
+			`${kind} data base64 has invalid padding`,
+			`invalid_${kind}_data`,
+			`${kind} data must contain valid padded base64.`,
 		);
 	}
 	const bytes = Uint8Array.from(Buffer.from(encoded, "base64"));
 	if (bytes.byteLength === 0) {
 		throw requestError(
-			"file_data is empty",
-			"invalid_file_data",
-			"file_data cannot be empty.",
+			`${kind} data is empty`,
+			`invalid_${kind}_data`,
+			`${kind} data cannot be empty.`,
 		);
 	}
 	if (
@@ -527,23 +651,24 @@ function decodeDataUrl(value: string, filename?: string): MaterializedFile {
 		encoded.replace(/=+$/, "")
 	) {
 		throw requestError(
-			"file_data base64 is not canonical",
-			"invalid_file_data",
-			"file_data must contain valid base64.",
+			`${kind} data base64 is not canonical`,
+			`invalid_${kind}_data`,
+			`${kind} data must contain valid base64.`,
 		);
 	}
-	if (bytes.byteLength > MAX_INLINE_FILE_BYTES) {
+	if (bytes.byteLength > MAX_INLINE_INPUT_BYTES) {
 		throw requestError(
-			`Inline file contains ${bytes.byteLength} bytes, above the ${MAX_INLINE_FILE_BYTES} byte limit`,
-			"file_too_large",
-			"The file is too large for portable processing.",
+			`Inline ${kind} contains ${bytes.byteLength} bytes, above the ${MAX_INLINE_INPUT_BYTES} byte limit`,
+			`${kind}_too_large`,
+			`The ${kind} is too large for portable processing.`,
 		);
 	}
+	const effective = effectiveMimeType(mimeType, filename, bytes);
 	return {
 		bytes,
-		dataUrl: value,
+		dataUrl: `data:${effective};base64,${encoded}`,
 		...(filename !== undefined ? { filename } : {}),
-		mimeType: effectiveMimeType(mimeType, filename, bytes),
+		mimeType: effective,
 	};
 }
 
@@ -572,11 +697,11 @@ function modelAllowsNativeFile(
 		: inputs.includes("file");
 }
 
-function canUseNative(
+function canDeliverFile(
 	part: CanonicalFilePart,
 	candidate: DeploymentCandidate,
-	support: FileInputTransportSupport | undefined,
-	mimeType = hintedMimeType(part),
+	support: ContentPartInputSupport | undefined,
+	mimeType = hintedFileMimeType(part),
 ): boolean {
 	if (
 		support === undefined ||
@@ -586,7 +711,31 @@ function canUseNative(
 		return false;
 	const source = fileSource(part);
 	if (support.sources.includes(source.kind)) return true;
-	return source.kind === "file_url" && support.sources.includes("file_data");
+	return source.kind === "url" && support.sources.includes("data_url");
+}
+
+function modelAllowsImage(candidate: DeploymentCandidate): boolean {
+	if (!candidate.meta.capabilities.vision) return false;
+	const inputs =
+		candidate.meta.operations?.["text.generate"]?.modalities?.input;
+	return inputs === undefined || inputs.includes("image");
+}
+
+function canDeliverImage(
+	part: CanonicalImagePart,
+	candidate: DeploymentCandidate,
+	support: ContentPartInputSupport | undefined,
+	mimeType = hintedImageMimeType(part),
+): boolean {
+	if (
+		support === undefined ||
+		!modelAllowsImage(candidate) ||
+		!mimeMatches(mimeType, support.mimeTypes)
+	)
+		return false;
+	const source = imageSource(part);
+	if (support.sources.includes(source.kind)) return true;
+	return source.kind === "url" && support.sources.includes("data_url");
 }
 
 function isPortableTextMime(mimeType: string): boolean {
@@ -601,7 +750,7 @@ function isPortableTextMime(mimeType: string): boolean {
 	);
 }
 
-function assertPdfSignature(file: MaterializedFile): void {
+function assertPdfSignature(file: MaterializedInput): void {
 	if (
 		file.mimeType === "application/pdf" &&
 		Buffer.from(file.bytes.subarray(0, 1_024)).indexOf("%PDF-", 0, "ascii") < 0
@@ -614,10 +763,32 @@ function assertPdfSignature(file: MaterializedFile): void {
 	}
 }
 
-async function extractPortableText(file: MaterializedFile): Promise<string> {
-	if (file.bytes.byteLength > MAX_PORTABLE_FILE_BYTES) {
+function assertImageContent(image: MaterializedInput): void {
+	if (!image.mimeType.startsWith("image/")) {
 		throw requestError(
-			`File contains ${file.bytes.byteLength} bytes, above the ${MAX_PORTABLE_FILE_BYTES} byte parser limit`,
+			`Image input resolved to ${image.mimeType}`,
+			"image_type_mismatch",
+			"The image content does not match an image media type.",
+		);
+	}
+	const sniffed = sniffMimeType(image.bytes);
+	if (
+		(sniffed !== undefined && !sniffed.startsWith("image/")) ||
+		(SIGNATURED_IMAGE_MIME_TYPES.has(image.mimeType) &&
+			sniffed !== image.mimeType)
+	) {
+		throw requestError(
+			`Image input signature resolves to ${sniffed}`,
+			"image_type_mismatch",
+			"The image content does not match its declared type.",
+		);
+	}
+}
+
+async function extractPortableText(file: MaterializedInput): Promise<string> {
+	if (file.bytes.byteLength > MAX_MATERIALIZED_INPUT_BYTES) {
+		throw candidateInputError(
+			`File contains ${file.bytes.byteLength} bytes, above the ${MAX_MATERIALIZED_INPUT_BYTES} byte parser limit`,
 			"file_too_large",
 			"The file is too large for portable text extraction.",
 		);
@@ -631,7 +802,7 @@ async function extractPortableText(file: MaterializedFile): Promise<string> {
 			const document = await getDocumentProxy(file.bytes);
 			try {
 				if (document.numPages > MAX_PDF_PAGES) {
-					throw requestError(
+					throw candidateInputError(
 						`PDF has ${document.numPages} pages, above the ${MAX_PDF_PAGES} page parser limit`,
 						"file_too_large",
 						"The PDF has too many pages for portable text extraction.",
@@ -643,7 +814,7 @@ async function extractPortableText(file: MaterializedFile): Promise<string> {
 			}
 		} catch (cause) {
 			if (GatewayError.is(cause)) throw cause;
-			throw requestError(
+			throw candidateInputError(
 				`PDF text extraction failed: ${String(cause)}`,
 				"file_parser_failed",
 				"The PDF could not be parsed as text. Use a native document-capable model for this file.",
@@ -651,7 +822,7 @@ async function extractPortableText(file: MaterializedFile): Promise<string> {
 		}
 		text = result.text;
 		if (text.trim().length === 0) {
-			throw requestError(
+			throw candidateInputError(
 				"PDF text extraction returned no text",
 				"file_parser_no_text",
 				"The PDF contains no extractable text. Use a native or OCR-capable engine.",
@@ -661,21 +832,21 @@ async function extractPortableText(file: MaterializedFile): Promise<string> {
 		try {
 			text = new TextDecoder("utf-8", { fatal: true }).decode(file.bytes);
 		} catch (cause) {
-			throw requestError(
+			throw candidateInputError(
 				`Text file is not valid UTF-8: ${String(cause)}`,
 				"file_parser_failed",
 				"Portable text files must use UTF-8 encoding.",
 			);
 		}
 	} else {
-		throw requestError(
+		throw candidateInputError(
 			`No portable parser is available for ${file.mimeType}`,
 			"unsupported_file_type",
 			`No portable parser is available for ${file.mimeType}. Use a native file-capable model.`,
 		);
 	}
 	if (text.length > MAX_TEXT_CHARACTERS) {
-		throw requestError(
+		throw candidateInputError(
 			`Parsed file contains ${text.length} characters, above the ${MAX_TEXT_CHARACTERS} character limit`,
 			"file_too_large",
 			"The extracted file text is too large for portable processing.",
@@ -686,7 +857,7 @@ async function extractPortableText(file: MaterializedFile): Promise<string> {
 
 function portableTextPart(
 	part: CanonicalFilePart,
-	file: MaterializedFile,
+	file: MaterializedInput,
 	text: string,
 ): CanonicalContentPart {
 	const filename = part.filename ?? file.filename ?? "attachment";
@@ -699,19 +870,47 @@ function portableTextPart(
 	};
 }
 
-export class FileInputResolver {
+class AsyncSemaphore {
+	#available: number;
+	readonly #waiters: Array<() => void> = [];
+
+	constructor(limit: number) {
+		this.#available = limit;
+	}
+
+	async run<T>(operation: () => Promise<T>): Promise<T> {
+		if (this.#available === 0) {
+			await new Promise<void>((resolve) => this.#waiters.push(resolve));
+		} else {
+			this.#available -= 1;
+		}
+		try {
+			return await operation();
+		} finally {
+			const next = this.#waiters.shift();
+			if (next) next();
+			else this.#available += 1;
+		}
+	}
+}
+
+export class ContentInputResolver {
 	readonly #request: CanonicalChatRequest;
 	readonly #signal: AbortSignal;
 	readonly #dependencies: ResolverDependencies;
-	readonly #files: CanonicalFilePart[];
+	readonly #parts: MaterializablePart[];
 	readonly #engine: PdfParserEngine;
 	readonly #materialized = new WeakMap<
-		CanonicalFilePart,
-		Promise<MaterializedFile>
+		MaterializablePart,
+		Promise<MaterializedInput>
 	>();
-	readonly #materializedBySource = new Map<string, Promise<MaterializedFile>>();
-	readonly #parsedText = new WeakMap<MaterializedFile, Promise<string>>();
-	readonly #accounted = new WeakSet<CanonicalFilePart>();
+	readonly #materializedBySource = new Map<
+		string,
+		Promise<MaterializedInput>
+	>();
+	readonly #parsedText = new WeakMap<MaterializedInput, Promise<string>>();
+	readonly #accounted = new WeakSet<MaterializablePart>();
+	readonly #fetches = new AsyncSemaphore(MAX_CONCURRENT_FETCHES);
 	#totalBytes = 0;
 
 	constructor(
@@ -722,63 +921,84 @@ export class FileInputResolver {
 		this.#request = request;
 		this.#signal = signal;
 		this.#dependencies = dependencies;
-		this.#files = fileParts(request);
+		this.#parts = inputParts(request);
 		this.#engine = request.fileParser?.pdfEngine ?? "auto";
-		for (const part of this.#files) {
-			const source = fileSource(part);
-			if (source.kind === "file_url") parseSafeHttpsUrl(source.value);
+		for (const part of this.#parts) {
+			const source =
+				part.type === "file" ? fileSource(part) : imageSource(part);
+			if (source.kind === "url") parseSafeHttpsUrl(source.value, part.type);
 		}
 	}
 
-	get hasFiles(): boolean {
-		return this.#files.length > 0;
+	get hasInputs(): boolean {
+		return this.#parts.length > 0;
 	}
 
 	assertCandidate(
 		candidate: DeploymentCandidate,
 		transport: UpstreamTransport,
 	): void {
-		const support = candidate.adapter.fileInputs?.[transport];
-		for (const part of this.#files) {
+		const transportSupport = candidate.adapter.contentInputs?.[transport];
+		for (const part of this.#parts) {
+			if (part.type === "image") {
+				if (!canDeliverImage(part, candidate, transportSupport?.image)) {
+					throw candidateInputError(
+						`Adapter ${candidate.adapter.key} cannot deliver this image input on ${transport}`,
+						"unsupported_image_input",
+						"The selected deployment cannot consume this image input.",
+					);
+				}
+				continue;
+			}
+
 			const source = fileSource(part);
-			const native = canUseNative(part, candidate, support);
-			if (source.kind === "file_id" && !native) {
-				throw new GatewayError({
-					class: "bad_request",
-					code: "unsupported_file_reference",
-					param: "messages",
-					message: `Adapter ${candidate.adapter.key} cannot consume this provider file reference`,
-					publicMessage:
-						"The selected deployment cannot consume this provider-scoped file_id.",
-				});
+			const native = canDeliverFile(part, candidate, transportSupport?.file);
+			if (source.kind === "provider_file_id" && !native) {
+				throw candidateInputError(
+					`Adapter ${candidate.adapter.key} cannot consume this provider file reference`,
+					"unsupported_file_reference",
+					"The selected deployment cannot consume this provider-scoped file_id.",
+				);
 			}
 			if (this.#engine === "native" && !native) {
-				throw new GatewayError({
-					class: "bad_request",
-					code: "native_file_input_unsupported",
-					param: "plugins",
-					message: `Adapter ${candidate.adapter.key} does not support native file input on ${transport}`,
-					publicMessage:
-						"The selected deployment does not support the native file-parser engine.",
-				});
+				throw candidateInputError(
+					`Adapter ${candidate.adapter.key} does not support native file input on ${transport}`,
+					"native_file_input_unsupported",
+					"The selected deployment does not support the native file-parser engine.",
+					"plugins",
+				);
 			}
 		}
 	}
 
-	async #materialize(part: CanonicalFilePart): Promise<MaterializedFile> {
+	async #materialize(part: MaterializablePart): Promise<MaterializedInput> {
 		let pending = this.#materialized.get(part);
 		if (pending === undefined) {
-			const source = fileSource(part);
-			const sourceKey = `${source.kind}:${source.value}:${source.kind === "file_data" ? (part.filename ?? "") : ""}`;
+			const source =
+				part.type === "file" ? fileSource(part) : imageSource(part);
+			const filename = part.type === "file" ? part.filename : undefined;
+			const sourceKey =
+				source.kind === "url"
+					? `url:${source.value}`
+					: `${part.type}:${source.kind}:${source.value}:${filename ?? ""}`;
 			pending = this.#materializedBySource.get(sourceKey);
 			if (pending === undefined) {
 				pending =
-					source.kind === "file_url"
-						? fetchFile(source.value, this.#signal, this.#dependencies)
-						: source.kind === "file_data"
-							? Promise.resolve(decodeDataUrl(source.value, part.filename))
+					source.kind === "url"
+						? this.#fetches.run(() =>
+								fetchInput(
+									source.value,
+									this.#signal,
+									this.#dependencies,
+									part.type,
+								),
+							)
+						: source.kind === "data_url"
+							? Promise.resolve(
+									decodeDataUrl(source.value, filename, part.type),
+								)
 							: Promise.reject(
-									requestError(
+									candidateInputError(
 										"Provider file IDs cannot be materialized by the gateway",
 										"unsupported_file_reference",
 										"file_id references require a compatible native upstream.",
@@ -794,16 +1014,16 @@ export class FileInputResolver {
 			this.#totalBytes += file.bytes.byteLength;
 			if (this.#totalBytes > MAX_TOTAL_BYTES) {
 				throw requestError(
-					`Materialized files contain ${this.#totalBytes} bytes, above the ${MAX_TOTAL_BYTES} byte request limit`,
-					"file_too_large",
-					"The combined file inputs are too large for portable processing.",
+					`Materialized content inputs contain ${this.#totalBytes} bytes, above the ${MAX_TOTAL_BYTES} byte request limit`,
+					"content_inputs_too_large",
+					"The combined content inputs are too large for portable processing.",
 				);
 			}
 		}
 		return file;
 	}
 
-	async #text(file: MaterializedFile): Promise<string> {
+	async #text(file: MaterializedInput): Promise<string> {
 		let pending = this.#parsedText.get(file);
 		if (pending === undefined) {
 			pending = extractPortableText(file);
@@ -815,12 +1035,12 @@ export class FileInputResolver {
 	async #nativePart(
 		part: CanonicalFilePart,
 		candidate: DeploymentCandidate,
-		support: FileInputTransportSupport,
-		metadata: FileResolutionMetadata,
+		support: ContentPartInputSupport,
+		metadata: ContentInputResolutionMetadata,
 	): Promise<CanonicalFilePart> {
 		const source = fileSource(part);
 		if (support.sources.includes(source.kind)) {
-			if (source.kind === "file_data") {
+			if (source.kind === "data_url") {
 				const file = await this.#materialize(part);
 				assertPdfSignature(file);
 				if (
@@ -829,7 +1049,7 @@ export class FileInputResolver {
 					(support.maxBytes !== undefined &&
 						file.bytes.byteLength > support.maxBytes)
 				) {
-					throw requestError(
+					throw candidateInputError(
 						`Native file input does not support ${file.mimeType}`,
 						"native_file_input_unsupported",
 						"The selected deployment does not support this file type natively.",
@@ -837,7 +1057,7 @@ export class FileInputResolver {
 				}
 			}
 			metadata.nativeFiles += 1;
-			if (source.kind === "file_url" && part.fileUrl === undefined) {
+			if (source.kind === "url" && part.fileUrl === undefined) {
 				const normalized = { ...part, fileUrl: source.value };
 				delete normalized.fileData;
 				return normalized;
@@ -846,19 +1066,19 @@ export class FileInputResolver {
 		}
 		const file = await this.#materialize(part);
 		if (
-			!support.sources.includes("file_data") ||
+			!support.sources.includes("data_url") ||
 			!mimeMatches(file.mimeType, support.mimeTypes) ||
 			!modelAllowsNativeFile(candidate, file.mimeType) ||
 			(support.maxBytes !== undefined &&
 				file.bytes.byteLength > support.maxBytes)
 		) {
-			throw requestError(
+			throw candidateInputError(
 				`Native file input does not support ${file.mimeType}`,
 				"native_file_input_unsupported",
 				"The selected deployment does not support this file type natively.",
 			);
 		}
-		metadata.materializedUrls += 1;
+		metadata.materializedFiles += 1;
 		metadata.nativeFiles += 1;
 		return {
 			type: "file",
@@ -877,16 +1097,16 @@ export class FileInputResolver {
 		part: CanonicalFilePart,
 		candidate: DeploymentCandidate,
 		transport: UpstreamTransport,
-		metadata: FileResolutionMetadata,
+		metadata: ContentInputResolutionMetadata,
 	): Promise<CanonicalContentPart> {
-		const support = candidate.adapter.fileInputs?.[transport];
-		const hintedMime = hintedMimeType(part);
+		const support = candidate.adapter.contentInputs?.[transport]?.file;
+		const hintedMime = hintedFileMimeType(part);
 		const forcePdfText =
 			this.#engine === "pdf-text" && hintedMime === "application/pdf";
 		if (
 			!forcePdfText &&
 			support !== undefined &&
-			canUseNative(part, candidate, support, hintedMime)
+			canDeliverFile(part, candidate, support, hintedMime)
 		) {
 			return this.#nativePart(part, candidate, support, metadata);
 		}
@@ -894,7 +1114,7 @@ export class FileInputResolver {
 		const file = await this.#materialize(part);
 		const nativeAfterMaterialization =
 			support !== undefined &&
-			canUseNative(part, candidate, support, file.mimeType);
+			canDeliverFile(part, candidate, support, file.mimeType);
 		if (
 			this.#engine !== "pdf-text" &&
 			nativeAfterMaterialization &&
@@ -903,7 +1123,7 @@ export class FileInputResolver {
 			return this.#nativePart(part, candidate, support, metadata);
 		}
 		if (this.#engine === "native") {
-			throw requestError(
+			throw candidateInputError(
 				`Adapter ${candidate.adapter.key} cannot consume ${file.mimeType} natively`,
 				"native_file_input_unsupported",
 				"The selected deployment does not support this file type natively.",
@@ -915,43 +1135,107 @@ export class FileInputResolver {
 		return portableTextPart(part, file, text);
 	}
 
+	async #resolveImagePart(
+		part: CanonicalImagePart,
+		candidate: DeploymentCandidate,
+		transport: UpstreamTransport,
+		metadata: ContentInputResolutionMetadata,
+	): Promise<CanonicalImagePart> {
+		const support = candidate.adapter.contentInputs?.[transport]?.image;
+		if (support === undefined || !modelAllowsImage(candidate)) {
+			throw candidateInputError(
+				`Adapter ${candidate.adapter.key} cannot consume image inputs on ${transport}`,
+				"unsupported_image_input",
+				"The selected deployment cannot consume image inputs.",
+			);
+		}
+
+		const source = imageSource(part);
+		if (support.sources.includes(source.kind)) {
+			if (source.kind === "url") {
+				metadata.nativeImages += 1;
+				return { ...part };
+			}
+			const image = await this.#materialize(part);
+			assertImageContent(image);
+			if (
+				!mimeMatches(image.mimeType, support.mimeTypes) ||
+				(support.maxBytes !== undefined &&
+					image.bytes.byteLength > support.maxBytes)
+			) {
+				throw candidateInputError(
+					`Native image input does not support ${image.mimeType}`,
+					"unsupported_image_input",
+					"The selected deployment does not support this image type natively.",
+				);
+			}
+			metadata.nativeImages += 1;
+			return { ...part, url: image.dataUrl };
+		}
+
+		if (source.kind !== "url" || !support.sources.includes("data_url")) {
+			throw candidateInputError(
+				`Adapter ${candidate.adapter.key} cannot deliver this image source on ${transport}`,
+				"unsupported_image_input",
+				"The selected deployment cannot consume this image source.",
+			);
+		}
+		const image = await this.#materialize(part);
+		assertImageContent(image);
+		if (
+			!mimeMatches(image.mimeType, support.mimeTypes) ||
+			(support.maxBytes !== undefined &&
+				image.bytes.byteLength > support.maxBytes)
+		) {
+			throw candidateInputError(
+				`Materialized image input does not support ${image.mimeType}`,
+				"unsupported_image_input",
+				"The selected deployment does not support this image type.",
+			);
+		}
+		metadata.materializedImages += 1;
+		metadata.nativeImages += 1;
+		return { ...part, url: image.dataUrl };
+	}
+
 	async resolveForCandidate(
 		candidate: DeploymentCandidate,
 		transport: UpstreamTransport,
-	): Promise<ResolvedFileRequest> {
-		if (!this.hasFiles) return { request: this.#request };
-		const metadata: FileResolutionMetadata = {
-			engine: this.#engine,
-			materializedUrls: 0,
+	): Promise<ResolvedContentInputRequest> {
+		if (!this.hasInputs) return { request: this.#request };
+		const metadata: ContentInputResolutionMetadata = {
+			pdfEngine: this.#engine,
+			materializedFiles: 0,
+			materializedImages: 0,
 			nativeFiles: 0,
+			nativeImages: 0,
 			parsedFiles: 0,
 		};
-		const messages = [];
-		for (const message of this.#request.messages) {
-			if (!Array.isArray(message.content)) {
-				messages.push(message);
-				continue;
-			}
-			const content: CanonicalContentPart[] = [];
-			for (const part of message.content) {
-				content.push(
-					part.type === "file"
-						? await this.#resolvePart(part, candidate, transport, metadata)
-						: part,
+		const messages = await Promise.all(
+			this.#request.messages.map(async (message) => {
+				if (!Array.isArray(message.content)) return message;
+				const content = await Promise.all(
+					message.content.map((part) =>
+						part.type === "file"
+							? this.#resolvePart(part, candidate, transport, metadata)
+							: part.type === "image"
+								? this.#resolveImagePart(part, candidate, transport, metadata)
+								: Promise.resolve(part),
+					),
 				);
-			}
-			messages.push({ ...message, content });
-		}
+				return { ...message, content };
+			}),
+		);
 		return { request: { ...this.#request, messages }, metadata };
 	}
 }
 
-export function createFileInputResolver(
+export function createContentInputResolver(
 	request: CanonicalChatRequest,
 	signal: AbortSignal,
 	dependencies?: Partial<ResolverDependencies>,
-): FileInputResolver {
-	return new FileInputResolver(request, signal, {
+): ContentInputResolver {
+	return new ContentInputResolver(request, signal, {
 		...DEFAULT_DEPENDENCIES,
 		...dependencies,
 	});

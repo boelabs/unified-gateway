@@ -19,9 +19,9 @@ import {
 } from "#catalog/parameters.ts";
 
 import {
-	type FileResolutionMetadata,
-	createFileInputResolver,
-} from "#files/requestFiles.ts";
+	type ContentInputResolutionMetadata,
+	createContentInputResolver,
+} from "#files/requestContentInputs.ts";
 
 export type ParameterPolicyRecorder = (result: ParameterPolicyResult) => void;
 
@@ -58,11 +58,14 @@ export async function routeChat(
 ): Promise<{
 	routing: RouteResult<ChatExecResult>;
 	parameterPolicy: ParameterPolicyResult | null;
-	fileResolution: FileResolutionMetadata | null;
+	contentInputResolution: ContentInputResolutionMetadata | null;
 }> {
 	let parameterPolicy: ParameterPolicyResult | null = null;
-	let fileResolution: FileResolutionMetadata | null = null;
-	const fileResolver = createFileInputResolver(canonical, c.req.raw.signal);
+	let contentInputResolution: ContentInputResolutionMetadata | null = null;
+	const contentInputResolver = createContentInputResolver(
+		canonical,
+		c.req.raw.signal,
+	);
 	const eligibility = parameterEligibility(
 		canonical,
 		settings.unsupportedParameterStrategy,
@@ -86,11 +89,11 @@ export async function routeChat(
 				}
 			: undefined;
 	const candidateEligibility: RouteOptions["candidateEligibility"] | undefined =
-		eligibility || nativeEligibility || fileResolver.hasFiles
+		eligibility || nativeEligibility || contentInputResolver.hasInputs
 			? (candidate) => {
 					eligibility?.(candidate);
 					nativeEligibility?.(candidate);
-					fileResolver.assertCandidate(
+					contentInputResolver.assertCandidate(
 						candidate,
 						resolveTransport(candidate, "chat", preferredTransport),
 					);
@@ -106,11 +109,11 @@ export async function routeChat(
 			...(candidateEligibility ? { candidateEligibility } : {}),
 		},
 		async (cand, ctx) => {
-			const resolved = await fileResolver.resolveForCandidate(
+			const resolved = await contentInputResolver.resolveForCandidate(
 				cand,
 				ctx.transport,
 			);
-			fileResolution = resolved.metadata ?? null;
+			contentInputResolution = resolved.metadata ?? null;
 			return executeChat(
 				cand.adapter,
 				requestForCandidate(
@@ -125,7 +128,7 @@ export async function routeChat(
 			);
 		},
 	);
-	return { routing, parameterPolicy, fileResolution };
+	return { routing, parameterPolicy, contentInputResolution };
 }
 
 export function parameterPolicyLogMetadata(
@@ -139,14 +142,16 @@ export function parameterPolicyLogMetadata(
 	};
 }
 
-export function fileResolutionLogMetadata(
-	result: FileResolutionMetadata | null,
+export function contentInputResolutionLogMetadata(
+	result: ContentInputResolutionMetadata | null,
 ): Record<string, unknown> | undefined {
 	if (!result) return undefined;
 	return {
-		engine: result.engine,
+		pdfEngine: result.pdfEngine,
 		nativeFiles: result.nativeFiles,
 		parsedFiles: result.parsedFiles,
-		materializedUrls: result.materializedUrls,
+		materializedFiles: result.materializedFiles,
+		nativeImages: result.nativeImages,
+		materializedImages: result.materializedImages,
 	};
 }

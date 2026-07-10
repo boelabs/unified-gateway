@@ -5,6 +5,8 @@
  *  - context_window | content_policy -> exhausts that deployment without repeating it; if the whole
  *    pool fails with the same class, selects its dedicated chain.
  *  - auth | bad_request | not_found -> exhausts that deployment without repeating it and continues the pool.
+ * Provider-side request rejections (`bad_request`, `context_window`, `content_policy`) are
+ * health-neutral: they describe this input, not whether the deployment is operational.
  */
 export type ErrorClass =
 	| "bad_request"
@@ -143,6 +145,8 @@ export interface GatewayErrorOptions {
 	headers?: Record<string, string>;
 	/** Request-scoped failures cannot become valid by trying another deployment. */
 	routingScope?: "candidate" | "request";
+	/** Whether this error is evidence that the selected deployment is unhealthy. */
+	deploymentHealth?: "penalize" | "neutral";
 	cause?: unknown;
 }
 
@@ -159,6 +163,7 @@ export class GatewayError extends Error {
 	readonly provider?: { status?: number; body?: unknown };
 	readonly headers?: Record<string, string>;
 	readonly routingScope: "candidate" | "request";
+	readonly deploymentHealth: "penalize" | "neutral";
 	/** Router attempts that led to this error (attached by the router; for logs). */
 	attempts?: unknown[];
 
@@ -180,6 +185,16 @@ export class GatewayError extends Error {
 		if (opts.provider !== undefined) this.provider = opts.provider;
 		if (opts.headers !== undefined) this.headers = opts.headers;
 		this.routingScope = opts.routingScope ?? "candidate";
+		const providerRejectedInput =
+			opts.provider !== undefined &&
+			(opts.class === "bad_request" ||
+				opts.class === "context_window" ||
+				opts.class === "content_policy");
+		this.deploymentHealth =
+			opts.deploymentHealth ??
+			(this.routingScope === "request" || providerRejectedInput
+				? "neutral"
+				: "penalize");
 	}
 
 	/** Rich representation for LOGS: gateway classification + raw provider detail. */
@@ -189,6 +204,12 @@ export class GatewayError extends Error {
 			code: this.code,
 			http_status: this.httpStatus,
 			message: this.message,
+			...(this.routingScope !== "candidate"
+				? { routing_scope: this.routingScope }
+				: {}),
+			...(this.deploymentHealth !== "penalize"
+				? { deployment_health: this.deploymentHealth }
+				: {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
 		};
 	}

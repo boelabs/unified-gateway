@@ -1,6 +1,6 @@
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
+import { createContentInputResolver } from "./requestContentInputs.ts";
 import { deepseekAdapter } from "#adapters/deepseek/index.ts";
-import { createFileInputResolver } from "./requestFiles.ts";
 import { googleAdapter } from "#adapters/google/index.ts";
 import { openaiAdapter } from "#adapters/openai/index.ts";
 import type { Adapter } from "#adapters/types.ts";
@@ -14,6 +14,8 @@ import type {
 
 const PDF_BASE64 =
 	"JVBERi0xLjQKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4KZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4KZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAgMCA2MTIgNzkyXSAvUmVzb3VyY2VzIDw8IC9Gb250IDw8IC9GMSA0IDAgUiA+PiA+PiAvQ29udGVudHMgNSAwIFIgPj4KZW5kb2JqCjQgMCBvYmoKPDwgL1R5cGUgL0ZvbnQgL1N1YnR5cGUgL1R5cGUxIC9CYXNlRm9udCAvSGVsdmV0aWNhID4+CmVuZG9iago1IDAgb2JqCjw8IC9MZW5ndGggNTcgPj4Kc3RyZWFtCkJUIC9GMSAxMiBUZiA3MiA3MjAgVGQgKFBvcnRhYmxlIGF0dGFjaG1lbnQgdGV4dCkgVGogRVQKZW5kc3RyZWFtCmVuZG9iagp4cmVmCjAgNgowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAwMDkgMDAwMDAgbiAKMDAwMDAwMDA1OCAwMDAwMCBuIAowMDAwMDAwMTE1IDAwMDAwIG4gCjAwMDAwMDAyNDEgMDAwMDAgbiAKMDAwMDAwMDMxMSAwMDAwMCBuIAp0cmFpbGVyCjw8IC9TaXplIDYgL1Jvb3QgMSAwIFIgPj4Kc3RhcnR4cmVmCjQxNgolJUVPRgo=";
+const PNG_BASE64 =
+	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 function candidate(adapter: Adapter, vision = true): DeploymentCandidate {
 	return {
@@ -47,7 +49,7 @@ function request(
 
 test("file resolver materializes a PDF URL once for Gemini inlineData", async () => {
 	let fetches = 0;
-	const resolver = createFileInputResolver(
+	const resolver = createContentInputResolver(
 		request({
 			type: "file",
 			fileUrl: "https://assets.example/document.pdf",
@@ -71,12 +73,14 @@ test("file resolver materializes a PDF URL once for Gemini inlineData", async ()
 	const second = await resolver.resolveForCandidate(google, "generate_content");
 	assert.equal(fetches, 1);
 	assert.deepEqual(first.metadata, {
-		engine: "auto",
-		materializedUrls: 1,
+		pdfEngine: "auto",
+		materializedFiles: 1,
+		materializedImages: 0,
 		nativeFiles: 1,
+		nativeImages: 0,
 		parsedFiles: 0,
 	});
-	assert.equal(second.metadata?.materializedUrls, 1);
+	assert.equal(second.metadata?.materializedFiles, 1);
 
 	const built = googleAdapter.chat!.buildRequest(first.request, {
 		upstreamModel: "upstream-model",
@@ -93,9 +97,141 @@ test("file resolver materializes a PDF URL once for Gemini inlineData", async ()
 	assert.equal(body.contents[0].parts[0].inlineData.data, PDF_BASE64);
 });
 
+test("content resolver materializes Responses image URLs for Gemini and memoizes history", async () => {
+	let fetches = 0;
+	let activeFetches = 0;
+	let peakFetches = 0;
+	const imageUrls = Array.from(
+		{ length: 6 },
+		(_, index) => `https://assets.example/history-${index}.png`,
+	);
+	const canonical: CanonicalChatRequest = {
+		callType: "chat",
+		publicWire: "responses",
+		model: "public-model",
+		messages: [
+			{
+				role: "user",
+				content: [
+					{
+						type: "file",
+						fileData: "data:text/plain;base64,aGVsbG8=",
+						filename: "chapter.txt",
+					},
+					...imageUrls.map((url) => ({ type: "image" as const, url })),
+				],
+			},
+		],
+		stream: true,
+	};
+	const resolver = createContentInputResolver(
+		canonical,
+		new AbortController().signal,
+		{
+			resolveHostname: async () => [{ address: "93.184.216.34", family: 4 }],
+			fetch: (async () => {
+				fetches += 1;
+				activeFetches += 1;
+				peakFetches = Math.max(peakFetches, activeFetches);
+				await new Promise((resolve) => setTimeout(resolve, 2));
+				activeFetches -= 1;
+				return new Response(new Uint8Array(Buffer.from(PNG_BASE64, "base64")), {
+					headers: { "content-type": "image/png" },
+				});
+			}) as typeof fetch,
+		},
+	);
+	const google = candidate(googleAdapter);
+	resolver.assertCandidate(google, "generate_content");
+
+	const first = await resolver.resolveForCandidate(google, "generate_content");
+	const second = await resolver.resolveForCandidate(google, "generate_content");
+	assert.equal(fetches, 6);
+	assert.equal(peakFetches, 4);
+	assert.deepEqual(first.metadata, {
+		pdfEngine: "auto",
+		materializedFiles: 0,
+		materializedImages: 6,
+		nativeFiles: 1,
+		nativeImages: 6,
+		parsedFiles: 0,
+	});
+	assert.equal(second.metadata?.materializedImages, 6);
+
+	const built = googleAdapter.chat!.buildRequest(first.request, {
+		upstreamModel: "gemini-2.5-flash",
+		credentials: { apiKey: "test-key" },
+		meta: google.meta,
+		transport: "generate_content",
+		requestId: "test-request",
+	});
+	const parts = JSON.parse(built.body!).contents[0].parts;
+	assert.equal(parts.length, 7);
+	assert.equal(parts[0].inlineData.mimeType, "text/plain");
+	for (const part of parts.slice(1)) {
+		assert.equal(part.inlineData.mimeType, "image/png");
+		assert.equal(part.inlineData.data, PNG_BASE64);
+	}
+});
+
+test("content resolver preserves native image URLs without downloading them", async () => {
+	let fetches = 0;
+	const resolver = createContentInputResolver(
+		request({
+			type: "image",
+			url: "https://assets.example/native.png",
+		}),
+		new AbortController().signal,
+		{
+			fetch: (async () => {
+				fetches += 1;
+				throw new Error("unexpected fetch");
+			}) as typeof fetch,
+		},
+	);
+	const resolved = await resolver.resolveForCandidate(
+		candidate(openaiAdapter),
+		"responses",
+	);
+	assert.equal(fetches, 0);
+	assert.equal(resolved.metadata?.nativeImages, 1);
+	assert.equal(resolved.metadata?.materializedImages, 0);
+	assert.deepEqual(resolved.request.messages[0]?.content, [
+		{ type: "image", url: "https://assets.example/native.png" },
+	]);
+});
+
+test("materialized image inputs reject content with a non-image signature", async () => {
+	const resolver = createContentInputResolver(
+		request({
+			type: "image",
+			url: "https://assets.example/not-really-an-image.png",
+		}),
+		new AbortController().signal,
+		{
+			resolveHostname: async () => [{ address: "93.184.216.34", family: 4 }],
+			fetch: (async () =>
+				new Response("<html>not an image</html>", {
+					headers: { "content-type": "text/html" },
+				})) as typeof fetch,
+		},
+	);
+	await assert.rejects(
+		() =>
+			resolver.resolveForCandidate(
+				candidate(googleAdapter),
+				"generate_content",
+			),
+		(error: unknown) =>
+			(error as { code?: string; routingScope?: string }).code ===
+				"image_type_mismatch" &&
+			(error as { routingScope?: string }).routingScope === "request",
+	);
+});
+
 test("file resolver converts UTF-8 JSON to a portable text part", async () => {
 	const data = Buffer.from('{"answer":42}', "utf8").toString("base64");
-	const resolved = await createFileInputResolver(
+	const resolved = await createContentInputResolver(
 		request({
 			type: "file",
 			fileData: `data:application/json;base64,${data}`,
@@ -112,7 +248,7 @@ test("file resolver converts UTF-8 JSON to a portable text part", async () => {
 });
 
 test("pdf-text extracts a text PDF for a text-only upstream", async () => {
-	const resolved = await createFileInputResolver(
+	const resolved = await createContentInputResolver(
 		request(
 			{
 				type: "file",
@@ -133,7 +269,7 @@ test("pdf-text extracts a text PDF for a text-only upstream", async () => {
 });
 
 test("auto parses a PDF when the native transport model is not vision-capable", async () => {
-	const resolved = await createFileInputResolver(
+	const resolved = await createContentInputResolver(
 		request({
 			type: "file",
 			fileData: `data:application/pdf;base64,${PDF_BASE64}`,
@@ -145,7 +281,7 @@ test("auto parses a PDF when the native transport model is not vision-capable", 
 });
 
 test("native engine rejects a text-only upstream during eligibility", () => {
-	const resolver = createFileInputResolver(
+	const resolver = createContentInputResolver(
 		request(
 			{
 				type: "file",
@@ -166,7 +302,7 @@ test("native engine rejects a text-only upstream during eligibility", () => {
 test("remote file materialization rejects private network targets", () => {
 	assert.throws(
 		() =>
-			createFileInputResolver(
+			createContentInputResolver(
 				request({
 					type: "file",
 					fileUrl: "https://127.0.0.1/document.pdf",
@@ -174,5 +310,20 @@ test("remote file materialization rejects private network targets", () => {
 				new AbortController().signal,
 			),
 		(error: unknown) => (error as { code?: string }).code === "unsafe_file_url",
+	);
+});
+
+test("remote image materialization rejects private network targets", () => {
+	assert.throws(
+		() =>
+			createContentInputResolver(
+				request({
+					type: "image",
+					url: "https://127.0.0.1/image.png",
+				}),
+				new AbortController().signal,
+			),
+		(error: unknown) =>
+			(error as { code?: string }).code === "unsafe_image_url",
 	);
 });

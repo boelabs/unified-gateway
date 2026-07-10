@@ -17,7 +17,11 @@ have to resend by hand.
 
 `input_file` accepts provider file IDs, HTTPS URLs, and base64 data. Native transports receive the
 original file form when possible; Gemini URLs are materialized to inline data, and text-only
-deployments receive an explicit parser fallback. See [File inputs](/docs/file-inputs).
+deployments receive an explicit parser fallback. See [Content inputs](/docs/file-inputs).
+
+`input_image` likewise accepts HTTPS or base64 data URLs. The same candidate-aware resolver preserves
+native URLs where supported and securely materializes them for inline-only transports, so historical
+images remain portable when a Responses conversation is replayed through another provider.
 
 The router prefers the native Responses transport when a deployment supports it. Inputs that only
 exist on this wire, such as built-in tools or native item types, are preserved verbatim and require a

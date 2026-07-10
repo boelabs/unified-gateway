@@ -832,11 +832,17 @@ export const anthropicAdapter: Adapter = {
 		"anthropic_adaptive",
 		"anthropic_budget",
 	]),
-	fileInputs: {
+	contentInputs: {
 		messages: {
-			sources: ["file_id", "file_url", "file_data"],
-			mimeTypes: ["application/pdf"],
-			maxBytes: 32_000_000,
+			file: {
+				sources: ["provider_file_id", "url", "data_url"],
+				mimeTypes: ["application/pdf"],
+				maxBytes: 32_000_000,
+			},
+			image: {
+				sources: ["url", "data_url"],
+				mimeTypes: ["image/jpeg", "image/png", "image/gif", "image/webp"],
+			},
 		},
 	},
 	transports: { chat: { supported: ["messages"], default: "messages" } },

@@ -85,6 +85,8 @@ async function cleanupState(deployments: DeploymentRow[]): Promise<void> {
 	const keys = deployments.flatMap((item) => [
 		`rt:inflight:${item.id}`,
 		`rt:fails:${item.id}`,
+		`rt:failures:${item.id}`,
+		`rt:successes:${item.id}`,
 		`rt:cooldown:${item.id}`,
 		`rt:cooldown:cause:${item.id}`,
 		`rt:rpm:${item.id}:${bucket}`,
@@ -190,6 +192,51 @@ test("router: request-scoped failures stop before retries and fallbacks", {
 		assert.equal(attempts, 1);
 	} finally {
 		await cleanupDeployments(deployments);
+	}
+});
+
+test("router: candidate input incompatibilities do not affect deployment health", {
+	skip,
+}, async () => {
+	const publicModel = modelName("neutral-input-error");
+	const deployed = await deployment(publicModel);
+	try {
+		await assert.rejects(
+			() =>
+				route(
+					publicModel,
+					"chat",
+					{
+						clientSignal: new AbortController().signal,
+						requestId: randomUUID(),
+					},
+					async () => {
+						throw new GatewayError({
+							class: "bad_request",
+							message: "synthetic candidate input incompatibility",
+							deploymentHealth: "neutral",
+						});
+					},
+				),
+			(error: unknown) => {
+				const failure = error as GatewayError;
+				return (
+					failure.class === "bad_request" && failure.attempts?.length === 1
+				);
+			},
+		);
+		const [inflight, recentFails, healthFailures, cooldown] = await redis.mget(
+			`rt:inflight:${deployed.id}`,
+			`rt:fails:${deployed.id}`,
+			`rt:failures:${deployed.id}`,
+			`rt:cooldown:${deployed.id}`,
+		);
+		assert.ok(inflight === null || inflight === "0");
+		assert.equal(recentFails, null);
+		assert.equal(healthFailures, null);
+		assert.equal(cooldown, null);
+	} finally {
+		await cleanupDeployments([deployed]);
 	}
 });
 

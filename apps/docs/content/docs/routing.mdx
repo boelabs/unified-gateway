@@ -88,7 +88,12 @@ class (`bad_request`, `auth`, `context_window`, `content_policy`, ...) exhausts 
 attempts immediately but does **not** cut the rest of the pool — the router just moves on to the next
 deployment.
 
-If a deployment accumulates `allowedFails` consecutive failures, it goes into cooldown for
+Candidate incompatibilities discovered by gateway preprocessing (for example, an image source or file
+type that one transport cannot consume) are **health-neutral**. They may move routing to another
+candidate or fallback, but they do not increment the deployment's failure counters, lower its health
+score, or trigger cooldown. Request-scoped validation errors stop immediately and are neutral as well.
+
+If a deployment accumulates `allowedFails` deployment/provider failures, it goes into cooldown for
 `cooldownSeconds`, and the triggering error is stored alongside it — so if the **entire pool** ends up
 cooling down (zero attempts possible this request), the client's `429 deployments_in_cooldown` error
 still surfaces the real upstream cause that put them there, not just "try again later."

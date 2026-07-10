@@ -74,6 +74,10 @@ base64 data URL) on `vision: true` models, plus audio and file parts on models w
 declares support. Video generation is exposed through the dedicated `/v1/videos` API, not a
 `video_url` chat part.
 
+Image and file source forms are resolved per routing candidate. A native URL is preserved when the
+upstream accepts it; inline-only transports receive a bounded, validated data URL produced by the
+gateway. See [Content inputs](/docs/file-inputs).
+
 ## Streaming
 
 `"stream": true` returns Server-Sent Events with the standard `chat.completion.chunk` shape, including

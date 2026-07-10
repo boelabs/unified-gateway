@@ -29,6 +29,9 @@ export function publicRoutingMetadata<T>(
 			...(attempt.httpStatus !== undefined
 				? { http_status: attempt.httpStatus }
 				: {}),
+			...(attempt.deploymentHealth === "neutral"
+				? { health_impact: "neutral" }
+				: {}),
 		})),
 	};
 }

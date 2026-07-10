@@ -1,8 +1,8 @@
 import { messagesRequestSchema } from "#contracts/anthropic/messages.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
+import { hasContentInputs } from "#files/requestContentInputs.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
-import { hasFileInputs } from "#files/requestFiles.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -32,16 +32,16 @@ import {
 } from "#contracts/anthropic/messagesRender.ts";
 
 import {
+	contentInputResolutionLogMetadata,
+	parameterPolicyLogMetadata,
+	routeChat,
+} from "./runtime/parameterPolicy.ts";
+
+import {
 	routingMetadataRequested,
 	publicRoutingMetadata,
 	attachRoutingMetadata,
 } from "./runtime/routingMetadata.ts";
-
-import {
-	parameterPolicyLogMetadata,
-	fileResolutionLogMetadata,
-	routeChat,
-} from "./runtime/parameterPolicy.ts";
 
 /**
  * POST /v1/messages - Anthropic Messages API, provider-agnostic. Translates the request to canonical,
@@ -70,17 +70,13 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 			eligible:
 				!canonical.stream &&
 				!canonical.tools?.length &&
-				!hasFileInputs(canonical),
+				!hasContentInputs(canonical),
 		});
 		if (cache.hit) return c.json(cache.body as object);
 
 		const settings = await getEffectiveSettings();
-		const { routing, parameterPolicy, fileResolution } = await routeChat(
-			c,
-			canonical,
-			log.requestId,
-			settings,
-		);
+		const { routing, parameterPolicy, contentInputResolution } =
+			await routeChat(c, canonical, log.requestId, settings);
 		log.applyRouting(routing);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
@@ -98,8 +94,10 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 			settings.unsupportedParameterStrategy,
 		);
 		if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
-		const fileMetadata = fileResolutionLogMetadata(fileResolution);
-		if (fileMetadata) metadata.fileParser = fileMetadata;
+		const contentInputMetadata = contentInputResolutionLogMetadata(
+			contentInputResolution,
+		);
+		if (contentInputMetadata) metadata.contentInputs = contentInputMetadata;
 		const routingMetadata = routingMetadataRequested(c)
 			? publicRoutingMetadata(routing, settings)
 			: null;

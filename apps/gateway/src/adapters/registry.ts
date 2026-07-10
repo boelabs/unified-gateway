@@ -1,3 +1,4 @@
+import type { UpstreamTransport } from "#core/transport.ts";
 import { ADAPTER_KEY_RULE, isAdapterKey } from "./key.ts";
 import type { CallType } from "#core/callType.ts";
 import type { Adapter } from "./types.ts";
@@ -17,6 +18,60 @@ const HANDLER_KEY: Partial<Record<CallType, keyof Adapter>> = {
 	"audio.transcriptions": "audioTranscription",
 	embeddings: "embeddings",
 };
+const CONTENT_INPUT_SOURCES = new Set(["provider_file_id", "url", "data_url"]);
+
+function validateContentInputs(adapter: Adapter): void {
+	const chatTransports = new Set(adapter.transports?.chat?.supported ?? []);
+	for (const [transportName, inputs] of Object.entries(
+		adapter.contentInputs ?? {},
+	)) {
+		const transport = transportName as UpstreamTransport;
+		if (!chatTransports.has(transport)) {
+			throw new Error(
+				`Adapter "${adapter.key}" declares content inputs for unsupported chat transport "${transport}".`,
+			);
+		}
+		for (const [kind, support] of Object.entries(inputs ?? {})) {
+			if (support.sources.length === 0) {
+				throw new Error(
+					`Adapter "${adapter.key}" declares no sources for ${kind} inputs on "${transport}".`,
+				);
+			}
+			if (new Set(support.sources).size !== support.sources.length) {
+				throw new Error(
+					`Adapter "${adapter.key}" declares duplicate ${kind} input sources on "${transport}".`,
+				);
+			}
+			if (
+				support.sources.some(
+					(source: string) => !CONTENT_INPUT_SOURCES.has(source),
+				)
+			) {
+				throw new Error(
+					`Adapter "${adapter.key}" declares an invalid ${kind} input source on "${transport}".`,
+				);
+			}
+			if (
+				support.maxBytes !== undefined &&
+				(!Number.isSafeInteger(support.maxBytes) || support.maxBytes <= 0)
+			) {
+				throw new Error(
+					`Adapter "${adapter.key}" declares an invalid ${kind} maxBytes on "${transport}".`,
+				);
+			}
+			if (
+				support.mimeTypes?.some(
+					(mime: string) =>
+						!/^[-a-z0-9!#$&^_.+]+\/(?:\*|[-a-z0-9!#$&^_.+]+)$/i.test(mime),
+				)
+			) {
+				throw new Error(
+					`Adapter "${adapter.key}" declares an invalid ${kind} MIME type on "${transport}".`,
+				);
+			}
+		}
+	}
+}
 
 export function registerAdapter(adapter: Adapter): void {
 	if (!isAdapterKey(adapter.key)) {
@@ -36,6 +91,7 @@ export function registerAdapter(adapter: Adapter): void {
 			);
 		}
 	}
+	validateContentInputs(adapter);
 	registry.set(adapter.key, adapter);
 }
 

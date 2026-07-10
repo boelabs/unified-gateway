@@ -42,9 +42,12 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 					publicEndpoints: string[];
 					transports: string[];
 					defaultTransport: string | null;
-					fileInputs: Record<
+					contentInputs: Record<
 						string,
-						{ sources: string[]; maxBytes?: number; mimeTypes?: string[] }
+						Record<
+							"file" | "image",
+							{ sources: string[]; maxBytes?: number; mimeTypes?: string[] }
+						>
 					>;
 				}>;
 			}>;
@@ -85,9 +88,19 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 	const googleText = google?.operations.find(
 		(operation) => operation.id === "text.generate",
 	);
-	assert.deepEqual(googleText?.fileInputs.generate_content, {
-		sources: ["file_data"],
-		maxBytes: 20_000_000,
+	assert.deepEqual(googleText?.contentInputs.generate_content, {
+		file: { sources: ["data_url"], maxBytes: 20_000_000 },
+		image: {
+			sources: ["data_url"],
+			mimeTypes: [
+				"image/png",
+				"image/jpeg",
+				"image/webp",
+				"image/heic",
+				"image/heif",
+			],
+			maxBytes: 20_000_000,
+		},
 	});
 });
 
