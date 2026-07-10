@@ -68,7 +68,14 @@ const MESSAGES_EXTRA_BODY_MANAGED_KEYS = [
 interface Block {
 	type?: string;
 	text?: string;
-	source?: { type?: string; media_type?: string; data?: string; url?: string };
+	source?: {
+		type?: string;
+		media_type?: string;
+		data?: string;
+		url?: string;
+		file_id?: string;
+	};
+	title?: string;
 	id?: string;
 	name?: string;
 	input?: unknown;
@@ -106,6 +113,47 @@ function blockToPart(block: Block): CanonicalContentPart | null {
 			if (s?.type === "url" && s.url)
 				return withCacheControl({ type: "image", url: s.url }, block);
 			return null;
+		}
+		case "document": {
+			const s = block.source;
+			if (s?.type === "base64" && s.media_type && s.data) {
+				return withCacheControl(
+					{
+						type: "file",
+						fileData: `data:${s.media_type};base64,${s.data}`,
+						...(block.title !== undefined ? { filename: block.title } : {}),
+					},
+					block,
+				);
+			}
+			if (s?.type === "url" && s.url) {
+				return withCacheControl(
+					{
+						type: "file",
+						fileUrl: s.url,
+						...(block.title !== undefined ? { filename: block.title } : {}),
+					},
+					block,
+				);
+			}
+			if (s?.type === "file" && s.file_id) {
+				return withCacheControl(
+					{
+						type: "file",
+						fileId: s.file_id,
+						...(block.title !== undefined ? { filename: block.title } : {}),
+					},
+					block,
+				);
+			}
+			throw new GatewayError({
+				class: "bad_request",
+				code: "invalid_file_source",
+				param: "messages",
+				message: "Document block has an invalid or missing source",
+				publicMessage:
+					"Document sources must be base64, a public URL, or a provider file reference.",
+			});
 		}
 		default:
 			return null;

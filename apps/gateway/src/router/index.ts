@@ -279,6 +279,21 @@ export async function route<T>(
 							message: String(err),
 							cause: err,
 						});
+				if (ge.routingScope === "request") {
+					await onAttemptCancel(chosen.row.id);
+					attemptLog.push({
+						deploymentId: chosen.row.id,
+						...(chosen.row.label != null ? { label: chosen.row.label } : {}),
+						adapterKey: chosen.adapter.key,
+						transport,
+						ms: Date.now() - startedAt,
+						ok: false,
+						errorClass: ge.class,
+						httpStatus: ge.httpStatus,
+					});
+					ge.attempts = attemptLog;
+					throw ge;
+				}
 				// Attach upstream detail to the cooldown cause (if this failure triggers it).
 				const cause: CooldownCause = {
 					class: ge.class,

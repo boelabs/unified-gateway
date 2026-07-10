@@ -104,6 +104,24 @@ export const MessagesOutputConfig = loose(
 	{ id: "MessagesOutputConfig" },
 );
 
+export const FileParserPlugin = loose(
+	{
+		id: z.literal("file-parser"),
+		enabled: z.boolean().optional(),
+		pdf: loose(
+			{
+				engine: z.enum(["auto", "native", "pdf-text"]).optional(),
+			},
+			{},
+		).optional(),
+	},
+	{
+		id: "FileParserPlugin",
+		description:
+			"Request-scoped file portability. auto prefers native handling; pdf-text extracts UTF-8 text locally.",
+	},
+);
+
 /* ------------------------------------------------------ inference: requests */
 
 export const ChatCompletionRequest = loose(
@@ -142,6 +160,7 @@ export const ChatCompletionRequest = loose(
 		tools: z.array(loose({}, {})).optional(),
 		tool_choice: z.unknown().optional(),
 		response_format: ChatResponseFormat.optional(),
+		plugins: z.array(FileParserPlugin).max(1).optional(),
 	},
 	{ id: "ChatCompletionRequest" },
 );
@@ -224,6 +243,7 @@ export const ResponsesRequest = loose(
 		prompt: z.unknown().optional().meta({
 			description: "Prompt templates are unsupported (400).",
 		}),
+		plugins: z.array(FileParserPlugin).max(1).optional(),
 	},
 	{ id: "ResponsesRequest" },
 );

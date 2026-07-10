@@ -18,6 +18,11 @@ import {
 	type ParameterPolicyResult,
 } from "#catalog/parameters.ts";
 
+import {
+	type FileResolutionMetadata,
+	createFileInputResolver,
+} from "#files/requestFiles.ts";
+
 export type ParameterPolicyRecorder = (result: ParameterPolicyResult) => void;
 
 export function parameterEligibility(
@@ -53,8 +58,11 @@ export async function routeChat(
 ): Promise<{
 	routing: RouteResult<ChatExecResult>;
 	parameterPolicy: ParameterPolicyResult | null;
+	fileResolution: FileResolutionMetadata | null;
 }> {
 	let parameterPolicy: ParameterPolicyResult | null = null;
+	let fileResolution: FileResolutionMetadata | null = null;
+	const fileResolver = createFileInputResolver(canonical, c.req.raw.signal);
 	const eligibility = parameterEligibility(
 		canonical,
 		settings.unsupportedParameterStrategy,
@@ -78,10 +86,14 @@ export async function routeChat(
 				}
 			: undefined;
 	const candidateEligibility: RouteOptions["candidateEligibility"] | undefined =
-		eligibility || nativeEligibility
+		eligibility || nativeEligibility || fileResolver.hasFiles
 			? (candidate) => {
 					eligibility?.(candidate);
 					nativeEligibility?.(candidate);
+					fileResolver.assertCandidate(
+						candidate,
+						resolveTransport(candidate, "chat", preferredTransport),
+					);
 				}
 			: undefined;
 	const routing = await route<ChatExecResult>(
@@ -93,11 +105,16 @@ export async function routeChat(
 			preferredTransport,
 			...(candidateEligibility ? { candidateEligibility } : {}),
 		},
-		(cand, ctx) =>
-			executeChat(
+		async (cand, ctx) => {
+			const resolved = await fileResolver.resolveForCandidate(
+				cand,
+				ctx.transport,
+			);
+			fileResolution = resolved.metadata ?? null;
+			return executeChat(
 				cand.adapter,
 				requestForCandidate(
-					canonical,
+					resolved.request,
 					cand,
 					settings.unsupportedParameterStrategy,
 					(result) => {
@@ -105,9 +122,10 @@ export async function routeChat(
 					},
 				),
 				ctx,
-			),
+			);
+		},
 	);
-	return { routing, parameterPolicy };
+	return { routing, parameterPolicy, fileResolution };
 }
 
 export function parameterPolicyLogMetadata(
@@ -118,5 +136,17 @@ export function parameterPolicyLogMetadata(
 	return {
 		strategy,
 		droppedParameters: result.droppedParameters,
+	};
+}
+
+export function fileResolutionLogMetadata(
+	result: FileResolutionMetadata | null,
+): Record<string, unknown> | undefined {
+	if (!result) return undefined;
+	return {
+		engine: result.engine,
+		nativeFiles: result.nativeFiles,
+		parsedFiles: result.parsedFiles,
+		materializedUrls: result.materializedUrls,
 	};
 }

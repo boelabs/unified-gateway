@@ -149,6 +149,94 @@ test("anthropic.buildRequest: system without cache_control still flattens to str
 	assert.equal(body.system, "Be concise.");
 });
 
+test("anthropic.buildRequest: emits native PDF document sources", () => {
+	const built = anthropicAdapter.chat!.buildRequest(
+		{
+			...req,
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "file",
+							fileUrl: "https://assets.example/document.pdf",
+						},
+						{
+							type: "file",
+							fileData: "data:application/pdf;base64,AAAA",
+							cacheControl: { type: "ephemeral" },
+						},
+					],
+				},
+			],
+		},
+		ctx,
+	);
+	assert.deepEqual(JSON.parse(built.body!).messages[0].content, [
+		{
+			type: "document",
+			source: {
+				type: "url",
+				url: "https://assets.example/document.pdf",
+			},
+		},
+		{
+			type: "document",
+			source: {
+				type: "base64",
+				media_type: "application/pdf",
+				data: "AAAA",
+			},
+			cache_control: { type: "ephemeral" },
+		},
+	]);
+});
+
+test("anthropic.buildRequest: provider file references enable the Files API beta", () => {
+	const built = anthropicAdapter.chat!.buildRequest(
+		{
+			...req,
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "file", fileId: "file-123" }],
+				},
+			],
+		},
+		ctx,
+	);
+	assert.equal(built.headers["anthropic-beta"], "files-api-2025-04-14");
+	assert.deepEqual(JSON.parse(built.body!).messages[0].content, [
+		{
+			type: "document",
+			source: { type: "file", file_id: "file-123" },
+		},
+	]);
+
+	const withExistingBeta = anthropicAdapter.chat!.buildRequest(
+		{
+			...req,
+			messages: [
+				{
+					role: "user",
+					content: [{ type: "file", fileId: "file-123" }],
+				},
+			],
+		},
+		{
+			...ctx,
+			credentials: {
+				apiKey: "test-key",
+				headers: { "Anthropic-Beta": "feature-2026-01-01" },
+			},
+		},
+	);
+	assert.equal(
+		withExistingBeta.headers["Anthropic-Beta"],
+		"feature-2026-01-01,files-api-2025-04-14",
+	);
+});
+
 test("anthropic.buildRequest: adaptive reasoning uses thinking + output_config.effort", () => {
 	const built = anthropicAdapter.chat!.buildRequest(
 		{ ...req, reasoning: { effort: "xhigh" }, extraBody: { top_k: 40 } },

@@ -28,6 +28,17 @@ export const openaiAdapter = makeOpenAIStyleAdapter({
 	label: "OpenAI",
 	defaultBaseUrl: "https://api.openai.com/v1",
 	defaultTransport: "responses",
+	supportedChatTransports: ["responses", "chat_completions"],
+	fileInputs: {
+		responses: {
+			sources: ["file_id", "file_url", "file_data"],
+			maxBytes: 50_000_000,
+		},
+		chat_completions: {
+			sources: ["file_id", "file_data"],
+			maxBytes: 50_000_000,
+		},
+	},
 	maxTokensField: "max_completion_tokens",
 	sendOrganization: true,
 	refineBadRequest,

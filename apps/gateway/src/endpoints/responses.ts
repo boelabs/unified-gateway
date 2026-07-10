@@ -1,6 +1,7 @@
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
+import { hasFileInputs } from "#files/requestFiles.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -60,14 +61,15 @@ import {
 } from "./runtime/routingMetadata.ts";
 
 import {
+	parameterPolicyLogMetadata,
+	fileResolutionLogMetadata,
+	routeChat,
+} from "./runtime/parameterPolicy.ts";
+
+import {
 	expandLocalCompactionItems,
 	encodeCompactionSummary,
 } from "./runtime/responseCompaction.ts";
-
-import {
-	parameterPolicyLogMetadata,
-	routeChat,
-} from "./runtime/parameterPolicy.ts";
 
 interface PreparedResponsesRequest {
 	req: ResponsesRequest;
@@ -174,7 +176,7 @@ export async function compactResponseHandler(
 		log.publicModel = canonical.model;
 		await preflight(c, canonical.model);
 		const settings = await getEffectiveSettings();
-		const { routing, parameterPolicy } = await routeChat(
+		const { routing, parameterPolicy, fileResolution } = await routeChat(
 			c,
 			canonical,
 			log.requestId,
@@ -207,6 +209,8 @@ export async function compactResponseHandler(
 			settings.unsupportedParameterStrategy,
 		);
 		if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+		const fileMetadata = fileResolutionLogMetadata(fileResolution);
+		if (fileMetadata) metadata.fileParser = fileMetadata;
 		const createdAt = Math.floor(Date.now() / 1000);
 		const body = {
 			id: `resp_${randomUUID()}`,
@@ -308,12 +312,13 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 				!canonical.stream &&
 				!canonical.tools?.length &&
 				pipelineReq.previous_response_id == null &&
-				pipelineReq.store !== true,
+				pipelineReq.store !== true &&
+				!hasFileInputs(canonical),
 		});
 		if (cache.hit) return c.json(cache.body as object);
 
 		const settings = await getEffectiveSettings();
-		const { routing, parameterPolicy } = await routeChat(
+		const { routing, parameterPolicy, fileResolution } = await routeChat(
 			c,
 			canonical,
 			log.requestId,
@@ -337,6 +342,8 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			settings.unsupportedParameterStrategy,
 		);
 		if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+		const fileMetadata = fileResolutionLogMetadata(fileResolution);
+		if (fileMetadata) metadata.fileParser = fileMetadata;
 		const routingMetadata = routingMetadataRequested(c)
 			? publicRoutingMetadata(routing, settings)
 			: null;

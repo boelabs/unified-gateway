@@ -146,6 +146,53 @@ test("router: numRetries belongs to each primary and fallback deployment", {
 	}
 });
 
+test("router: request-scoped failures stop before retries and fallbacks", {
+	skip,
+}, async () => {
+	const primaryModel = modelName("request-error-primary");
+	const fallbackModel = modelName("request-error-fallback");
+	const deployments = [
+		await deployment(primaryModel),
+		await deployment(primaryModel),
+		await deployment(fallbackModel),
+	];
+	let attempts = 0;
+	try {
+		await configureFallback({
+			primaryModel,
+			fallbackModels: [fallbackModel],
+		});
+		await assert.rejects(
+			() =>
+				route(
+					primaryModel,
+					"chat",
+					{
+						clientSignal: new AbortController().signal,
+						requestId: randomUUID(),
+					},
+					async () => {
+						attempts += 1;
+						throw new GatewayError({
+							class: "bad_request",
+							message: "synthetic request failure",
+							routingScope: "request",
+						});
+					},
+				),
+			(error: unknown) => {
+				const failure = error as GatewayError;
+				return (
+					failure.class === "bad_request" && failure.attempts?.length === 1
+				);
+			},
+		);
+		assert.equal(attempts, 1);
+	} finally {
+		await cleanupDeployments(deployments);
+	}
+});
+
 test("router: context_window exhausts all primaries once and selects its reason", {
 	skip,
 }, async () => {

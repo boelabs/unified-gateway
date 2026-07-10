@@ -31,6 +31,73 @@ test("request->canonical: system, string content, max_tokens", () => {
 	assert.equal(u.maxTokens, 100);
 });
 
+test("request->canonical: document URL, base64, and file references become files", () => {
+	const canonical = messagesRequestToCanonical(
+		parse({
+			model: "message-model",
+			max_tokens: 100,
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "document",
+							title: "remote.pdf",
+							source: {
+								type: "url",
+								url: "https://assets.example/remote.pdf",
+							},
+						},
+						{
+							type: "document",
+							source: {
+								type: "base64",
+								media_type: "application/pdf",
+								data: "AAAA",
+							},
+						},
+						{
+							type: "document",
+							source: { type: "file", file_id: "file-123" },
+						},
+					],
+				},
+			],
+		}),
+	);
+	const content = canonical.messages[0]?.content;
+	assert.ok(Array.isArray(content));
+	assert.deepEqual(content, [
+		{
+			type: "file",
+			fileUrl: "https://assets.example/remote.pdf",
+			filename: "remote.pdf",
+		},
+		{ type: "file", fileData: "data:application/pdf;base64,AAAA" },
+		{ type: "file", fileId: "file-123" },
+	]);
+});
+
+test("request->canonical: malformed document sources are rejected", () => {
+	assert.throws(
+		() =>
+			messagesRequestToCanonical(
+				parse({
+					model: "message-model",
+					max_tokens: 100,
+					messages: [
+						{
+							role: "user",
+							content: [{ type: "document", source: { type: "url" } }],
+						},
+					],
+				}),
+			),
+		(error: unknown) =>
+			(error as { code?: string }).code === "invalid_file_source",
+	);
+});
+
 test("request->canonical: cache_control is preserved in system (array), content, and tools", () => {
 	const u = messagesRequestToCanonical(
 		parse({

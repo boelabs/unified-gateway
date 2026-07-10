@@ -70,12 +70,13 @@ export interface OpenAIStyleConfig {
 	/** Default base URL. If undefined, `baseUrl` in credentials is REQUIRED. */
 	defaultBaseUrl?: string;
 	/**
-	 * Default upstream transport. The adapter supports BOTH (chat_completions and responses); the
-	 * default distinguishes them (openai: responses; compatibles: chat_completions).
+	 * Default upstream transport. Additional transports must be declared explicitly.
 	 */
 	defaultTransport: "chat_completions" | "responses";
-	/** Text transports actually exposed by this provider. Defaults to both. */
+	/** Text transports actually exposed by this provider. Defaults to only the default transport. */
 	supportedChatTransports?: readonly ("chat_completions" | "responses")[];
+	/** Native file-input forms exposed by each configured text transport. */
+	fileInputs?: Adapter["fileInputs"];
 	/** Output-limit field (chat_completions transport only). OpenAI: max_completion_tokens; compatibles: max_tokens. */
 	maxTokensField: "max_completion_tokens" | "max_tokens";
 	/** OpenAI uses Bearer; Azure v1 with a key uses the api-key header. */
@@ -778,8 +779,7 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 	const imageTransports = config.imageTransports;
 	const videoTransports = config.videoTransports;
 	const chatTransports = config.supportedChatTransports ?? [
-		"chat_completions",
-		"responses",
+		config.defaultTransport,
 	];
 	if (!chatTransports.includes(config.defaultTransport)) {
 		throw new Error(
@@ -830,6 +830,9 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 			"fixed",
 			"chat_template_flag",
 		]),
+		...(config.fileInputs !== undefined
+			? { fileInputs: config.fileInputs }
+			: {}),
 		...(imageTransportConfig
 			? {
 					imageGeneration: makeImageHandler("generation"),

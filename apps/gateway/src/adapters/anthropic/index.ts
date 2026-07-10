@@ -112,19 +112,64 @@ function creds(ctx: AdapterContext): AnthropicCreds & { apiKey: string } {
 	);
 }
 
-function assertTextOnly(part: CanonicalContentPart): Record<string, unknown> {
+function withPartCacheControl(
+	part: CanonicalContentPart,
+	block: Record<string, unknown>,
+): Record<string, unknown> {
+	return part.cacheControl !== undefined
+		? { ...block, cache_control: part.cacheControl }
+		: block;
+}
+
+function dataUrlSource(value: string): Record<string, unknown> | null {
+	const match = /^data:([^;,]+);base64,(.*)$/s.exec(value);
+	if (!match) return null;
+	return { type: "base64", media_type: match[1], data: match[2] };
+}
+
+function textPartToAnthropic(
+	part: CanonicalContentPart,
+): Record<string, unknown> {
 	if (part.type === "text") {
-		return {
+		return withPartCacheControl(part, {
 			type: "text",
 			text: part.text,
-			...(part.cacheControl !== undefined
-				? { cache_control: part.cacheControl }
-				: {}),
-		};
+		});
 	}
 	throw new GatewayError({
 		class: "bad_request",
 		message: `Anthropic adapter: content part "${part.type}" is not supported in this phase`,
+		param: "messages",
+	});
+}
+
+function partToAnthropic(part: CanonicalContentPart): Record<string, unknown> {
+	if (part.type === "text") return textPartToAnthropic(part);
+	if (part.type === "image") {
+		const source =
+			dataUrlSource(part.url) ??
+			(/^https:\/\//i.test(part.url) ? { type: "url", url: part.url } : null);
+		if (source !== null)
+			return withPartCacheControl(part, { type: "image", source });
+	}
+	if (part.type === "file") {
+		let source: Record<string, unknown> | null = null;
+		if (part.fileData !== undefined) source = dataUrlSource(part.fileData);
+		else if (part.fileUrl !== undefined)
+			source = { type: "url", url: part.fileUrl };
+		else if (part.fileId !== undefined)
+			source = { type: "file", file_id: part.fileId };
+		if (source !== null) {
+			return withPartCacheControl(part, {
+				type: "document",
+				source,
+				...(part.filename !== undefined ? { title: part.filename } : {}),
+			});
+		}
+	}
+	throw new GatewayError({
+		class: "bad_request",
+		message: `Anthropic adapter: content part "${part.type}" is not supported`,
 		param: "messages",
 	});
 }
@@ -134,7 +179,17 @@ function contentToAnthropic(
 ): string | Record<string, unknown>[] {
 	if (content === null) return "";
 	if (typeof content === "string") return content;
-	return content.map(assertTextOnly);
+	return content.map(partToAnthropic);
+}
+
+function requestUsesProviderFileId(req: CanonicalChatRequest): boolean {
+	return req.messages.some(
+		(message) =>
+			Array.isArray(message.content) &&
+			message.content.some(
+				(part) => part.type === "file" && part.fileId !== undefined,
+			),
+	);
 }
 
 function parseToolArguments(args: string): Record<string, unknown> {
@@ -167,7 +222,7 @@ function buildMessages(req: CanonicalChatRequest): {
 					systemBlocks.push({ type: "text", text: content });
 			} else if (Array.isArray(content)) {
 				for (const part of content) {
-					const block = assertTextOnly(part);
+					const block = textPartToAnthropic(part);
 					if (block.cache_control !== undefined) systemHasCacheControl = true;
 					systemBlocks.push(block);
 				}
@@ -736,15 +791,30 @@ const chat: ChatHandler = {
 	buildRequest(req, ctx) {
 		const c = creds(ctx);
 		const base = (c.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
+		const headers: Record<string, string> = {
+			"content-type": "application/json",
+			"x-api-key": c.apiKey,
+			"anthropic-version": c.version ?? DEFAULT_VERSION,
+			...(c.headers ?? {}),
+		};
+		if (requestUsesProviderFileId(req)) {
+			const betaName = Object.keys(headers).find(
+				(name) => name.toLowerCase() === "anthropic-beta",
+			);
+			if (betaName === undefined) {
+				headers["anthropic-beta"] = "files-api-2025-04-14";
+			} else if (
+				!headers[betaName]!.split(",")
+					.map((value) => value.trim())
+					.includes("files-api-2025-04-14")
+			) {
+				headers[betaName] = `${headers[betaName]},files-api-2025-04-14`;
+			}
+		}
 		return {
 			method: "POST",
 			url: `${base}/messages`,
-			headers: {
-				"content-type": "application/json",
-				"x-api-key": c.apiKey,
-				"anthropic-version": c.version ?? DEFAULT_VERSION,
-				...(c.headers ?? {}),
-			},
+			headers,
 			body: JSON.stringify(buildBody(req, ctx)),
 		};
 	},
@@ -762,6 +832,13 @@ export const anthropicAdapter: Adapter = {
 		"anthropic_adaptive",
 		"anthropic_budget",
 	]),
+	fileInputs: {
+		messages: {
+			sources: ["file_id", "file_url", "file_data"],
+			mimeTypes: ["application/pdf"],
+			maxBytes: 32_000_000,
+		},
+	},
 	transports: { chat: { supported: ["messages"], default: "messages" } },
 };
 

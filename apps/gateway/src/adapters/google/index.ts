@@ -1324,6 +1324,9 @@ export const googleAdapter: Adapter = {
 		"gemini_level",
 		"gemini_budget",
 	]),
+	fileInputs: {
+		generate_content: { sources: ["file_data"], maxBytes: 20_000_000 },
+	},
 	transports: {
 		chat: { supported: ["generate_content"], default: "generate_content" },
 		"images.generations": {

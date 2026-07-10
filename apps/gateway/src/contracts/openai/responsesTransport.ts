@@ -140,6 +140,7 @@ function partToInput(
 				...(p.fileUrl !== undefined ? { file_url: p.fileUrl } : {}),
 				...(p.fileData !== undefined ? { file_data: p.fileData } : {}),
 				...(p.filename !== undefined ? { filename: p.filename } : {}),
+				...(p.detail !== undefined ? { detail: p.detail } : {}),
 			};
 		case "audio":
 			return {

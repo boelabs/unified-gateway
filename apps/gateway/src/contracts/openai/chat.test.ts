@@ -717,3 +717,43 @@ test("chat tool choice: allowed tools keep the official nested shape", () => {
 		},
 	);
 });
+
+test("chat file-parser plugin normalizes its PDF engine", () => {
+	const canonical = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "chat-model",
+			messages: [{ role: "user", content: "read the attachment" }],
+			plugins: [{ id: "file-parser", pdf: { engine: "pdf-text" } }],
+		}),
+	);
+	assert.deepEqual(canonical.fileParser, { pdfEngine: "pdf-text" });
+});
+
+test("chat file_data accepts the compatible HTTPS URL form", () => {
+	const canonical = toCanonicalChatRequest(
+		chatRequestSchema.parse({
+			model: "chat-model",
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "file",
+							file: {
+								file_data: "https://assets.example/brief.pdf",
+								filename: "brief.pdf",
+							},
+						},
+					],
+				},
+			],
+		}),
+	);
+	const content = canonical.messages[0]?.content;
+	assert.ok(Array.isArray(content));
+	assert.deepEqual(content[0], {
+		type: "file",
+		fileUrl: "https://assets.example/brief.pdf",
+		filename: "brief.pdf",
+	});
+});
