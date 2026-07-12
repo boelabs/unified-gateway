@@ -500,6 +500,7 @@ test("canonical->response: echoes previous_response_id and store", () => {
 });
 
 test("canonical->response: tool calls -> function_call items", () => {
+	const signature = "EjQKMgERTTIPxOSJU6ZAGTusp00q9PqtMCjw3RPFewtgH".repeat(4);
 	const resp: CanonicalChatResponse = {
 		id: "x",
 		created: 1,
@@ -517,7 +518,7 @@ test("canonical->response: tool calls -> function_call items", () => {
 							name: "get_weather",
 							arguments: '{"city":"CCS"}',
 							extraContent: {
-								google: { thought_signature: "sig-a" },
+								google: { thought_signature: signature },
 							},
 						},
 					],
@@ -533,16 +534,42 @@ test("canonical->response: tool calls -> function_call items", () => {
 	const fc = out.output.find((o: any) => o.type === "function_call");
 	assert.ok(fc);
 	assert.equal(fc.name, "get_weather");
-	assert.equal(fc.call_id, "call_1__thought__sig-a");
+	assert.equal(fc.call_id, `call_1__thought__${signature}`);
 	assert.deepEqual(fc.extra_content, {
-		google: { thought_signature: "sig-a" },
+		google: { thought_signature: signature },
 	});
 	assert.deepEqual(fc.provider_specific_fields, {
-		thought_signature: "sig-a",
+		thought_signature: signature,
 	});
 	assert.deepEqual(out.provider_specific_fields, {
-		thought_signatures: ["sig-a"],
+		thought_signatures: [signature],
 	});
+
+	// AI SDK-style replay keeps standard fields but drops both extension carriers.
+	const replay = responsesRequestToCanonical(
+		parse({
+			model: "gemini",
+			input: [
+				{
+					type: "function_call",
+					id: fc.id,
+					call_id: fc.call_id,
+					name: fc.name,
+					arguments: fc.arguments,
+				},
+				{
+					type: "function_call_output",
+					call_id: fc.call_id,
+					output: "sunny",
+				},
+			],
+		}),
+	);
+	assert.equal(replay.messages[0]!.toolCalls?.[0]?.id, "call_1");
+	assert.deepEqual(replay.messages[0]!.toolCalls?.[0]?.extraContent, {
+		google: { thought_signature: signature },
+	});
+	assert.equal(replay.messages[1]!.toolCallId, "call_1");
 });
 
 test("stream->events: function_call items include opaque extra_content in the completed response", async () => {

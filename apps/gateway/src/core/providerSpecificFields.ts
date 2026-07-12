@@ -22,7 +22,6 @@
  * can never occur inside a signature and splitting on its first occurrence is unambiguous.
  */
 export const LITELLM_THOUGHT_SEPARATOR = "__thought__";
-const MAX_PUBLIC_TOOL_CALL_ID_LENGTH = 64;
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {
 	if (value === null || typeof value !== "object" || Array.isArray(value))
@@ -185,9 +184,10 @@ export function encodeThoughtSignatureId(
 	if (id.length === 0 || id.includes(LITELLM_THOUGHT_SEPARATOR)) return id;
 	const signature = thoughtSignatureFromExtraContent(extraContent);
 	if (signature === undefined) return id;
-	const encoded = `${id}${LITELLM_THOUGHT_SEPARATOR}${signature}`;
-	// Preserve the extension carriers instead of emitting an invalid public id.
-	return encoded.length <= MAX_PUBLIC_TOOL_CALL_ID_LENGTH ? encoded : id;
+	// Keep this carrier lossless. OpenAI does not document a length limit for tool-call/call ids,
+	// while Gemini signatures routinely make the combined value longer than 64 characters. Rich
+	// clients can use the extension fields, but standard-only clients need the id to replay state.
+	return `${id}${LITELLM_THOUGHT_SEPARATOR}${signature}`;
 }
 
 /**

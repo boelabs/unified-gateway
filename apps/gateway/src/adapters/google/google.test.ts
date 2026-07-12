@@ -289,6 +289,61 @@ test("google.buildRequest: replays functionCall id and thought signature", () =>
 	assert.deepEqual(functionResponse.response, { loaded: true });
 });
 
+test("google.buildRequest: Gemini 3 recovers unsigned Responses history", async () => {
+	const { responsesRequestSchema } = await import(
+		"#contracts/openai/responses.ts"
+	);
+	const { responsesRequestToCanonical } = await import(
+		"#contracts/openai/responsesRender.ts"
+	);
+	const canonical = responsesRequestToCanonical(
+		responsesRequestSchema.parse({
+			model: "gemini",
+			input: [
+				{ role: "user", content: "use the tool" },
+				{
+					type: "function_call",
+					id: "fc-legacy",
+					call_id: "legacy-call",
+					name: "search_web",
+					arguments: '{"query":"latest news"}',
+				},
+				{
+					type: "function_call_output",
+					call_id: "legacy-call",
+					output: '{"results":[]}',
+				},
+			],
+		}),
+	);
+	const body = JSON.parse(
+		googleAdapter.chat!.buildRequest(canonical, geminiLevelCtx).body!,
+	);
+	assert.equal(
+		body.contents[1].parts[0].thoughtSignature,
+		"skip_thought_signature_validator",
+	);
+});
+
+test("google.buildRequest: older Gemini models do not receive synthetic signatures", () => {
+	const body = JSON.parse(
+		googleAdapter.chat!.buildRequest(
+			{
+				...req,
+				messages: [
+					{
+						role: "assistant",
+						content: null,
+						toolCalls: [{ id: "call-1", name: "f", arguments: "{}" }],
+					},
+				],
+			},
+			ctx,
+		).body!,
+	);
+	assert.equal(body.contents[0].parts[0].thoughtSignature, undefined);
+});
+
 test("google.buildRequest: Gemini 3 uses thinkingLevel and merges extraBody", () => {
 	const r = googleAdapter.chat!.buildRequest(
 		{
