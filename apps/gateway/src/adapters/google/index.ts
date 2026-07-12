@@ -174,6 +174,29 @@ function googleThoughtSignature(toolCall: {
 		: undefined;
 }
 
+// Google documents this sentinel for injected/migrated Gemini 3 function calls whose original
+// encrypted signature is unavailable. It keeps existing conversations usable; fresh gateway
+// responses still replay the exact signature through the stateless public carriers.
+const MISSING_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
+
+function requiresThoughtSignature(ctx: AdapterContext): boolean {
+	if (ctx.meta.reasoning?.kind === "gemini_level") return true;
+	const model = ctx.upstreamModel.toLowerCase();
+	return /(?:^|[\/_-])gemini-(?:[3-9]|[1-9]\d)(?:[.\-_]|$)/.test(model);
+}
+
+function ensureFirstFunctionCallSignature(
+	parts: Record<string, unknown>[],
+	ctx: AdapterContext,
+): void {
+	if (!requiresThoughtSignature(ctx)) return;
+	const first = parts.find((part) => part.functionCall !== undefined);
+	if (first === undefined) return;
+	const signature = first.thoughtSignature ?? first.thought_signature;
+	if (typeof signature !== "string" || signature.length === 0)
+		first.thoughtSignature = MISSING_THOUGHT_SIGNATURE;
+}
+
 interface GeminiBody extends Record<string, unknown> {
 	contents: Array<{ role: "user" | "model"; parts: Record<string, unknown>[] }>;
 	systemInstruction?: { parts: Record<string, unknown>[] };
@@ -273,6 +296,7 @@ function buildGeminiBody(
 					part.thoughtSignature = thoughtSignature;
 				parts.push(part);
 			}
+			ensureFirstFunctionCallSignature(parts, ctx);
 			body.contents.push({ role: "model", parts });
 			continue;
 		}

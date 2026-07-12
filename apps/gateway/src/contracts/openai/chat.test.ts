@@ -501,6 +501,7 @@ test("toOpenAIResponse: embeds the thought signature in the tool call id", () =>
 });
 
 test("round trip: a signed response replayed as history restores the canonical state", () => {
+	const signature = "EjQKMgERTTIPxOSJU6ZAGTusp00q9PqtMCjw3RPFewtgH".repeat(4);
 	const canonical: CanonicalChatResponse = {
 		id: "resp_1",
 		created: 1,
@@ -517,7 +518,7 @@ test("round trip: a signed response replayed as history restores the canonical s
 							id: "call_1",
 							name: "f",
 							arguments: "{}",
-							extraContent: { google: { thought_signature: "sig-a" } },
+							extraContent: { google: { thought_signature: signature } },
 						},
 					],
 				},
@@ -543,7 +544,7 @@ test("round trip: a signed response replayed as history restores the canonical s
 	);
 	assert.equal(u.messages[0]!.toolCalls?.[0]?.id, "call_1");
 	assert.deepEqual(u.messages[0]!.toolCalls?.[0]?.extraContent, {
-		google: { thought_signature: "sig-a" },
+		google: { thought_signature: signature },
 	});
 	assert.equal(u.messages[1]!.toolCallId, "call_1");
 });

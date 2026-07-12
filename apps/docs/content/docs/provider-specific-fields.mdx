@@ -58,9 +58,13 @@ are stripped symmetrically so call/result matching keeps working.
 
 - Signatures are standard base64 (`A-Za-z0-9+/=`), which cannot contain `_` — the separator is
   unambiguous.
-- Ids get long (a few hundred bytes). Clients that truncate tool call ids would lose the signature;
-  none of the mainstream SDKs do, and LiteLLM ships the same scheme in production.
+- Ids can exceed 64 characters. The gateway never truncates this lossless carrier; clients that
+  truncate tool call ids would lose the signature. LiteLLM uses the same scheme in production.
 - With parallel function calls Gemini may sign only the first call; only signed calls get a suffix.
+- For migrated or already-persisted Gemini 3 history where every carrier is missing, the Google
+  adapter applies Google's documented `skip_thought_signature_validator` sentinel to the first
+  function call in that step. Exact signatures are always preferred; the sentinel is only a
+  compatibility recovery path at the provider boundary.
 
 ## OpenAI encrypted reasoning (message-bound)
 
