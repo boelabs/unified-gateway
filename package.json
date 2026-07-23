@@ -15,6 +15,9 @@
 		"apps/*",
 		"packages/*"
 	],
+	"overrides": {
+		"sharp": "0.35.3"
+	},
 	"scripts": {
 		"dev": "turbo run dev",
 		"build": "turbo run build",
