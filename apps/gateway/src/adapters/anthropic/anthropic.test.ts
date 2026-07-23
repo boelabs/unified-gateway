@@ -33,8 +33,7 @@ const adaptiveCtx: AdapterContext = {
 		},
 		reasoning: {
 			kind: "anthropic_adaptive",
-			levels: ["none", "low", "medium", "high", "xhigh"],
-			upstreamEffortMap: { xhigh: "max" },
+			levels: ["none", "low", "medium", "high", "xhigh", "max"],
 		},
 	},
 };
@@ -237,15 +236,21 @@ test("anthropic.buildRequest: provider file references enable the Files API beta
 	);
 });
 
-test("anthropic.buildRequest: adaptive reasoning uses thinking + output_config.effort", () => {
+test("anthropic.buildRequest: adaptive reasoning keeps xhigh and max distinct", () => {
 	const built = anthropicAdapter.chat!.buildRequest(
 		{ ...req, reasoning: { effort: "xhigh" }, extraBody: { top_k: 40 } },
 		adaptiveCtx,
 	);
 	const body = JSON.parse(built.body!);
 	assert.deepEqual(body.thinking, { type: "adaptive", display: "summarized" });
-	assert.deepEqual(body.output_config, { effort: "max" });
+	assert.deepEqual(body.output_config, { effort: "xhigh" });
 	assert.equal(body.top_k, 40);
+
+	const maximum = anthropicAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "max" } },
+		adaptiveCtx,
+	);
+	assert.deepEqual(JSON.parse(maximum.body!).output_config, { effort: "max" });
 });
 
 test("anthropic.buildRequest: structured output merges with output_config.effort", () => {

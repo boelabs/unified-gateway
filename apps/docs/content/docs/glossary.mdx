@@ -75,7 +75,7 @@ must send a complete `catalogEntry` when creating its deployment.
 A catalog entry's declaration of *how* a model controls reasoning: `kind` (one of eight wire
 mechanisms — `openai_effort`, `openai_body`, `anthropic_adaptive`, `anthropic_budget`, `gemini_level`,
 `gemini_budget`, `chat_template_flag`, `fixed`), `levels` (which rungs of the canonical
-`none < minimal < low < medium < high < xhigh` ladder it accepts), and kind-specific config
+`none < minimal < low < medium < high < xhigh < max` ladder it accepts), and kind-specific config
 (`bodyField`, `chatTemplateFlag`, `budgets`, `upstreamEffortMap`). See [Reasoning](/docs/reasoning).
 
 ## Parameter Policy

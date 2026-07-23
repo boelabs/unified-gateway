@@ -25,10 +25,7 @@
 					"maxOutputTokens": 384000,
 					"reasoning": {
 						"kind": "openai_body",
-						"levels": ["none", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						},
+						"levels": ["none", "high", "max"],
 						"bodyField": {
 							"param": "thinking",
 							"onValue": {
@@ -51,7 +48,7 @@
 						"reasoning_effort": {
 							"mode": "mapped",
 							"values": ["high", "max"],
-							"notes": "DeepSeek maps public xhigh to max."
+							"notes": "DeepSeek supports native high/max; canonical xhigh stays distinct and snaps down to high."
 						},
 						"temperature": {
 							"mode": "ignored",
@@ -91,10 +88,7 @@
 					"maxOutputTokens": 384000,
 					"reasoning": {
 						"kind": "openai_body",
-						"levels": ["none", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						},
+						"levels": ["none", "high", "max"],
 						"bodyField": {
 							"param": "thinking",
 							"onValue": {

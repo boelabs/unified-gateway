@@ -6,15 +6,63 @@
 		"adapterKey": "moonshot",
 		"name": "Moonshot AI / Kimi",
 		"docs": [
+			"https://platform.kimi.ai/docs/guide/kimi-k3-quickstart.md",
 			"https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart.md",
 			"https://platform.kimi.ai/docs/guide/kimi-k2-7-code-quickstart.md",
 			"https://platform.kimi.ai/docs/api/chat.md",
+			"https://platform.kimi.ai/docs/pricing/chat-k3.md",
 			"https://platform.kimi.ai/docs/pricing/chat-k26.md",
 			"https://platform.kimi.ai/docs/pricing/chat-k27-code.md",
 			"https://platform.kimi.ai/docs/pricing/chat.md"
 		]
 	},
 	"models": {
+		"kimi-k3": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1048576,
+					"maxOutputTokens": 1048576,
+					"reasoning": {
+						"kind": "openai_effort",
+						"levels": ["max"]
+					},
+					"contracts": ["chat.completions"],
+					"parameters": {
+						"frequency_penalty": false,
+						"include_reasoning": true,
+						"max_completion_tokens": true,
+						"max_tokens": true,
+						"n": false,
+						"parallel_tool_calls": false,
+						"presence_penalty": false,
+						"prompt_cache_key": true,
+						"reasoning": true,
+						"reasoning_effort": true,
+						"response_format": true,
+						"safety_identifier": true,
+						"seed": false,
+						"stop": true,
+						"structured_outputs": true,
+						"temperature": false,
+						"tool_choice": true,
+						"tools": true,
+						"top_p": false,
+						"user": false
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 300,
+				"outputCentsPerMTokens": 1500,
+				"cacheReadCentsPerMTokens": 30
+			}
+		},
 		"kimi-k2.7-code": {
 			"operations": {
 				"text.generate": {

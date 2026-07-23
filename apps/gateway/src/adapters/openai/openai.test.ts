@@ -215,23 +215,31 @@ test("openai.buildRequest: canonical reasoning is clamped and merged with summar
 	assert.equal(body.custom_param, true);
 });
 
-test("openai.buildRequest: translates canonical effort to upstream vocabulary", () => {
-	const mappedCtx: AdapterContext = {
+test("openai.buildRequest: preserves distinct xhigh and max efforts", () => {
+	const fullCtx: AdapterContext = {
 		...reasoningCtx,
 		meta: {
 			...reasoningCtx.meta,
 			reasoning: {
 				kind: "openai_effort",
-				levels: ["none", "high", "xhigh"],
-				upstreamEffortMap: { xhigh: "max" },
+				levels: ["none", "high", "xhigh", "max"],
 			},
 		},
 	};
-	const r = openaiAdapter.chat!.buildRequest(
+	const extended = openaiAdapter.chat!.buildRequest(
 		{ ...baseReq, reasoning: { effort: "xhigh" } },
-		mappedCtx,
+		fullCtx,
 	);
-	assert.deepEqual(JSON.parse(r.body!).reasoning, {
+	assert.deepEqual(JSON.parse(extended.body!).reasoning, {
+		effort: "xhigh",
+		summary: "auto",
+	});
+
+	const maximum = openaiAdapter.chat!.buildRequest(
+		{ ...baseReq, reasoning: { effort: "max" } },
+		fullCtx,
+	);
+	assert.deepEqual(JSON.parse(maximum.body!).reasoning, {
 		effort: "max",
 		summary: "auto",
 	});

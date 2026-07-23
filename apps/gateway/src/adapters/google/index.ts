@@ -235,7 +235,14 @@ function geminiThinkingConfig(
 		};
 	}
 	if (effort === "none") return { thinkingBudget: 0 };
-	const budget = spec.budgets?.[effort] ?? DEFAULT_GEMINI_BUDGETS[effort];
+	const budget =
+		spec.budgets?.[effort] ??
+		(effort === "max" ? undefined : DEFAULT_GEMINI_BUDGETS[effort]);
+	if (budget === undefined) {
+		throw new Error(
+			'Gemini budget-based reasoning requires an explicit budget for effort "max"',
+		);
+	}
 	return {
 		thinkingBudget: budget,
 		...(includeThoughts ? { includeThoughts: true } : {}),

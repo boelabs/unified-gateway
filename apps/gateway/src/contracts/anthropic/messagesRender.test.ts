@@ -278,6 +278,17 @@ test("request->canonical: thinking budget and output_config.effort are normalize
 	);
 	assert.deepEqual(effort.reasoning, { effort: "low", summary: "auto" });
 	assert.equal(effort.topK, 40);
+
+	const maximum = messagesRequestToCanonical(
+		parse({
+			model: "claude",
+			max_tokens: 100,
+			thinking: { type: "adaptive" },
+			output_config: { effort: "max" },
+			messages: [{ role: "user", content: "hello" }],
+		}),
+	);
+	assert.deepEqual(maximum.reasoning, { effort: "max", summary: "auto" });
 });
 
 test("request->canonical: output_config.format becomes canonical format", () => {

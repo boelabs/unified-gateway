@@ -93,8 +93,14 @@ test("draftReasoningLevels: effort values matching our vocabulary become levels,
 	const { levels, unrecognized } = draftReasoningLevels([
 		{ type: "effort", values: ["low", "medium", "high", "xhigh", "max"] },
 	]);
-	assert.deepEqual([...levels].sort(), ["high", "low", "medium", "xhigh"]);
-	assert.deepEqual(unrecognized, ["max"]);
+	assert.deepEqual([...levels].sort(), [
+		"high",
+		"low",
+		"max",
+		"medium",
+		"xhigh",
+	]);
+	assert.deepEqual(unrecognized, []);
 });
 
 test("draftReasoningLevels: a toggle alongside an effort ladder adds the off switch", () => {

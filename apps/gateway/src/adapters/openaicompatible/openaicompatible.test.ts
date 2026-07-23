@@ -150,8 +150,7 @@ function openAIBodyReasoningCtx(
 			},
 			reasoning: {
 				kind: "openai_body",
-				levels: ["none", "high", "xhigh"],
-				upstreamEffortMap: { xhigh: "max" },
+				levels: ["none", "high", "max"],
 				bodyField: {
 					param: "thinking",
 					onValue: { type: "enabled" },
@@ -197,6 +196,17 @@ test("compatible: openai_body injects top-level thinking and optional effort", (
 		}),
 	);
 	body = JSON.parse(on.body!);
+	assert.deepEqual(body.thinking, { type: "enabled" });
+	assert.equal(body.reasoning_effort, "high");
+
+	const maximum = openaicompatibleAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "max" } },
+		openAIBodyReasoningCtx({
+			apiKey: "k",
+			baseUrl: "https://api.example.test/v1",
+		}),
+	);
+	body = JSON.parse(maximum.body!);
 	assert.deepEqual(body.thinking, { type: "enabled" });
 	assert.equal(body.reasoning_effort, "max");
 });

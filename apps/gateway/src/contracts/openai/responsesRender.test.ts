@@ -265,14 +265,11 @@ test("request->canonical: reasoning.effort goes to core and summary auto is norm
 	assert.deepEqual(u.extraBody, { top_k: 20 });
 });
 
-test("request->canonical: reasoning.effort does not expose the upstream max label", () => {
-	assert.throws(
-		() =>
-			responsesRequestToCanonical(
-				parse({ model: "gpt", input: "hi", reasoning: { effort: "max" } }),
-			),
-		/Unsupported reasoning effort/,
+test("request->canonical: reasoning.effort preserves max above xhigh", () => {
+	const canonical = responsesRequestToCanonical(
+		parse({ model: "gpt", input: "hi", reasoning: { effort: "max" } }),
 	);
+	assert.deepEqual(canonical.reasoning, { effort: "max", summary: "auto" });
 });
 
 test("request->canonical: extra_body cannot overwrite responses managed parameters", () => {

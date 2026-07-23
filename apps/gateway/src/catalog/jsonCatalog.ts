@@ -206,6 +206,16 @@ function validateReasoning(value: unknown, path: string): void {
 			'is only allowed when kind is "chat_template_flag"',
 		);
 	}
+	if (
+		(value.kind === "anthropic_budget" || value.kind === "gemini_budget") &&
+		value.levels.includes("max") &&
+		(!isRecord(value.budgets) || value.budgets.max === undefined)
+	) {
+		fail(
+			`${path}.budgets.max`,
+			'is required when a budget-based reasoning spec declares "max"',
+		);
+	}
 }
 
 function validateParameterSupport(value: unknown, path: string): void {

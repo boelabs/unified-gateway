@@ -12,12 +12,12 @@ actually understands, per the catalog's declaration of *how* that model controls
 ## The canonical ladder
 
 ```
-none < minimal < low < medium < high < xhigh
+none < minimal < low < medium < high < xhigh < max
 ```
 
-A request sets `reasoning.effort` to one of these six values (naming and semantics follow OpenAI's
-`reasoning_effort` vocabulary). The gateway never invents a seventh level and never exposes a native
-label like `max` directly — the catalog's `upstreamEffortMap` translates between them.
+A request sets `reasoning.effort` to one of these seven values. `max` is a first-class tier above
+`xhigh`, not an alias: providers including OpenAI and Anthropic expose models where both values are
+accepted and have different cost/capability semantics.
 
 ## Requests are clamped, never rejected
 
@@ -31,7 +31,7 @@ The snapping rules:
   of its declared `levels`). If the model has no off switch — it *always* reasons — the request snaps
   **up** to the model's lowest declared level (its "floor"). There's no separate `canDisable` flag: the
   presence of `"none"` in `levels` **is** the flag.
-- **Requesting a positive effort** (`minimal`..`xhigh`): resolves to the highest declared level that
+- **Requesting a positive effort** (`minimal`..`max`): resolves to the highest declared level that
   doesn't exceed the request, or the floor if the request is below every declared level. A positive
   request **never** rounds down into `none` — asking for *some* reasoning never turns it off.
 - **Omitting `reasoning` entirely**: treated as requesting `none` — i.e., "don't reason" on a model that
@@ -48,7 +48,7 @@ reasoning than the log shows.
 ```json
 "reasoning": {
   "kind": "openai_effort",
-  "levels": ["none", "low", "medium", "high", "xhigh"]
+  "levels": ["none", "low", "medium", "high", "xhigh", "max"]
 }
 ```
 
@@ -58,9 +58,12 @@ reasoning than the log shows.
   `levels: ["high"]`.
 - **`budgets`** — only for the `*_budget` kinds: a map from effort level to a token budget
   (`{ "low": 4096, "high": 16000 }`). Falls back to a provider-specific default per level if omitted.
-- **`upstreamEffortMap`** — only where the provider's own label differs from the canonical name, e.g.
-  `{ "xhigh": "max" }`. Keys are always canonical; values are the provider's native label. Omitted
-  levels pass through unchanged (canonical name == upstream name).
+  A budget-based spec that declares `max` must provide its budget explicitly; the gateway never invents
+  a portable token threshold for a provider-defined maximum tier.
+- **`upstreamEffortMap`** — only for synonymous provider labels whose spelling differs from the
+  canonical name. Keys are always canonical; values are the provider's native label. It must never
+  collapse distinct semantic tiers: mapping `xhigh` to `max` is invalid. Omitted levels pass through
+  unchanged (canonical name == upstream name).
 
 ## The reasoning-control kinds
 

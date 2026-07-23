@@ -461,6 +461,190 @@
 				"outputCentsPerMTokens": 500
 			}
 		},
+		"gpt-5.6": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1050000,
+					"maxOutputTokens": 128000,
+					"reasoning": {
+						"kind": "openai_effort",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"reasoning_effort": true,
+						"response_format": true,
+						"seed": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"temperature": true,
+						"stop": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 500,
+				"outputCentsPerMTokens": 3000,
+				"cacheReadCentsPerMTokens": 50,
+				"cacheWriteCentsPerMTokens": 625,
+				"tiers": [
+					{
+						"aboveInputTokens": 272000,
+						"inputCentsPerMTokens": 1000,
+						"outputCentsPerMTokens": 4500,
+						"cacheReadCentsPerMTokens": 100,
+						"cacheWriteCentsPerMTokens": 1250
+					}
+				]
+			}
+		},
+		"gpt-5.6-sol": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1050000,
+					"maxOutputTokens": 128000,
+					"reasoning": {
+						"kind": "openai_effort",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"reasoning_effort": true,
+						"response_format": true,
+						"seed": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"temperature": true,
+						"stop": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 500,
+				"outputCentsPerMTokens": 3000,
+				"cacheReadCentsPerMTokens": 50,
+				"cacheWriteCentsPerMTokens": 625,
+				"tiers": [
+					{
+						"aboveInputTokens": 272000,
+						"inputCentsPerMTokens": 1000,
+						"outputCentsPerMTokens": 4500,
+						"cacheReadCentsPerMTokens": 100,
+						"cacheWriteCentsPerMTokens": 1250
+					}
+				]
+			}
+		},
+		"gpt-5.6-terra": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1050000,
+					"maxOutputTokens": 128000,
+					"reasoning": {
+						"kind": "openai_effort",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"reasoning_effort": true,
+						"response_format": true,
+						"seed": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"temperature": true,
+						"stop": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 250,
+				"outputCentsPerMTokens": 1500,
+				"cacheReadCentsPerMTokens": 25,
+				"cacheWriteCentsPerMTokens": 312.5,
+				"tiers": [
+					{
+						"aboveInputTokens": 272000,
+						"inputCentsPerMTokens": 500,
+						"outputCentsPerMTokens": 2250,
+						"cacheReadCentsPerMTokens": 50,
+						"cacheWriteCentsPerMTokens": 625
+					}
+				]
+			}
+		},
+		"gpt-5.6-luna": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1050000,
+					"maxOutputTokens": 128000,
+					"reasoning": {
+						"kind": "openai_effort",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"reasoning_effort": true,
+						"response_format": true,
+						"seed": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"temperature": true,
+						"stop": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 100,
+				"outputCentsPerMTokens": 600,
+				"cacheReadCentsPerMTokens": 10,
+				"cacheWriteCentsPerMTokens": 125,
+				"tiers": [
+					{
+						"aboveInputTokens": 272000,
+						"inputCentsPerMTokens": 200,
+						"outputCentsPerMTokens": 900,
+						"cacheReadCentsPerMTokens": 20,
+						"cacheWriteCentsPerMTokens": 250
+					}
+				]
+			}
+		},
 		"gpt-5.5": {
 			"operations": {
 				"text.generate": {

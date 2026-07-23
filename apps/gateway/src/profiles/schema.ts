@@ -121,6 +121,17 @@ const reasoningSchema = z
 	.strict()
 	.superRefine((value, ctx) => {
 		const levels = new Set(value.levels);
+		if (
+			(value.kind === "anthropic_budget" || value.kind === "gemini_budget") &&
+			levels.has("max") &&
+			value.budgets?.max === undefined
+		) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["budgets", "max"],
+				message: 'required when a budget-based reasoning spec declares "max"',
+			});
+		}
 		for (const key of Object.keys(value.upstreamEffortMap ?? {})) {
 			if (!levels.has(key as (typeof EFFORT_ORDER)[number])) {
 				ctx.addIssue({

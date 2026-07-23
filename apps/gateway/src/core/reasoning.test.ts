@@ -35,7 +35,24 @@ test("snapEffort: lowers to the nearest supported level", () => {
 		levels: ["none", "low", "medium", "high"],
 	};
 	assert.equal(snapEffort("xhigh", spec), "high");
+	assert.equal(snapEffort("max", spec), "high");
 	assert.equal(snapEffort("minimal", spec), "low");
+});
+
+test("snapEffort: preserves max as a distinct tier above xhigh", () => {
+	const full: ReasoningSpec = {
+		kind: "openai_effort",
+		levels: ["none", "high", "xhigh", "max"],
+	};
+	assert.equal(snapEffort("xhigh", full), "xhigh");
+	assert.equal(snapEffort("max", full), "max");
+
+	const highOrMax: ReasoningSpec = {
+		kind: "openai_effort",
+		levels: ["none", "high", "max"],
+	};
+	assert.equal(snapEffort("xhigh", highOrMax), "high");
+	assert.equal(snapEffort("max", highOrMax), "max");
 });
 
 test("snapEffort: a binary toggle normalizes exclusively to none/high", () => {
@@ -44,7 +61,14 @@ test("snapEffort: a binary toggle normalizes exclusively to none/high", () => {
 		levels: ["none", "high"],
 	};
 	assert.equal(snapEffort("none", spec), "none");
-	for (const effort of ["minimal", "low", "medium", "high", "xhigh"] as const) {
+	for (const effort of [
+		"minimal",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	] as const) {
 		assert.equal(snapEffort(effort, spec), "high");
 	}
 });
@@ -86,16 +110,18 @@ test("effortFromBudgetTokens: buckets legacy budgets", () => {
 	assert.equal(effortFromBudgetTokens(2_048), "low");
 	assert.equal(effortFromBudgetTokens(10_000), "medium");
 	assert.equal(effortFromBudgetTokens(32_000), "xhigh");
+	assert.equal(effortFromBudgetTokens(1_000_000), "xhigh");
 });
 
-test("toUpstreamReasoningEffort: separates our xhigh from native max", () => {
+test("toUpstreamReasoningEffort: maps synonymous labels without conflating xhigh and max", () => {
 	const spec: ReasoningSpec = {
 		kind: "openai_effort",
-		levels: ["none", "high", "xhigh"],
-		upstreamEffortMap: { xhigh: "max" },
+		levels: ["none", "high", "xhigh", "max"],
+		upstreamEffortMap: { max: "maximum" },
 	};
 	assert.equal(toUpstreamReasoningEffort("high", spec), "high");
-	assert.equal(toUpstreamReasoningEffort("xhigh", spec), "max");
+	assert.equal(toUpstreamReasoningEffort("xhigh", spec), "xhigh");
+	assert.equal(toUpstreamReasoningEffort("max", spec), "maximum");
 });
 
 test("resolveChatTemplateFlag: binary on/off toggle against the spec", () => {

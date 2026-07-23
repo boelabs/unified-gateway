@@ -184,7 +184,8 @@
 						"low": { "type": "integer", "minimum": 0 },
 						"medium": { "type": "integer", "minimum": 0 },
 						"high": { "type": "integer", "minimum": 0 },
-						"xhigh": { "type": "integer", "minimum": 0 }
+						"xhigh": { "type": "integer", "minimum": 0 },
+						"max": { "type": "integer", "minimum": 0 }
 					}
 				},
 				"upstreamEffortMap": {
@@ -196,7 +197,8 @@
 						"low": { "type": "string" },
 						"medium": { "type": "string" },
 						"high": { "type": "string" },
-						"xhigh": { "type": "string" }
+						"xhigh": { "type": "string" },
+						"max": { "type": "string" }
 					}
 				},
 				"bodyField": {
@@ -236,7 +238,7 @@
 			]
 		},
 		"reasoningEffort": {
-			"enum": ["none", "minimal", "low", "medium", "high", "xhigh"]
+			"enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 		},
 		"imageModelProfile": {
 			"type": "object",

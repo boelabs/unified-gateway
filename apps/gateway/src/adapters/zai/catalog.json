@@ -29,13 +29,7 @@
 					"maxOutputTokens": 131072,
 					"reasoning": {
 						"kind": "openai_body",
-						"levels": ["none", "minimal", "low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"minimal": "none",
-							"low": "high",
-							"medium": "high",
-							"xhigh": "max"
-						},
+						"levels": ["none", "high", "max"],
 						"bodyField": {
 							"param": "thinking",
 							"onValue": {
@@ -56,16 +50,8 @@
 						},
 						"reasoning_effort": {
 							"mode": "mapped",
-							"values": [
-								"max",
-								"xhigh",
-								"high",
-								"medium",
-								"low",
-								"minimal",
-								"none"
-							],
-							"notes": "Z.AI maps low/medium to high, xhigh to max, and none/minimal skip thinking."
+							"values": ["none", "high", "max"],
+							"notes": "Positive tiers below high snap up to high; xhigh stays distinct from max and snaps down to high."
 						},
 						"include_reasoning": true,
 						"max_tokens": true,

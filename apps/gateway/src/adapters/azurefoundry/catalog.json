@@ -35,10 +35,7 @@
 					},
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["none", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "high", "max"]
 					},
 					"maxInputTokens": 1000000,
 					"maxOutputTokens": 384000
@@ -56,10 +53,7 @@
 					},
 					"reasoning": {
 						"kind": "openai_effort",
-						"levels": ["none", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "high", "max"]
 					},
 					"maxInputTokens": 1000000,
 					"maxOutputTokens": 384000
