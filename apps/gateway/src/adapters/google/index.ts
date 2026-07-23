@@ -5,9 +5,9 @@ import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
 import { mapUpstreamHttpError } from "#adapters/upstreamError.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
 import { resolveAdapterReasoning } from "#adapters/reasoning.ts";
+import { toGeminiSchema, toGeminiJsonSchema } from "./schema.ts";
 import type { ReasoningControlKind } from "#core/reasoning.ts";
 import { GatewayError } from "#core/errors.ts";
-import { toGeminiSchema } from "./schema.ts";
 import { readFile } from "node:fs/promises";
 import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
@@ -179,10 +179,19 @@ function googleThoughtSignature(toolCall: {
 // responses still replay the exact signature through the stateless public carriers.
 const MISSING_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
 
-function requiresThoughtSignature(ctx: AdapterContext): boolean {
-	if (ctx.meta.reasoning?.kind === "gemini_level") return true;
+function isGemini3OrNewerModel(ctx: AdapterContext): boolean {
 	const model = ctx.upstreamModel.toLowerCase();
-	return /(?:^|[\/_-])gemini-(?:[3-9]|[1-9]\d)(?:[.\-_]|$)/.test(model);
+	return /(?:^|[/_-])gemini-(?:[3-9]|[1-9]\d)(?:[._-]|$)/.test(model);
+}
+
+function requiresThoughtSignature(ctx: AdapterContext): boolean {
+	return (
+		ctx.meta.reasoning?.kind === "gemini_level" || isGemini3OrNewerModel(ctx)
+	);
+}
+
+function supportsStrictToolCalling(ctx: AdapterContext): boolean {
+	return isGemini3OrNewerModel(ctx);
 }
 
 function ensureFirstFunctionCallSignature(
@@ -253,6 +262,9 @@ function buildGeminiBody(
 	ctx: AdapterContext,
 ): GeminiBody {
 	const body: GeminiBody = { contents: [] };
+	const strictToolDecoding =
+		supportsStrictToolCalling(ctx) &&
+		req.tools?.some((tool) => tool.strict === true) === true;
 	const systemParts: Record<string, unknown>[] = [];
 	// Map toolCallId -> function name (to map tool results).
 	const toolNameById = new Map<string, string>();
@@ -361,24 +373,33 @@ function buildGeminiBody(
 					...(t.description !== undefined
 						? { description: t.description }
 						: {}),
-					...(t.parameters !== undefined
-						? { parameters: toGeminiSchema(t.parameters) }
-						: {}),
+					...(t.parameters === undefined
+						? {}
+						: t.strict === true && strictToolDecoding
+							? { parametersJsonSchema: toGeminiJsonSchema(t.parameters) }
+							: { parameters: toGeminiSchema(t.parameters) }),
 				})),
 			},
 		];
 	}
-	if (req.toolChoice !== undefined) {
+	if (req.toolChoice !== undefined || strictToolDecoding) {
 		const fc: Record<string, unknown> = {};
-		if (req.toolChoice === "auto") fc.mode = "AUTO";
-		else if (req.toolChoice === "none") fc.mode = "NONE";
-		else if (req.toolChoice === "required") fc.mode = "ANY";
-		else if ("name" in req.toolChoice) {
+		const toolChoice = req.toolChoice ?? "auto";
+		if (toolChoice === "auto")
+			fc.mode = strictToolDecoding ? "VALIDATED" : "AUTO";
+		else if (toolChoice === "none") fc.mode = "NONE";
+		else if (toolChoice === "required") fc.mode = "ANY";
+		else if ("name" in toolChoice) {
 			fc.mode = "ANY";
-			fc.allowedFunctionNames = [req.toolChoice.name];
+			fc.allowedFunctionNames = [toolChoice.name];
 		} else {
-			fc.mode = req.toolChoice.mode === "required" ? "ANY" : "AUTO";
-			fc.allowedFunctionNames = req.toolChoice.allowedTools;
+			fc.mode =
+				toolChoice.mode === "required"
+					? "ANY"
+					: strictToolDecoding
+						? "VALIDATED"
+						: "AUTO";
+			fc.allowedFunctionNames = toolChoice.allowedTools;
 		}
 		body.toolConfig = { functionCallingConfig: fc };
 	}
