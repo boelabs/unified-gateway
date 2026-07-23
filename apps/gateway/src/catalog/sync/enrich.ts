@@ -208,9 +208,9 @@ export function enrichCatalogEntry(
 			const unrecognizedNote =
 				unrecognized.length > 0
 					? ` Native levels from models.dev not in our canonical vocabulary, dropped from the ` +
-						`draft: ${unrecognized.join(", ")}. For each, decide whether it's an alias for an ` +
-						"existing level (add an upstreamEffortMap entry), a separate mode/endpoint with its " +
-						"own pricing (do not fold it into levels at all), or safe to ignore - check the " +
+						`draft: ${unrecognized.join(", ")}. For each, decide whether it's a synonymous label for an ` +
+						"existing level (add an upstreamEffortMap entry), a distinct tier that requires extending " +
+						"the canonical vocabulary, a separate mode/endpoint with its own pricing, or safe to ignore - check the " +
 						"provider's docs."
 					: "";
 			let notes: string;

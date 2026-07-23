@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 const activeOpenAITextModels = [
+	"gpt-5.6",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
+	"gpt-5.6-luna",
 	"gpt-5.5",
 	"gpt-5.5-pro",
 	"gpt-5.4",
@@ -25,9 +29,11 @@ const activeOpenAITextModels = [
 ];
 
 const activeGeminiTextModels = [
+	"gemini-3.6-flash",
 	"gemini-3.1-pro-preview",
 	"gemini-3.1-pro-preview-customtools",
 	"gemini-3.5-flash",
+	"gemini-3.5-flash-lite",
 	"gemini-3-flash-preview",
 	"gemini-3.1-flash-lite",
 	"gemini-2.5-pro",
@@ -58,6 +64,22 @@ test("catalog maps active Google AI Studio text/chat models", () => {
 	}
 });
 
+test("latest Gemini Flash models expose documented thinking without deprecated sampling", () => {
+	for (const model of ["gemini-3.6-flash", "gemini-3.5-flash-lite"]) {
+		const operation = getCatalogEntry("googleaistudio", model)?.operations[
+			"text.generate"
+		];
+		assert.deepEqual(operation?.reasoning, {
+			kind: "gemini_level",
+			levels: ["minimal", "low", "medium", "high"],
+		});
+		assert.equal(operation?.maxInputTokens, 1048576);
+		assert.equal(operation?.maxOutputTokens, 65536);
+		assert.equal(operation?.parameters?.temperature, undefined);
+		assert.equal(operation?.parameters?.top_p, undefined);
+	}
+});
+
 test("catalog maps active Google AI Studio embedding models", () => {
 	for (const model of activeGeminiEmbeddingModels) {
 		const entry = getCatalogEntry("googleaistudio", model);
@@ -75,6 +97,9 @@ test("catalog maps active Azure OpenAI embedding models", () => {
 });
 
 test("Azure OpenAI and Azure Foundry keep their own catalogs", () => {
+	assert.ok(getCatalogEntry("azureopenai", "gpt-5.6-sol"));
+	assert.ok(getCatalogEntry("azureopenai", "gpt-5.6-terra"));
+	assert.ok(getCatalogEntry("azureopenai", "gpt-5.6-luna"));
 	assert.ok(getCatalogEntry("azureopenai", "gpt-5.4"));
 	assert.ok(getCatalogEntry("azureopenai", "gpt-4.1-nano"));
 	assert.equal(
@@ -99,8 +124,7 @@ test("Azure OpenAI and Azure Foundry keep their own catalogs", () => {
 		?.operations["text.generate"];
 	assert.deepEqual(deepseekV4?.reasoning, {
 		kind: "openai_effort",
-		levels: ["none", "high", "xhigh"],
-		upstreamEffortMap: { xhigh: "max" },
+		levels: ["none", "high", "max"],
 	});
 	assert.deepEqual(
 		getCatalogEntry("azurefoundry", "DeepSeek-V4-Pro")?.operations[
@@ -153,7 +177,42 @@ test("catalog still matches dated snapshots of active base models", () => {
 	assert.ok(getCatalogEntry("openai", "gpt-5.4-mini-2026-03-17"));
 });
 
+test("Anthropic catalog distinguishes model-specific xhigh and max support", () => {
+	const opus48 = getCatalogEntry("anthropic", "claude-opus-4-8")?.operations[
+		"text.generate"
+	]?.reasoning;
+	assert.deepEqual(opus48?.levels, [
+		"none",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	]);
+
+	const opus46 = getCatalogEntry("anthropic", "claude-opus-4-6")?.operations[
+		"text.generate"
+	]?.reasoning;
+	assert.deepEqual(opus46?.levels, ["none", "low", "medium", "high", "max"]);
+	assert.equal(opus46?.levels.includes("xhigh"), false);
+});
+
 test("resolved model metadata exposes limits and reasoning defaults from catalog", () => {
+	const gpt56 = resolveModelMetadata("openai", "gpt-5.6-sol");
+	assert.equal(gpt56.maxInputTokens, 1_050_000);
+	assert.equal(gpt56.maxOutputTokens, 128_000);
+	assert.deepEqual(gpt56.reasoning?.levels, [
+		"none",
+		"low",
+		"medium",
+		"high",
+		"xhigh",
+		"max",
+	]);
+	assert.equal(gpt56.reasoning?.upstreamEffortMap, undefined);
+	assert.equal(gpt56.pricing?.cacheWriteCentsPerMTokens, 625);
+	assert.equal(gpt56.pricing?.tiers?.[0]?.cacheWriteCentsPerMTokens, 1_250);
+
 	const openai = resolveModelMetadata("openai", "gpt-5.4");
 	assert.equal(openai.maxInputTokens, 1_050_000);
 	assert.equal(openai.maxOutputTokens, 128_000);

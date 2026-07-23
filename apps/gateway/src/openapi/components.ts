@@ -10,6 +10,7 @@
 
 import "zod-openapi"; // ambient types for `.meta({ id, ... })`
 
+import { EFFORT_ORDER } from "#core/reasoning.ts";
 import * as z from "zod/v4";
 
 /** An object that accepts arbitrary extra keys (`additionalProperties: true`). */
@@ -21,6 +22,14 @@ function loose(shape: z.ZodRawShape, meta: Record<string, unknown>): z.ZodType {
 
 const nullableString = z.union([z.string(), z.null()]);
 const nullableInteger = z.union([z.int(), z.null()]);
+const reasoningEffort = z.enum(EFFORT_ORDER);
+const reasoningConfig = loose(
+	{
+		effort: reasoningEffort.optional(),
+		summary: z.enum(["auto", "none", "concise", "detailed"]).optional(),
+	},
+	{},
+);
 
 /* ------------------------------------------------------------------ shared */
 
@@ -160,6 +169,8 @@ export const ChatCompletionRequest = loose(
 		tools: z.array(loose({}, {})).optional(),
 		tool_choice: z.unknown().optional(),
 		response_format: ChatResponseFormat.optional(),
+		reasoning_effort: reasoningEffort.optional(),
+		reasoning: reasoningConfig.optional(),
 		plugins: z.array(FileParserPlugin).max(1).optional(),
 	},
 	{ id: "ChatCompletionRequest" },
@@ -225,6 +236,7 @@ export const ResponsesRequest = loose(
 		tools: z.array(loose({}, {})).optional(),
 		tool_choice: z.unknown().optional(),
 		text: ResponsesTextConfig.optional(),
+		reasoning: reasoningConfig.optional(),
 		store: z.boolean().optional().meta({
 			description:
 				"Persist server-side state for chaining with previous_response_id. Default follows RESPONSES_STORE_DEFAULT (true = OpenAI-compatible). Managed by the gateway; not forwarded upstream.",

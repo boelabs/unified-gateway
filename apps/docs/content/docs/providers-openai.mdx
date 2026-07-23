@@ -13,7 +13,8 @@ description: "Adapter key openai. Credentials, transport, and quirks."
   `text.generate` when a deployment intentionally needs one transport for every public text contract.
 - **Reasoning**: `openai_effort` (`reasoning_effort`) on reasoning-family models. `-chat` suffixed
   variants (e.g. `gpt-5.2-chat`) are non-reasoning — the real API rejects `reasoning_effort` on them,
-  and the catalog declares them without a `reasoning` spec accordingly.
+  and the catalog declares them without a `reasoning` spec accordingly. On GPT-5.6, `xhigh` and `max`
+  are separate tiers and are forwarded unchanged.
 - **Encrypted reasoning round-trips through the client.** On reasoning-capable models the upstream
   call always sets `store: false` and requests `include: ["reasoning.encrypted_content"]`; the
   encrypted state is returned to the client (native `reasoning` items on `/v1/responses`,

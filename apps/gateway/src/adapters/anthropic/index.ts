@@ -312,9 +312,17 @@ function applyReasoning(
 		body.thinking = { type: "disabled" };
 		return;
 	}
+	const budget =
+		spec.budgets?.[effort] ??
+		(effort === "max" ? undefined : DEFAULT_ANTHROPIC_BUDGETS[effort]);
+	if (budget === undefined) {
+		throw new Error(
+			'Anthropic budget-based reasoning requires an explicit budget for effort "max"',
+		);
+	}
 	body.thinking = {
 		type: "enabled",
-		budget_tokens: spec.budgets?.[effort] ?? DEFAULT_ANTHROPIC_BUDGETS[effort],
+		budget_tokens: budget,
 		display,
 	};
 }

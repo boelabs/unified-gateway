@@ -46,6 +46,7 @@ Anthropic's `thinking` block is resolved from the same canonical `reasoning.effo
 other contract. Two distinct kinds exist in the catalog — `anthropic_adaptive` (the model picks its own
 depth, driven by `output_config.effort`) and `anthropic_budget` (an explicit `budget_tokens` per
 level) — see [Reasoning](/docs/reasoning) for the exact wire shape of each and which models use which.
+For adaptive models, `output_config.effort: "max"` stays distinct from `"xhigh"` end to end.
 
 Signed thinking and redacted thinking blocks are opaque provider state. The gateway preserves and
 replays the complete blocks, including signatures and redacted data, but does not fabricate signed

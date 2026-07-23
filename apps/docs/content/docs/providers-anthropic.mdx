@@ -13,7 +13,8 @@ description: "Adapter key anthropic. Credentials, transport, and reasoning kinds
 - **Reasoning**: either `anthropic_adaptive` (the model picks its own depth; the request only carries an
   `output_config.effort` label) or `anthropic_budget` (`thinking: { budget_tokens }`, with a
   provider-side default budget per canonical level if the catalog doesn't override it) — see
-  [Reasoning](/docs/reasoning).
+  [Reasoning](/docs/reasoning). Models that expose both `xhigh` and `max` preserve them as distinct
+  tiers; models such as Opus/Sonnet 4.6 declare `max` without inventing `xhigh` support.
 - Native `/v1/messages` requests pass through with minimal translation; `/v1/chat/completions` and
   `/v1/responses` requests are rendered onto the same canonical reasoning/tool/format machinery as
   every other provider.

@@ -9,14 +9,15 @@
  * Dependency-free: core/canonical, db/schema, and the catalog import it without cycles.
  */
 
-/** Canonical public vocabulary (OpenAI-style). Native labels such as `max` are not exposed. */
+/** Canonical public vocabulary, ordered from disabled to the highest reasoning tier. */
 export type ReasoningEffort =
 	| "none"
 	| "minimal"
 	| "low"
 	| "medium"
 	| "high"
-	| "xhigh";
+	| "xhigh"
+	| "max";
 
 export const EFFORT_ORDER: readonly ReasoningEffort[] = [
 	"none",
@@ -25,6 +26,7 @@ export const EFFORT_ORDER: readonly ReasoningEffort[] = [
 	"medium",
 	"high",
 	"xhigh",
+	"max",
 ] as const;
 
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
@@ -114,7 +116,7 @@ interface BodyFieldReasoningConfig {
 
 /**
  * How a model controls reasoning. `levels` = the effort levels it accepts, as points on the canonical
- * ladder `none < minimal < low < medium < high < xhigh` (any order; sorted when snapping). Whether the
+ * ladder `none < minimal < low < medium < high < xhigh < max` (any order; sorted when snapping). Whether the
  * model can be turned OFF is encoded directly in the ladder: `"none" ∈ levels` means a literal off
  * switch exists; if `"none"` is absent the model always reasons and a request for "none" snaps up to
  * its lowest level (its "floor"). `budgets` only for the *_budget kinds (tokens per level).
@@ -124,9 +126,10 @@ interface BodyFieldReasoningConfig {
  *  - fixed reasoner: `kind: "fixed"`, `levels: ["high"]` -> always reasons, only `high`.
  * `fixed` never emits an upstream parameter: it describes a behavior, not a provider control.
  *
- * `upstreamEffortMap` separates our contract from the native vocabulary. Its keys are ALWAYS the
- * gateway's canonical efforts and its values are the provider's labels, for example `{ xhigh: "max" }`.
- * If there is no entry, the same canonical name is emitted. Non-scalar shapes (`true`,
+ * `upstreamEffortMap` separates our contract from synonymous native vocabulary. Its keys are ALWAYS
+ * the gateway's canonical efforts and its values are the provider's labels. It must not collapse
+ * semantically distinct tiers (in particular, `xhigh` and `max` remain distinct). If there is no entry,
+ * the same canonical name is emitted. Non-scalar shapes (`true`,
  * `{type:"enabled"}`, budgets, etc.) remain the responsibility of the adapter indicated by `kind`.
  */
 export interface ReasoningSpec {
@@ -155,12 +158,12 @@ export function toUpstreamReasoningEffort(
  * treated as special because it is a state, not a degree of reasoning:
  *  - request "none": returns "none" if the model has an off switch (`"none" ∈ levels`); otherwise the
  *    model always reasons, so it snaps UP to the lowest available level (its "floor").
- *  - request of a real effort (minimal..xhigh): chosen among the POSITIVE levels only — the highest one
+ *  - request of a real effort (minimal..max): chosen among the POSITIVE levels only — the highest one
  *    that does not exceed the request, or the floor if the request is below all of them. A positive
  *    request NEVER rounds DOWN into "none": asking for some reasoning never turns it off.
  * This makes `levels` the single source of truth for "can this model disable reasoning, and what does
  * it fall back to" — no separate flag. Returns a level guaranteed ∈ `levels`. Handles non-contiguous
- * support (e.g. low/high/xhigh, without medium) by choosing the nearest one downward.
+ * support (e.g. low/high/max, without medium or xhigh) by choosing the nearest one downward.
  */
 export function snapEffort(
 	requested: ReasoningEffort,
@@ -266,7 +269,7 @@ export interface ReasoningLogInfo {
 /**
  * Builds the reasoning entry for the request log. Because the gateway clamps instead of rejecting, the
  * effective effort can differ from what the client asked for (e.g. "none" -> "minimal" on a Gemini
- * flash, or "xhigh" -> "high"); surfacing both makes that adjustment observable (no surprise costs).
+ * flash, or "max" -> "xhigh"); surfacing both makes that adjustment observable (no surprise costs).
  * Returns undefined when the client did not request an effort or the model does not reason, so the log
  * stays quiet unless there is something to report.
  */
@@ -280,7 +283,11 @@ export function reasoningLogInfo(
 	return { requested, effective, clamped: requested !== effective };
 }
 
-/** Conservative bucketing for contracts that express thinking as a token budget. */
+/**
+ * Conservative bucketing for contracts that express thinking as a token budget. `max` is never
+ * inferred from a generic token count: providers define it as a behavioral tier, not a portable token
+ * threshold, so only an explicit effort request can select it.
+ */
 export function effortFromBudgetTokens(tokens: number): ReasoningEffort {
 	if (tokens <= 0) return "none";
 	if (tokens <= 512) return "minimal";

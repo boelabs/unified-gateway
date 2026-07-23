@@ -1,6 +1,6 @@
 import { fileParserOptionsFromPlugins } from "#contracts/fileParser.ts";
+import { EFFORT_ORDER, summaryForEffort } from "#core/reasoning.ts";
 import { assertNoManagedExtraBodyKeys } from "#core/extraBody.ts";
-import { summaryForEffort } from "#core/reasoning.ts";
 import { GatewayError } from "#core/errors.ts";
 import type { Usage } from "#core/usage.ts";
 import * as z from "zod/v4";
@@ -27,14 +27,7 @@ import type {
 	CanonicalMessage,
 } from "#core/canonical.ts";
 
-const reasoningEffortSchema = z.enum([
-	"none",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-]);
+const reasoningEffortSchema = z.enum(EFFORT_ORDER);
 const reasoningSummarySchema = z.enum(["auto", "none", "concise", "detailed"]);
 const reasoningSchema = z
 	.object({

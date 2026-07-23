@@ -22,10 +22,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["none", "low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
 					},
 					"parameters": {
 						"include_reasoning": true,
@@ -61,10 +58,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["none", "low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
 					},
 					"parameters": {
 						"include_reasoning": true,
@@ -100,10 +94,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["none", "low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "low", "medium", "high", "max"]
 					},
 					"parameters": {
 						"include_reasoning": true,
@@ -140,10 +131,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["none", "low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
 					},
 					"parameters": {
 						"include_reasoning": true,
@@ -179,10 +167,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["none", "low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["none", "low", "medium", "high", "max"]
 					},
 					"parameters": {
 						"include_reasoning": true,
@@ -219,10 +204,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["low", "medium", "high", "xhigh", "max"]
 					},
 					"parameters": {
 						"include_reasoning": true,
@@ -257,10 +239,7 @@
 					},
 					"reasoning": {
 						"kind": "anthropic_adaptive",
-						"levels": ["low", "medium", "high", "xhigh"],
-						"upstreamEffortMap": {
-							"xhigh": "max"
-						}
+						"levels": ["low", "medium", "high", "xhigh", "max"]
 					}
 				}
 			},

@@ -96,6 +96,7 @@ test("OpenAI-style transports declare portable image source capabilities", () =>
 
 test("catalog: current models for each provider exist with their limits", () => {
 	assert.ok(getCatalogEntry("deepseek", "deepseek-v4-flash"));
+	assert.ok(getCatalogEntry("moonshot", "kimi-k3"));
 	assert.ok(getCatalogEntry("moonshot", "kimi-k2.7-code"));
 	assert.ok(getCatalogEntry("zai", "glm-5.2"));
 	assert.ok(getCatalogEntry("minimax", "MiniMax-M3"));
@@ -118,7 +119,7 @@ test("catalog: DeepSeek-V4 includes official pricing and native thinking/effort"
 	assert.deepEqual(
 		flash.reasoning,
 		pro.reasoning,
-		"DeepSeek V4 Flash y Pro comparten efforts",
+		"DeepSeek V4 Flash and Pro share effort levels",
 	);
 
 	// "none" ∈ levels: omitting effort -> the gateway explicitly disables thinking.
@@ -130,16 +131,23 @@ test("catalog: DeepSeek-V4 includes official pricing and native thinking/effort"
 	assert.deepEqual(body.thinking, { type: "disabled" });
 	assert.equal(body.reasoning_effort, undefined);
 
-	const strongest = deepseekAdapter.chat!.buildRequest(
+	const extended = deepseekAdapter.chat!.buildRequest(
 		{ ...req, reasoning: { effort: "xhigh" } },
 		ctx("deepseek-v4-flash", "deepseek", { apiKey: "k" }),
 	);
-	body = JSON.parse(strongest.body!);
+	body = JSON.parse(extended.body!);
 	assert.deepEqual(body.thinking, { type: "enabled" });
+	assert.equal(body.reasoning_effort, "high");
+
+	const strongest = deepseekAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "max" } },
+		ctx("deepseek-v4-flash", "deepseek", { apiKey: "k" }),
+	);
+	body = JSON.parse(strongest.body!);
 	assert.equal(body.reasoning_effort, "max");
 });
 
-test("catalog: GLM-5.2 translates public thinking/xhigh to upstream max", () => {
+test("catalog: GLM-5.2 keeps xhigh distinct from native max", () => {
 	const glm = resolveModelMetadata("zai", "glm-5.2");
 	assert.equal(glm.maxInputTokens, 1_000_000);
 	assert.equal(glm.capabilities.structuredOutputs, true);
@@ -150,12 +158,28 @@ test("catalog: GLM-5.2 translates public thinking/xhigh to upstream max", () => 
 	);
 	const body = JSON.parse(r.body!);
 	assert.deepEqual(body.thinking, { type: "enabled" });
-	assert.equal(body.reasoning_effort, "max");
+	assert.equal(body.reasoning_effort, "high");
+
+	const maximum = zaiAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "max" } },
+		ctx("glm-5.2", "zai", { apiKey: "k" }),
+	);
+	const maximumBody = JSON.parse(maximum.body!);
+	assert.deepEqual(maximumBody.thinking, { type: "enabled" });
+	assert.equal(maximumBody.reasoning_effort, "max");
 });
 
-test("catalog: Kimi K2.6/K2.7 model native thinking", () => {
+test("catalog: Kimi K3 and K2.x model-native thinking", () => {
+	const k3 = resolveModelMetadata("moonshot", "kimi-k3");
 	const k26 = resolveModelMetadata("moonshot", "kimi-k2.6");
 	const k27 = resolveModelMetadata("moonshot", "kimi-k2.7-code");
+	assert.equal(k3.maxInputTokens, 1_048_576);
+	assert.equal(k3.maxOutputTokens, 1_048_576);
+	assert.equal(k3.pricing?.inputCentsPerMTokens, 300);
+	assert.deepEqual(k3.reasoning, {
+		kind: "openai_effort",
+		levels: ["max"],
+	});
 	assert.equal(k26.capabilities.structuredOutputs, true);
 	assert.equal(k26.maxOutputTokens, 262144);
 	assert.equal(k26.reasoning?.kind, "openai_body");
@@ -172,6 +196,14 @@ test("catalog: Kimi K2.6/K2.7 model native thinking", () => {
 		ctx("kimi-k2.6", "moonshot", { apiKey: "k" }),
 	);
 	assert.deepEqual(JSON.parse(on.body!).thinking, { type: "enabled" });
+
+	const k3Request = moonshotAdapter.chat!.buildRequest(
+		req,
+		ctx("kimi-k3", "moonshot", { apiKey: "k" }),
+	);
+	const k3Body = JSON.parse(k3Request.body!);
+	assert.equal(k3Body.thinking, undefined);
+	assert.equal(k3Body.reasoning_effort, "max");
 });
 
 test("deprecated DeepSeek aliases preserve compatibility modes", () => {

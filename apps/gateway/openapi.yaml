@@ -1282,6 +1282,37 @@ components:
         tool_choice: {}
         response_format:
           $ref: "#/components/schemas/ChatResponseFormat"
+        reasoning_effort:
+          type: string
+          enum:
+            - none
+            - minimal
+            - low
+            - medium
+            - high
+            - xhigh
+            - max
+        reasoning:
+          type: object
+          properties:
+            effort:
+              type: string
+              enum:
+                - none
+                - minimal
+                - low
+                - medium
+                - high
+                - xhigh
+                - max
+            summary:
+              type: string
+              enum:
+                - auto
+                - none
+                - concise
+                - detailed
+          additionalProperties: true
         plugins:
           maxItems: 1
           type: array
@@ -1432,6 +1463,27 @@ components:
         tool_choice: {}
         text:
           $ref: "#/components/schemas/ResponsesTextConfig"
+        reasoning:
+          type: object
+          properties:
+            effort:
+              type: string
+              enum:
+                - none
+                - minimal
+                - low
+                - medium
+                - high
+                - xhigh
+                - max
+            summary:
+              type: string
+              enum:
+                - auto
+                - none
+                - concise
+                - detailed
+          additionalProperties: true
         store:
           description: Persist server-side state for chaining with previous_response_id. Default follows RESPONSES_STORE_DEFAULT (true = OpenAI-compatible). Managed by the gateway; not forwarded upstream.
           type: boolean

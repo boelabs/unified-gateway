@@ -162,7 +162,15 @@ test("capabilities: effort none is allowed if the model can disable reasoning", 
 
 test("capabilities: a reasoner accepts any in/out-of-range effort (clamped, never rejected)", () => {
 	for (const meta of [mandatoryReasoner, optionalReasoner, fixedReasoner]) {
-		for (const effort of ["none", "minimal", "low", "high", "xhigh"] as const) {
+		for (const effort of [
+			"none",
+			"minimal",
+			"low",
+			"medium",
+			"high",
+			"xhigh",
+			"max",
+		] as const) {
 			assert.doesNotThrow(() =>
 				assertTextRequestSupported({ ...baseReq, reasoning: { effort } }, meta),
 			);

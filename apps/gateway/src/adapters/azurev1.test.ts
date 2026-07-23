@@ -103,17 +103,17 @@ test("azurefoundry: uses modern Chat Completions and max_completion_tokens", () 
 	assert.equal(body.max_tokens, undefined);
 });
 
-test("azurefoundry: DeepSeek V4 translates none/high/xhigh to none/high/max", () => {
+test("azurefoundry: DeepSeek V4 keeps xhigh distinct from native max", () => {
 	const reasoning = {
 		kind: "openai_effort" as const,
-		levels: ["none", "high", "xhigh"] as ("high" | "xhigh")[],
-		upstreamEffortMap: { xhigh: "max" },
+		levels: ["none", "high", "max"] as ("none" | "high" | "max")[],
 	};
 
 	for (const [effort, upstream] of [
 		["none", "none"],
 		["high", "high"],
-		["xhigh", "max"],
+		["xhigh", "high"],
+		["max", "max"],
 	] as const) {
 		const built = azurefoundryAdapter.chat!.buildRequest(
 			{ ...request, reasoning: { effort } },

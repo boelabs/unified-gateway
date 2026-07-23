@@ -610,6 +610,38 @@
 				"cacheWriteCentsPerMTokens": 37.5
 			}
 		},
+		"gemini-3.6-flash": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1048576,
+					"maxOutputTokens": 65536,
+					"reasoning": {
+						"kind": "gemini_level",
+						"levels": ["minimal", "low", "medium", "high"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 150,
+				"outputCentsPerMTokens": 750,
+				"cacheReadCentsPerMTokens": 15
+			}
+		},
 		"gemini-3.5-flash": {
 			"operations": {
 				"text.generate": {
@@ -645,6 +677,38 @@
 				"outputCentsPerMTokens": 900,
 				"cacheReadCentsPerMTokens": 15,
 				"cacheWriteCentsPerMTokens": 8.333333
+			}
+		},
+		"gemini-3.5-flash-lite": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"maxInputTokens": 1048576,
+					"maxOutputTokens": 65536,
+					"reasoning": {
+						"kind": "gemini_level",
+						"levels": ["minimal", "low", "medium", "high"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 30,
+				"outputCentsPerMTokens": 250,
+				"cacheReadCentsPerMTokens": 3
 			}
 		},
 		"gemini-3-flash-preview": {

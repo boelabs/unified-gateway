@@ -82,7 +82,7 @@ test("request: rejects empty messages and invalid role", () => {
 	);
 });
 
-test("request: max is upstream vocabulary; the maximum public effort is xhigh", () => {
+test("request: xhigh and max are distinct public reasoning efforts", () => {
 	const base = { model: "g", messages: [{ role: "user", content: "x" }] };
 	assert.equal(
 		chatRequestSchema.safeParse({ ...base, reasoning_effort: "xhigh" }).success,
@@ -90,7 +90,7 @@ test("request: max is upstream vocabulary; the maximum public effort is xhigh", 
 	);
 	assert.equal(
 		chatRequestSchema.safeParse({ ...base, reasoning_effort: "max" }).success,
-		false,
+		true,
 	);
 });
 
