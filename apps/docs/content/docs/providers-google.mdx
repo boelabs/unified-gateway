@@ -1,6 +1,6 @@
 ---
 title: "Google AI Studio"
-description: "Adapter key googleaistudio. Tool schema subset, embeddings routes, and image thinking."
+description: "Adapter key googleaistudio. Strict tools, embeddings routes, and image thinking."
 ---
 
 ```json
@@ -10,10 +10,14 @@ description: "Adapter key googleaistudio. Tool schema subset, embeddings routes,
 - **Credentials**: `apiKey` only.
 - **Default transport**: `generateContent` for text and image operations, `generate_videos` for Veo
   video generation, and `embedContent`/`batchEmbedContents` for embeddings.
-- **Tool schemas are translated, not passed through.** Gemini's function `parameters` accept an OpenAPI
-  *subset*, not full JSON Schema — the adapter runs every tool's `parameters` through its own translator
-  before sending it upstream. Constructs outside that subset (e.g. some `oneOf`/`$ref` combinations) may
-  not translate cleanly; keep tool schemas simple if you see unexpected tool-call failures.
+- **Tool schemas are translated, not passed through.** Non-strict tools and pre-Gemini-3 models use
+  Gemini's OpenAPI-shaped `parameters` field and its narrower schema translator. On Gemini 3 and later,
+  a request containing an OpenAI `strict: true` function instead uses `parametersJsonSchema` for that
+  function and enables Gemini's schema-constrained `VALIDATED` mode when the tool choice remains
+  optional. Required or named tool choices keep `ANY`, which already constrains arguments to the
+  function schema. This is generation-time enforcement; the gateway does not coerce arguments or retry
+  a hidden repair request. Constructs outside Google's supported schema subset may still require a
+  simpler tool definition.
 - **Reasoning**: `gemini_level` (discrete `thinkingLevel`, with `xhigh` mapped to `high`) or
   `gemini_budget` (raw `thinkingBudget` tokens), per model — see [Reasoning](/docs/reasoning).
 - **Thought signatures round-trip statelessly inside the tool call id.** When Gemini returns a

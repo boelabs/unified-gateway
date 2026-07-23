@@ -244,6 +244,165 @@ test("google.buildRequest: tool parameters are translated to Gemini's schema sub
 	});
 });
 
+test("google.buildRequest: strict Gemini 3 tools use VALIDATED JSON Schema", () => {
+	const schema = {
+		$schema: "http://json-schema.org/draft-07/schema#",
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			queries: {
+				type: "array",
+				items: {
+					type: "object",
+					additionalProperties: false,
+					properties: { query: { type: "string" } },
+					required: ["query"],
+				},
+			},
+		},
+		required: ["queries"],
+	};
+	const choices: Array<CanonicalChatRequest["toolChoice"] | undefined> = [
+		undefined,
+		"auto",
+		{ allowedTools: ["search_web"], mode: "auto" },
+	];
+	for (const toolChoice of choices) {
+		const body = JSON.parse(
+			googleAdapter.chat!.buildRequest(
+				{
+					...req,
+					tools: [
+						{
+							name: "search_web",
+							strict: true,
+							parameters: schema,
+						},
+						{
+							name: "get_clock",
+							strict: false,
+							parameters: {
+								type: "object",
+								additionalProperties: false,
+							},
+						},
+					],
+					...(toolChoice !== undefined ? { toolChoice } : {}),
+				},
+				geminiLevelCtx,
+			).body!,
+		);
+		const declaration = body.tools[0].functionDeclarations[0];
+		assert.equal(declaration.parameters, undefined);
+		assert.deepEqual(declaration.parametersJsonSchema, {
+			type: "object",
+			additionalProperties: false,
+			properties: {
+				queries: {
+					type: "array",
+					items: {
+						type: "object",
+						additionalProperties: false,
+						properties: { query: { type: "string" } },
+						required: ["query"],
+					},
+				},
+			},
+			required: ["queries"],
+		});
+		assert.equal(body.toolConfig.functionCallingConfig.mode, "VALIDATED");
+		const nonStrictDeclaration = body.tools[0].functionDeclarations[1];
+		assert.deepEqual(nonStrictDeclaration.parameters, { type: "object" });
+		assert.equal(nonStrictDeclaration.parametersJsonSchema, undefined);
+		if (typeof toolChoice === "object")
+			assert.deepEqual(
+				body.toolConfig.functionCallingConfig.allowedFunctionNames,
+				["search_web"],
+			);
+	}
+});
+
+test("google.buildRequest: strict mode preserves required tool-choice semantics", () => {
+	const choices: NonNullable<CanonicalChatRequest["toolChoice"]>[] = [
+		"required",
+		{ name: "search_web" },
+		{ allowedTools: ["search_web"], mode: "required" },
+	];
+	for (const toolChoice of choices) {
+		const body = JSON.parse(
+			googleAdapter.chat!.buildRequest(
+				{
+					...req,
+					tools: [
+						{
+							name: "search_web",
+							strict: true,
+							parameters: { type: "object" },
+						},
+					],
+					toolChoice,
+				},
+				geminiLevelCtx,
+			).body!,
+		);
+		assert.equal(body.toolConfig.functionCallingConfig.mode, "ANY");
+	}
+});
+
+test("google.buildRequest: non-strict and pre-Gemini-3 requests keep their legacy wire", () => {
+	for (const [context, strict] of [
+		[geminiLevelCtx, false],
+		[ctx, true],
+		[{ ...ctx, upstreamModel: "gemma-4-26b-a4b-it" }, true],
+	] as const) {
+		const body = JSON.parse(
+			googleAdapter.chat!.buildRequest(
+				{
+					...req,
+					tools: [
+						{
+							name: "search_web",
+							strict,
+							parameters: {
+								type: "object",
+								additionalProperties: false,
+							},
+						},
+					],
+					toolChoice: "auto",
+				},
+				context,
+			).body!,
+		);
+		const declaration = body.tools[0].functionDeclarations[0];
+		assert.deepEqual(declaration.parameters, { type: "object" });
+		assert.equal(declaration.parametersJsonSchema, undefined);
+		assert.equal(body.toolConfig.functionCallingConfig.mode, "AUTO");
+	}
+
+	for (const [context, strict] of [
+		[geminiLevelCtx, false],
+		[ctx, true],
+	] as const) {
+		const body = JSON.parse(
+			googleAdapter.chat!.buildRequest(
+				{
+					...req,
+					tools: [
+						{
+							name: "search_web",
+							strict,
+							parameters: { type: "object" },
+						},
+					],
+				},
+				context,
+			).body!,
+		);
+		assert.equal(body.toolConfig, undefined);
+	}
+});
+
 test("google.buildRequest: replays functionCall id and thought signature", () => {
 	const body = JSON.parse(
 		googleAdapter.chat!.buildRequest(

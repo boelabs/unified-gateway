@@ -1,4 +1,4 @@
-import { toGeminiSchema } from "./schema.ts";
+import { toGeminiSchema, toGeminiJsonSchema } from "./schema.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -138,4 +138,63 @@ test("toGeminiSchema: preserves the supported constraint fields", () => {
 		required: ["name"],
 	};
 	assert.deepEqual(toGeminiSchema(schema), schema);
+});
+
+test("toGeminiJsonSchema: preserves strict object and tuple constraints", () => {
+	const out = toGeminiJsonSchema({
+		$schema: "http://json-schema.org/draft-07/schema#",
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			queries: {
+				type: "array",
+				prefixItems: [{ type: "string" }],
+				items: {
+					type: "object",
+					additionalProperties: false,
+					properties: { query: { type: "string" } },
+					required: ["query"],
+				},
+			},
+		},
+		required: ["queries"],
+	});
+	assert.deepEqual(out, {
+		type: "object",
+		additionalProperties: false,
+		properties: {
+			queries: {
+				type: "array",
+				prefixItems: [{ type: "string" }],
+				items: {
+					type: "object",
+					additionalProperties: false,
+					properties: { query: { type: "string" } },
+					required: ["query"],
+				},
+			},
+		},
+		required: ["queries"],
+	});
+});
+
+test("toGeminiJsonSchema: keeps JSON Schema nullability and formats", () => {
+	assert.deepEqual(
+		toGeminiJsonSchema({
+			type: "object",
+			properties: {
+				fromUnion: { type: ["string", "null"] },
+				fromNullable: { type: "integer", nullable: true },
+				date: { type: "string", format: "date" },
+			},
+		}),
+		{
+			type: "object",
+			properties: {
+				fromUnion: { type: ["string", "null"] },
+				fromNullable: { type: ["integer", "null"] },
+				date: { type: "string", format: "date" },
+			},
+		},
+	);
 });
