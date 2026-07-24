@@ -448,6 +448,50 @@ test("google.buildRequest: replays functionCall id and thought signature", () =>
 	assert.deepEqual(functionResponse.response, { loaded: true });
 });
 
+test("google.buildRequest: wraps non-object JSON tool outputs in a Struct", () => {
+	const cases: [string, unknown][] = [
+		['[{"code":"too_big"}]', [{ code: "too_big" }]],
+		["null", null],
+		['"ok"', "ok"],
+		["42", 42],
+		["true", true],
+	];
+
+	for (const [content, output] of cases) {
+		const body = JSON.parse(
+			googleAdapter.chat!.buildRequest(
+				{
+					...req,
+					messages: [
+						{ role: "user", content: "use the tool" },
+						{
+							role: "assistant",
+							content: null,
+							toolCalls: [
+								{
+									id: "function-call-1",
+									name: "load_skill",
+									arguments: "{}",
+								},
+							],
+						},
+						{
+							role: "tool",
+							toolCallId: "function-call-1",
+							content,
+						},
+					],
+				},
+				ctx,
+			).body!,
+		);
+
+		assert.deepEqual(body.contents[2].parts[0].functionResponse.response, {
+			output,
+		});
+	}
+});
+
 test("google.buildRequest: Gemini 3 recovers unsigned Responses history", async () => {
 	const { responsesRequestSchema } = await import(
 		"#contracts/openai/responses.ts"
