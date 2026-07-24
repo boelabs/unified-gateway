@@ -327,9 +327,11 @@ function buildGeminiBody(
 				typeof m.content === "string"
 					? m.content
 					: JSON.stringify(m.content ?? "");
-			let response: unknown;
+			let response: Record<string, unknown>;
 			try {
-				response = JSON.parse(text);
+				const parsed: unknown = JSON.parse(text);
+				// Gemini's FunctionResponse.response is a protobuf Struct, so its root must be an object.
+				response = plainRecord(parsed) ?? { output: parsed };
 			} catch {
 				response = { result: text };
 			}
