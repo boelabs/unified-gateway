@@ -16,6 +16,11 @@ const sampleModel: VercelModel = {
 	max_tokens: 64_000,
 	type: "language",
 	tags: ["file-input", "tool-use", "reasoning", "vision"],
+	modalities: {
+		input: ["text", "image", "pdf"],
+		output: ["text"],
+	},
+	supported_parameters: ["max_tokens", "tools", "reasoning"],
 	reasoning_options: [
 		{ type: "toggle" },
 		{
@@ -55,7 +60,13 @@ test("normalizeModel: model-level pricing uses input/output field names, convert
 		endpoints: [sampleEndpoint],
 	});
 	assert.equal(model.id, "google/gemini-3.1-pro-preview");
-	assert.deepEqual(model.inputModalities, ["text", "image"]);
+	assert.deepEqual(model.inputModalities, ["text", "image", "pdf"]);
+	assert.deepEqual(model.outputModalities, ["text"]);
+	assert.deepEqual(model.supportedParameters, [
+		"max_tokens",
+		"tools",
+		"reasoning",
+	]);
 	assert.equal(model.contextWindow, 1_000_000);
 	assert.equal(model.maxTokens, 64_000);
 	assert.deepEqual(model.reasoningOptions, [
@@ -95,7 +106,12 @@ test("normalizeEndpoint: a non-zero status is inactive", () => {
 });
 
 test("normalizeModel: missing architecture/endpoints degrades gracefully to empty arrays", () => {
-	const model = normalizeModel(sampleModel, undefined);
+	const {
+		modalities: _modalities,
+		supported_parameters: _supportedParameters,
+		...legacyModel
+	} = sampleModel;
+	const model = normalizeModel(legacyModel, undefined);
 	assert.deepEqual(model.inputModalities, []);
 	assert.deepEqual(model.outputModalities, []);
 	assert.deepEqual(model.endpoints, []);
