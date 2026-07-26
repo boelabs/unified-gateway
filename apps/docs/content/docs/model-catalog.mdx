@@ -14,6 +14,11 @@ The model catalog lives as JSON per provider and is loaded into memory at startu
 - `src/adapters/minimax/catalog.json`
 - `src/adapters/azureopenai/catalog.json`
 - `src/adapters/azurefoundry/catalog.json`
+- `src/adapters/vercel/catalog.json`
+
+The Vercel catalog document is intentionally empty: Vercel's `creator/model` ids delegate to the
+matching reviewed first-party catalog at runtime. Models from creators without a built-in adapter use
+an inline `catalogEntry` on their deployment.
 
 Each file declares `$schema: "../../../schemas/model-catalog.schema.json"` for autocompletion and
 validation in IDEs that support JSON Schema.

@@ -38,6 +38,10 @@ const catalogs = [
 		adapterKey: "azurefoundry",
 		url: new URL("../src/adapters/azurefoundry/catalog.json", import.meta.url),
 	},
+	{
+		adapterKey: "vercel",
+		url: new URL("../src/adapters/vercel/catalog.json", import.meta.url),
+	},
 ] as const;
 
 let total = 0;

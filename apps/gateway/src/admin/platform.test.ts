@@ -65,6 +65,7 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 		["azureopenai", "embeddings"],
 		["googleaistudio", "embed_content"],
 		["openaicompatible", "embeddings"],
+		["vercel", "embeddings"],
 	] as const;
 	for (const [adapterId, expectedDefault] of expectedAdapters) {
 		const adapter = body.data.adapters.find((item) => item.id === adapterId);

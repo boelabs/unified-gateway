@@ -54,6 +54,7 @@
 		"providers-minimax",
 		"providers-moonshot",
 		"providers-zai",
+		"providers-vercel",
 		"providers-openai-compatible",
 		"---Extend---",
 		"extensions",

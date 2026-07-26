@@ -14,7 +14,7 @@ models.
 
 - Exact OpenAI-compatible public contracts for Chat Completions, Responses, Images, Embeddings, Audio Transcriptions, and Models.
 - Anthropic-compatible `/v1/messages` rendering over the same canonical core.
-- Provider adapters for OpenAI, OpenAI-compatible APIs, Google AI Studio, Anthropic, Azure OpenAI, Azure Foundry, DeepSeek, MiniMax, Moonshot, and ZAI.
+- Provider adapters for OpenAI, OpenAI-compatible APIs, Google AI Studio, Anthropic, Azure OpenAI, Azure Foundry, Vercel AI Gateway, DeepSeek, MiniMax, Moonshot, and ZAI.
 - Public model aliases, weighted pools, cooldowns, retries, dedicated fallbacks, and per-operation transports.
 - Master key plus virtual keys with model scopes, RPM/TPM limits, budgets, and rate-limit headers.
 - Opt-in response cache, request logs, cost accounting, OpenTelemetry metrics/traces, daily Postgres partitions, and graceful shutdown.

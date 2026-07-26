@@ -40,6 +40,10 @@ const catalogs = [
 		adapterKey: "azurefoundry",
 		url: new URL("../adapters/azurefoundry/catalog.json", import.meta.url),
 	},
+	{
+		adapterKey: "vercel",
+		url: new URL("../adapters/vercel/catalog.json", import.meta.url),
+	},
 ] as const;
 
 test("JSON provider catalogs load and match the runtime registry", () => {

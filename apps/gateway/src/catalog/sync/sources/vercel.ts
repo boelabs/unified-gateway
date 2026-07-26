@@ -2,6 +2,7 @@ import { pricingFromDollarStrings, type RawDollarPricing } from "../pricing.ts";
 import { fetchJsonWithRetry, isFetchComplete, boundedMap } from "../fetch.ts";
 
 import type {
+	SourceReasoningOption,
 	SourceFetchResult,
 	SourceEndpoint,
 	CatalogSource,
@@ -23,6 +24,12 @@ export interface VercelModel {
 	max_tokens?: number;
 	type?: "language" | "embedding" | "reranking" | "image" | "video";
 	tags?: string[];
+	reasoning_options?: Array<{
+		type: "toggle" | "effort" | "budget_tokens";
+		values?: string[];
+		min?: number;
+		max?: number;
+	}>;
 	pricing?: VercelModelPricing;
 }
 
@@ -99,11 +106,29 @@ function normalizeModelPricing(
 	});
 }
 
+function normalizeReasoningOptions(
+	raw: VercelModel["reasoning_options"],
+): SourceReasoningOption[] | undefined {
+	if (!raw || raw.length === 0) return undefined;
+	const options: SourceReasoningOption[] = raw.map((option) => {
+		if (option.type === "toggle") return { type: "toggle" };
+		if (option.type === "effort")
+			return { type: "effort", values: [...(option.values ?? [])] };
+		return {
+			type: "budget_tokens",
+			...(option.min !== undefined ? { min: option.min } : {}),
+			...(option.max !== undefined ? { max: option.max } : {}),
+		};
+	});
+	return options.length > 0 ? options : undefined;
+}
+
 function normalizeModel(
 	model: VercelModel,
 	detail: VercelModelEndpointsResponse["data"],
 ): SourceModel {
 	const pricing = normalizeModelPricing(model.pricing);
+	const reasoningOptions = normalizeReasoningOptions(model.reasoning_options);
 	return {
 		source: "vercel-ai-gateway",
 		id: model.id,
@@ -115,6 +140,7 @@ function normalizeModel(
 			: {}),
 		...(model.max_tokens != null ? { maxTokens: model.max_tokens } : {}),
 		...(pricing ? { pricing } : {}),
+		...(reasoningOptions ? { reasoningOptions } : {}),
 		// Vercel's model-level `tags` are capability tags (e.g. "reasoning", "tool-use"), not canonical
 		// parameter names - only the per-endpoint `supported_parameters` carries the OpenAI-style vocabulary
 		// our catalog uses, so the model-level fallback here is intentionally omitted.
