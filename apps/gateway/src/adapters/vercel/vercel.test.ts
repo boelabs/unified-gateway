@@ -56,22 +56,14 @@ test("vercel registers the operations supported by the existing core", () => {
 	assert.equal(vercelAdapter.videoGeneration, undefined);
 });
 
-test("vercel delegates creator/model metadata to reviewed provider catalogs", () => {
-	assert.equal(
+test("vercel owns creator/model metadata from its public catalog", () => {
+	assert.notEqual(
 		getCatalogEntry("vercel", "openai/gpt-5.6-sol"),
 		getCatalogEntry("openai", "gpt-5.6-sol"),
 	);
-	assert.equal(
+	assert.notEqual(
 		getCatalogEntry("vercel", "anthropic/claude-opus-5"),
 		getCatalogEntry("anthropic", "claude-opus-5"),
-	);
-	assert.equal(
-		getCatalogEntry("vercel", "google/gemini-3.1-pro-preview"),
-		getCatalogEntry("googleaistudio", "gemini-3.1-pro-preview"),
-	);
-	assert.equal(
-		getCatalogEntry("vercel", "minimax/minimax-m2.5"),
-		getCatalogEntry("minimax", "MiniMax-M2.5"),
 	);
 	assert.equal(getCatalogEntry("vercel", "unknown/model"), undefined);
 
@@ -86,7 +78,20 @@ test("vercel delegates creator/model metadata to reviewed provider catalogs", ()
 	});
 
 	const anthropic = resolveModelMetadata("vercel", "anthropic/claude-opus-5");
-	assert.equal(anthropic.reasoning?.kind, "anthropic_adaptive");
+	assert.deepEqual(anthropic.reasoning, {
+		kind: "fixed",
+		levels: ["high"],
+	});
+
+	const minimax = resolveModelMetadata("vercel", "minimax/minimax-m3");
+	assert.equal(minimax.maxOutputTokens, 1_000_000);
+	assert.deepEqual(minimax.reasoning, {
+		kind: "openai_effort",
+		levels: ["none", "high"],
+	});
+	assert.equal(minimax.pricing?.tiers?.[0]?.aboveInputTokens, 512_000);
+	assert.equal(minimax.pricing?.tiers?.[0]?.inputCentsPerMTokens, 120);
+	assert.equal(minimax.pricing?.tiers?.[0]?.outputCentsPerMTokens, 480);
 
 	const withoutMax = resolveModelMetadata("vercel", "openai/gpt-5.5");
 	assert.deepEqual(reasoningLogInfo({ effort: "max" }, withoutMax.reasoning), {
@@ -121,7 +126,10 @@ test("vercel Responses emits native Anthropic and Bedrock reasoning for fallback
 				},
 			},
 		},
-		ctx("anthropic/claude-opus-5", "responses"),
+		ctxWithReasoning("anthropic/claude-opus-5", "responses", {
+			kind: "anthropic_adaptive",
+			levels: ["none", "low", "medium", "high", "xhigh", "max"],
+		}),
 	);
 	const body = JSON.parse(request.body!);
 	assert.equal(body.reasoning, undefined);
@@ -142,7 +150,10 @@ test("vercel Responses emits native Anthropic and Bedrock reasoning for fallback
 
 	const chatRequest = vercelAdapter.chat!.buildRequest(
 		{ ...baseRequest, reasoning: { effort: "max" } },
-		ctx("anthropic/claude-opus-5", "chat_completions"),
+		ctxWithReasoning("anthropic/claude-opus-5", "chat_completions", {
+			kind: "anthropic_adaptive",
+			levels: ["none", "low", "medium", "high", "xhigh", "max"],
+		}),
 	);
 	const chatBody = JSON.parse(chatRequest.body!);
 	assert.equal(chatBody.reasoning, undefined);
@@ -188,7 +199,10 @@ test("vercel Chat emits its normalized reasoning object without aliasing max", (
 test("vercel maps Gemini levels and budgets into both Google execution namespaces", () => {
 	const levelRequest = vercelAdapter.chat!.buildRequest(
 		{ ...baseRequest, reasoning: { effort: "max" } },
-		ctx("google/gemini-3.1-pro-preview", "responses"),
+		ctxWithReasoning("google/gemini-3.1-pro-preview", "responses", {
+			kind: "gemini_level",
+			levels: ["low", "medium", "high"],
+		}),
 	);
 	const levelBody = JSON.parse(levelRequest.body!);
 	assert.equal(levelBody.reasoning, undefined);
@@ -203,7 +217,11 @@ test("vercel maps Gemini levels and budgets into both Google execution namespace
 
 	const budgetRequest = vercelAdapter.chat!.buildRequest(
 		{ ...baseRequest, reasoning: { effort: "none" } },
-		ctx("google/gemini-2.5-flash", "chat_completions"),
+		ctxWithReasoning("google/gemini-2.5-flash", "chat_completions", {
+			kind: "gemini_budget",
+			levels: ["none", "high"],
+			budgets: { high: 24_576 },
+		}),
 	);
 	const budgetBody = JSON.parse(budgetRequest.body!);
 	assert.equal(budgetBody.reasoning, undefined);
@@ -251,7 +269,10 @@ test("vercel rejects collisions with adapter-managed provider reasoning", () => 
 						},
 					},
 				},
-				ctx("anthropic/claude-opus-5", "responses"),
+				ctxWithReasoning("anthropic/claude-opus-5", "responses", {
+					kind: "anthropic_adaptive",
+					levels: ["none", "low", "medium", "high", "xhigh", "max"],
+				}),
 			),
 		(error: unknown) =>
 			error instanceof Error &&

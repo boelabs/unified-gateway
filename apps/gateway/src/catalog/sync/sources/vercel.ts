@@ -9,12 +9,23 @@ import type {
 	SourceModel,
 } from "../types.ts";
 
+export interface VercelPricingTier {
+	cost: string;
+	min: number;
+	max?: number;
+}
+
 /** Vercel's model-LEVEL pricing uses input/output, unlike the endpoint-level prompt/completion below. */
-interface VercelModelPricing {
+export interface VercelModelPricing {
 	input?: string;
+	input_tiers?: VercelPricingTier[];
 	output?: string;
+	output_tiers?: VercelPricingTier[];
 	input_cache_read?: string;
+	input_cache_read_tiers?: VercelPricingTier[];
 	input_cache_write?: string;
+	input_cache_write_tiers?: VercelPricingTier[];
+	image?: string;
 }
 
 export interface VercelModel {
@@ -22,8 +33,21 @@ export interface VercelModel {
 	name?: string;
 	context_window?: number;
 	max_tokens?: number;
-	type?: "language" | "embedding" | "reranking" | "image" | "video";
+	type?:
+		| "language"
+		| "embedding"
+		| "reranking"
+		| "image"
+		| "video"
+		| "realtime"
+		| "speech"
+		| "transcription";
 	tags?: string[];
+	modalities?: {
+		input?: string[];
+		output?: string[];
+	};
+	supported_parameters?: string[];
 	reasoning_options?: Array<{
 		type: "toggle" | "effort" | "budget_tokens";
 		values?: string[];
@@ -55,6 +79,13 @@ interface VercelModelEndpointsResponse {
 
 const BASE_URL = "https://ai-gateway.vercel.sh";
 const CONCURRENCY = 6;
+
+export async function fetchVercelModels(): Promise<VercelModel[]> {
+	const response = await fetchJsonWithRetry<{ data: VercelModel[] }>(
+		`${BASE_URL}/v1/models`,
+	);
+	return response.data;
+}
 
 function endpointsPath(modelId: string): string {
 	const slash = modelId.indexOf("/");
@@ -133,13 +164,18 @@ function normalizeModel(
 		source: "vercel-ai-gateway",
 		id: model.id,
 		...(model.name !== undefined ? { name: model.name } : {}),
-		inputModalities: detail?.architecture?.input_modalities ?? [],
-		outputModalities: detail?.architecture?.output_modalities ?? [],
+		inputModalities:
+			model.modalities?.input ?? detail?.architecture?.input_modalities ?? [],
+		outputModalities:
+			model.modalities?.output ?? detail?.architecture?.output_modalities ?? [],
 		...(model.context_window != null
 			? { contextWindow: model.context_window }
 			: {}),
 		...(model.max_tokens != null ? { maxTokens: model.max_tokens } : {}),
 		...(pricing ? { pricing } : {}),
+		...(model.supported_parameters
+			? { supportedParameters: model.supported_parameters }
+			: {}),
 		...(reasoningOptions ? { reasoningOptions } : {}),
 		// Vercel's model-level `tags` are capability tags (e.g. "reasoning", "tool-use"), not canonical
 		// parameter names - only the per-endpoint `supported_parameters` carries the OpenAI-style vocabulary
@@ -153,13 +189,10 @@ export const vercelSource: CatalogSource = {
 	label: "Vercel AI Gateway",
 
 	async fetchModels(): Promise<SourceFetchResult> {
-		const listResponse = await fetchJsonWithRetry<{ data: VercelModel[] }>(
-			`${BASE_URL}/v1/models`,
-		);
+		const models = await fetchVercelModels();
 		// No `type` filtering here: like the OpenRouter source, every model is normalized uniformly and
 		// which operations apply (text/image/...) is decided downstream from modalities, not from this
 		// source's own type label - keeps both existence sources symmetric.
-		const models = listResponse.data;
 		const { succeeded, failed } = await boundedMap(
 			models,
 			CONCURRENCY,

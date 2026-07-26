@@ -14,6 +14,7 @@ interface CatalogProviderInfo {
 }
 
 export interface CatalogDocument {
+	$schema?: string;
 	schemaVersion: 1;
 	provider: CatalogProviderInfo;
 	models: Record<string, CatalogEntry>;
@@ -376,6 +377,8 @@ function validateDocument(
 	opts: LoadCatalogOptions,
 ): asserts value is CatalogDocument {
 	if (!isRecord(value)) fail(path, "the root must be an object");
+	if (value.$schema !== undefined)
+		assertString(value.$schema, `${path}.$schema`);
 	if (value.schemaVersion !== 1) fail(`${path}.schemaVersion`, "must be 1");
 	if (!isRecord(value.provider)) fail(`${path}.provider`, "must be an object");
 	assertString(value.provider.id, `${path}.provider.id`);

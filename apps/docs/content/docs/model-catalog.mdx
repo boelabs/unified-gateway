@@ -16,9 +16,9 @@ The model catalog lives as JSON per provider and is loaded into memory at startu
 - `src/adapters/azurefoundry/catalog.json`
 - `src/adapters/vercel/catalog.json`
 
-The Vercel catalog document is intentionally empty: Vercel's `creator/model` ids delegate to the
-matching reviewed first-party catalog at runtime. Models from creators without a built-in adapter use
-an inline `catalogEntry` on their deployment.
+The Vercel catalog is an owned snapshot of Vercel AI Gateway's public model API. It deliberately does
+not delegate `creator/model` ids to first-party catalogs: Vercel can expose different models, limits,
+reasoning controls, and pricing tiers from the creator's direct API.
 
 Each file declares `$schema: "../../../schemas/model-catalog.schema.json"` for autocompletion and
 validation in IDEs that support JSON Schema.
@@ -219,3 +219,39 @@ To validate all catalogs:
 ```bash
 bun run --filter @boelabs/unified-gateway catalog:validate
 ```
+
+## Catalog sync
+
+The cross-provider sync (`catalog:sync` and `catalog:sync:verify`) compares Vercel AI Gateway,
+OpenRouter, and models.dev. It is report-only: it writes under
+`apps/gateway/.source/catalog-sync/` and never modifies a provider catalog. Use it to investigate
+new models and conflicts before making reviewed, provider-specific edits.
+
+### Vercel-owned sync
+
+Vercel is the exception because its public, unauthenticated `/v1/models` response is the authoritative
+source for the Vercel adapter itself. Its dedicated sync is deterministic and supports three modes:
+
+```bash
+# Draft a candidate and machine-readable report under .source/vercel-catalog-sync/
+bun run --filter @boelabs/unified-gateway catalog:sync:vercel
+
+# Atomically replace src/adapters/vercel/catalog.json with the current snapshot
+bun run --filter @boelabs/unified-gateway catalog:sync:vercel:write
+
+# Fetch the live source and fail when the committed snapshot differs
+bun run --filter @boelabs/unified-gateway catalog:sync:vercel:verify
+```
+
+The writer refuses suspiciously small source responses and duplicate/invalid ids, so a broken or
+partial fetch cannot erase the committed catalog. The report lists unsupported operation families,
+per-image pricing that the token-pricing schema cannot represent, and budget-only reasoning models
+for which no effort ladder was invented. Future reasoning labels outside the canonical ladder are
+also reported instead of being silently accepted or aliased.
+
+The generated catalog includes only operations the Vercel adapter can execute. Language models use
+the source's exact limits, modalities, supported parameters, reasoning options, and token pricing.
+Embedding and image entries receive conservative adapter-level profiles; multimodal language models
+that output images also expose image generation (and editing when their source modalities accept
+image input). Vercel-only model ids are first-class entries and do not require a matching direct
+provider adapter.

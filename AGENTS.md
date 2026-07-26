@@ -34,7 +34,7 @@ Monorepo — Turborepo on Bun workspaces:
 
 Gateway-only scripts run with `bun run --filter @boelabs/unified-gateway <script>`: `dev`, `start`,
 `db:generate`, `db:migrate`, `db:studio`, `test:integration`, `test:all`, `catalog:validate`,
-`catalog:sync[:verify]`, `openapi:generate`.
+`catalog:sync[:verify]`, `catalog:sync:vercel[:write|:verify]`, `openapi:generate`.
 
 **Before you finish a change**, run `bun run check`, `bun run typecheck`, and `bun run test`. If you
 touched the database, router, rate limiting, or admin endpoints, also run `test:integration` (needs a
@@ -134,6 +134,13 @@ Reasoning specs are a special case: no source can express *how* a model controls
 has a non-empty `needsHumanReview` — verify the draft against the provider's actual docs and clear the
 marker before merging. Hand-edited catalog entries never carry this marker, so manual catalog work is
 unaffected.
+
+Vercel's own adapter catalog is the deliberate exception to the report-only rule. The dedicated
+`scripts/vercel-catalog-sync.ts` reads Vercel's public `/v1/models` response and deterministically
+generates `src/adapters/vercel/catalog.json`; use `catalog:sync:vercel` for a local candidate,
+`:write` to update the committed snapshot, and `:verify` for a live drift check. It only emits
+operation families implemented by the adapter and reports unsupported types and unrepresentable
+pricing separately.
 
 ## Pull requests & CI
 

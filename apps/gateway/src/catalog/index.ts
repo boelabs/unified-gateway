@@ -1,5 +1,4 @@
 import type { CatalogEntry, ResolvedModelMetadata } from "./types.ts";
-import { candidateAdapterMappings } from "./sync/providerIdentity.ts";
 import { profileToRuntimeMetadata } from "#profiles/resolve.ts";
 import type { TextCapabilities } from "#core/reasoning.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
@@ -87,37 +86,11 @@ function getAdapterCatalogEntry(
 	return undefined;
 }
 
-/**
- * Vercel model ids use the shared `creator/model` convention. The gateway already has reviewed
- * operation profiles for first-party creators, so the Vercel adapter delegates those profiles
- * instead of copying hundreds of entries into a second catalog. Pricing remains overridable on the
- * deployment and Vercel-only creators still use an inline CatalogEntry.
- */
-function getVercelDelegatedEntry(
-	upstreamModel: string,
-): CatalogEntry | undefined {
-	for (const mapping of candidateAdapterMappings(upstreamModel)) {
-		if (mapping.requiresEndpointMatch) continue;
-		const entry = getAdapterCatalogEntry(
-			mapping.adapterKey,
-			mapping.upstreamModel,
-			true,
-		);
-		if (entry) return entry;
-	}
-	return undefined;
-}
-
 export function getCatalogEntry(
 	adapterKey: string,
 	upstreamModel: string,
 ): CatalogEntry | undefined {
-	return (
-		getAdapterCatalogEntry(adapterKey, upstreamModel) ??
-		(adapterKey === "vercel"
-			? getVercelDelegatedEntry(upstreamModel)
-			: undefined)
-	);
+	return getAdapterCatalogEntry(adapterKey, upstreamModel);
 }
 
 /**
