@@ -11,6 +11,41 @@
 		]
 	},
 	"models": {
+		"claude-opus-5": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"verbosity": true
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 128000
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 500,
+				"outputCentsPerMTokens": 2500,
+				"cacheReadCentsPerMTokens": 50,
+				"cacheWriteCentsPerMTokens": 625
+			}
+		},
 		"claude-opus-4-8": {
 			"operations": {
 				"text.generate": {
@@ -302,6 +337,10 @@
 						"reasoning": true,
 						"structuredOutputs": true
 					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
 					"maxInputTokens": 1000000,
 					"maxOutputTokens": 128000,
 					"parameters": {
@@ -324,6 +363,42 @@
 				"cacheWriteCentsPerMTokens": 1250
 			}
 		},
+		"claude-opus-5-fast": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 128000,
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"response_format": true,
+						"stop": true,
+						"structured_outputs": true,
+						"tool_choice": true,
+						"tools": true,
+						"verbosity": true
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 1000,
+				"outputCentsPerMTokens": 5000,
+				"cacheReadCentsPerMTokens": 100,
+				"cacheWriteCentsPerMTokens": 1250
+			},
+			"notes": "Gateway fast-mode alias for claude-opus-5. The adapter sends speed=\"fast\" with the required beta header; Anthropic access is required."
+		},
 		"claude-opus-4-7-fast": {
 			"operations": {
 				"text.generate": {
@@ -332,6 +407,10 @@
 						"vision": true,
 						"reasoning": true,
 						"structuredOutputs": true
+					},
+					"reasoning": {
+						"kind": "anthropic_adaptive",
+						"levels": ["none", "low", "medium", "high", "xhigh", "max"]
 					},
 					"maxInputTokens": 1000000,
 					"maxOutputTokens": 128000,
@@ -353,7 +432,9 @@
 				"outputCentsPerMTokens": 15000,
 				"cacheReadCentsPerMTokens": 300,
 				"cacheWriteCentsPerMTokens": 3750
-			}
+			},
+			"deprecated": true,
+			"notes": "Anthropic removed fast mode for Claude Opus 4.7 on July 24, 2026. Use claude-opus-5-fast or claude-opus-4-8-fast."
 		},
 		"claude-opus-4-5": {
 			"operations": {

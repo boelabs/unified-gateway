@@ -83,6 +83,12 @@ interface AnthropicStreamEvent {
 const DEFAULT_BASE = "https://api.anthropic.com/v1";
 const DEFAULT_VERSION = "2023-06-01";
 const DEFAULT_MAX_TOKENS = 4096;
+const FAST_MODE_BETA = "fast-mode-2026-02-01";
+const FAST_MODE_ALIASES: ReadonlyMap<string, string> = new Map([
+	["claude-opus-5-fast", "claude-opus-5"],
+	["claude-opus-4-8-fast", "claude-opus-4-8"],
+	["claude-opus-4-7-fast", "claude-opus-4-7"],
+]);
 const ANTHROPIC_BODY_MANAGED_KEYS = [
 	"model",
 	"max_tokens",
@@ -96,6 +102,7 @@ const ANTHROPIC_BODY_MANAGED_KEYS = [
 	"tool_choice",
 	"thinking",
 	"output_config",
+	"speed",
 ] as const;
 const DEFAULT_ANTHROPIC_BUDGETS = {
 	minimal: 1_024,
@@ -302,7 +309,12 @@ function applyReasoning(
 	const display = summaryVisible(resolved.summary) ? "summarized" : "omitted";
 
 	if (spec.kind === "anthropic_adaptive") {
-		if (effort === "none") return;
+		if (effort === "none") {
+			// Claude Opus 5 enables adaptive thinking when the field is omitted. Emit the literal off
+			// switch for every optional adaptive reasoner so canonical `none` stays provider-independent.
+			body.thinking = { type: "disabled" };
+			return;
+		}
 		body.thinking = { type: "adaptive", display };
 		body.output_config = { effort: toUpstreamReasoningEffort(effort, spec) };
 		return;
@@ -353,12 +365,14 @@ function buildBody(
 			param: "n",
 		});
 	}
+	const nativeModel = FAST_MODE_ALIASES.get(ctx.upstreamModel);
 	const body: Record<string, unknown> = {
-		model: ctx.upstreamModel,
+		model: nativeModel ?? ctx.upstreamModel,
 		max_tokens: req.maxTokens ?? ctx.meta.maxOutputTokens ?? DEFAULT_MAX_TOKENS,
 		stream: req.stream,
 		...buildMessages(req),
 	};
+	if (nativeModel !== undefined) body.speed = "fast";
 	if (req.temperature !== undefined) body.temperature = req.temperature;
 	if (req.topP !== undefined) body.top_p = req.topP;
 	if (req.topK !== undefined) body.top_k = req.topK;
@@ -795,6 +809,18 @@ function mapError(err: unknown): GatewayError {
 	});
 }
 
+function addBetaHeader(headers: Record<string, string>, beta: string): void {
+	const betaName = Object.keys(headers).find(
+		(name) => name.toLowerCase() === "anthropic-beta",
+	);
+	if (betaName === undefined) {
+		headers["anthropic-beta"] = beta;
+		return;
+	}
+	const betas = headers[betaName]!.split(",").map((value) => value.trim());
+	if (!betas.includes(beta)) headers[betaName] = `${headers[betaName]},${beta}`;
+}
+
 const chat: ChatHandler = {
 	buildRequest(req, ctx) {
 		const c = creds(ctx);
@@ -805,19 +831,11 @@ const chat: ChatHandler = {
 			"anthropic-version": c.version ?? DEFAULT_VERSION,
 			...(c.headers ?? {}),
 		};
+		if (FAST_MODE_ALIASES.has(ctx.upstreamModel)) {
+			addBetaHeader(headers, FAST_MODE_BETA);
+		}
 		if (requestUsesProviderFileId(req)) {
-			const betaName = Object.keys(headers).find(
-				(name) => name.toLowerCase() === "anthropic-beta",
-			);
-			if (betaName === undefined) {
-				headers["anthropic-beta"] = "files-api-2025-04-14";
-			} else if (
-				!headers[betaName]!.split(",")
-					.map((value) => value.trim())
-					.includes("files-api-2025-04-14")
-			) {
-				headers[betaName] = `${headers[betaName]},files-api-2025-04-14`;
-			}
+			addBetaHeader(headers, "files-api-2025-04-14");
 		}
 		return {
 			method: "POST",

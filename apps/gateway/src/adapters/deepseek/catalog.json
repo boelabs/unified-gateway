@@ -167,6 +167,7 @@
 				"outputCentsPerMTokens": 80.01,
 				"cacheReadCentsPerMTokens": 0.28
 			},
+			"deprecated": true,
 			"notes": "Deprecated compatibility alias for non-thinking mode of deepseek-v4-flash."
 		},
 		"deepseek-reasoner": {
@@ -192,6 +193,7 @@
 				"outputCentsPerMTokens": 28,
 				"cacheReadCentsPerMTokens": 0.28
 			},
+			"deprecated": true,
 			"notes": "Deprecated compatibility alias for thinking mode of deepseek-v4-flash."
 		},
 		"deepseek-r1": {

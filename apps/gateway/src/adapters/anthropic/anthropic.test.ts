@@ -253,6 +253,19 @@ test("anthropic.buildRequest: adaptive reasoning keeps xhigh and max distinct", 
 	assert.deepEqual(JSON.parse(maximum.body!).output_config, { effort: "max" });
 });
 
+test("anthropic.buildRequest: fast aliases select the native model and required beta", () => {
+	const built = anthropicAdapter.chat!.buildRequest(
+		{ ...req, reasoning: { effort: "max" } },
+		{ ...adaptiveCtx, upstreamModel: "claude-opus-5-fast" },
+	);
+	const body = JSON.parse(built.body!);
+	assert.equal(body.model, "claude-opus-5");
+	assert.equal(body.speed, "fast");
+	assert.deepEqual(body.thinking, { type: "adaptive", display: "summarized" });
+	assert.deepEqual(body.output_config, { effort: "max" });
+	assert.equal(built.headers["anthropic-beta"], "fast-mode-2026-02-01");
+});
+
 test("anthropic.buildRequest: structured output merges with output_config.effort", () => {
 	const schema = {
 		type: "object",
@@ -283,11 +296,11 @@ test("anthropic.buildRequest: json_object uses an open object schema", () => {
 	});
 });
 
-test("anthropic.buildRequest: omitted effort on model that can skip reasoning -> no thinking", () => {
-	// adaptiveCtx has "none" ∈ levels: the gateway default is NOT to reason (thinking is not emitted).
+test("anthropic.buildRequest: omitted effort explicitly disables optional adaptive reasoning", () => {
+	// Opus 5 reasons when `thinking` is omitted, so canonical `none` must use Anthropic's literal switch.
 	const built = anthropicAdapter.chat!.buildRequest(req, adaptiveCtx);
 	const body = JSON.parse(built.body!);
-	assert.equal(body.thinking, undefined);
+	assert.deepEqual(body.thinking, { type: "disabled" });
 	assert.equal(body.output_config, undefined);
 });
 
