@@ -26,6 +26,7 @@
 		"typecheck": "turbo run typecheck && tsc --noEmit -p tsconfig.json",
 		"test": "turbo run test",
 		"test:all": "turbo run test:all",
+		"audit": "bun scripts/audit-dependencies.ts",
 		"lint": "biome lint .",
 		"format": "biome format --write . && bun scripts/sort-imports.ts",
 		"check": "biome check . --diagnostic-level=warn --error-on-warnings --max-diagnostics=100",

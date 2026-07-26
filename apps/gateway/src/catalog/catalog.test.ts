@@ -177,7 +177,31 @@ test("catalog still matches dated snapshots of active base models", () => {
 	assert.ok(getCatalogEntry("openai", "gpt-5.4-mini-2026-03-17"));
 });
 
-test("Anthropic catalog distinguishes model-specific xhigh and max support", () => {
+test("Anthropic catalog exposes Opus 5 reasoning, fast mode, and model-specific tiers", () => {
+	const opus5Entry = getCatalogEntry("anthropic", "claude-opus-5");
+	const opus5 = opus5Entry?.operations["text.generate"];
+	assert.equal(opus5?.maxInputTokens, 1_000_000);
+	assert.equal(opus5?.maxOutputTokens, 128_000);
+	assert.deepEqual(opus5?.reasoning, {
+		kind: "anthropic_adaptive",
+		levels: ["none", "low", "medium", "high", "xhigh", "max"],
+	});
+	assert.equal(opus5?.parameters?.temperature, undefined);
+	assert.equal(opus5?.parameters?.top_p, undefined);
+	assert.equal(opus5?.parameters?.top_k, undefined);
+
+	const opus5Fast = getCatalogEntry("anthropic", "claude-opus-5-fast");
+	assert.deepEqual(
+		opus5Fast?.operations["text.generate"]?.reasoning,
+		opus5?.reasoning,
+	);
+	assert.equal(opus5Fast?.pricing?.inputCentsPerMTokens, 1_000);
+	assert.equal(opus5Fast?.pricing?.outputCentsPerMTokens, 5_000);
+	assert.equal(
+		getCatalogEntry("anthropic", "claude-opus-4-7-fast")?.deprecated,
+		true,
+	);
+
 	const opus48 = getCatalogEntry("anthropic", "claude-opus-4-8")?.operations[
 		"text.generate"
 	]?.reasoning;
@@ -195,6 +219,12 @@ test("Anthropic catalog distinguishes model-specific xhigh and max support", () 
 	]?.reasoning;
 	assert.deepEqual(opus46?.levels, ["none", "low", "medium", "high", "max"]);
 	assert.equal(opus46?.levels.includes("xhigh"), false);
+});
+
+test("retired DeepSeek compatibility aliases are marked deprecated", () => {
+	for (const model of ["deepseek-chat", "deepseek-reasoner"]) {
+		assert.equal(getCatalogEntry("deepseek", model)?.deprecated, true, model);
+	}
 });
 
 test("resolved model metadata exposes limits and reasoning defaults from catalog", () => {
