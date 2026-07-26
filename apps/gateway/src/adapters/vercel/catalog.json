@@ -1,0 +1,14 @@
+{
+	"$schema": "../../../schemas/model-catalog.schema.json",
+	"schemaVersion": 1,
+	"provider": {
+		"id": "vercel",
+		"adapterKey": "vercel",
+		"name": "Vercel AI Gateway",
+		"docs": [
+			"https://vercel.com/docs/ai-gateway/sdks-and-apis",
+			"https://vercel.com/docs/ai-gateway/models-and-providers"
+		]
+	},
+	"models": {}
+}

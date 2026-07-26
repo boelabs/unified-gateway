@@ -16,6 +16,13 @@ const sampleModel: VercelModel = {
 	max_tokens: 64_000,
 	type: "language",
 	tags: ["file-input", "tool-use", "reasoning", "vision"],
+	reasoning_options: [
+		{ type: "toggle" },
+		{
+			type: "effort",
+			values: ["none", "low", "medium", "high", "xhigh", "max"],
+		},
+	],
 	pricing: {
 		input: "0.000002",
 		output: "0.000012",
@@ -51,6 +58,13 @@ test("normalizeModel: model-level pricing uses input/output field names, convert
 	assert.deepEqual(model.inputModalities, ["text", "image"]);
 	assert.equal(model.contextWindow, 1_000_000);
 	assert.equal(model.maxTokens, 64_000);
+	assert.deepEqual(model.reasoningOptions, [
+		{ type: "toggle" },
+		{
+			type: "effort",
+			values: ["none", "low", "medium", "high", "xhigh", "max"],
+		},
+	]);
 	assert.deepEqual(model.pricing, {
 		inputCentsPerMTokens: 200,
 		outputCentsPerMTokens: 1200,

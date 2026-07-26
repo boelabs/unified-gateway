@@ -30,6 +30,8 @@ export interface SourceModel {
 	/** Model-level fallback pricing/parameters, used only when no per-endpoint match applies. */
 	pricing?: NormalizedPricing;
 	supportedParameters?: string[];
+	/** Source-reported reasoning controls, retained for drift reports and human review. */
+	reasoningOptions?: SourceReasoningOption[];
 	endpoints: SourceEndpoint[];
 }
 
@@ -50,15 +52,14 @@ export interface CatalogSource {
 	fetchModels(): Promise<SourceFetchResult>;
 }
 
-/**
- * models.dev's own reasoning-control shape. Kept close to their vocabulary (not translated into our
- * ReasoningSpec here) - the translation happens in enrich.ts, where the trade-offs of the mapping are
- * documented next to the code that makes them.
- */
-export type ModelsDevReasoningOption =
+/** Source reasoning-control observation, kept distinct from the reviewed canonical ReasoningSpec. */
+export type SourceReasoningOption =
 	| { type: "toggle" }
 	| { type: "effort"; values: string[] }
 	| { type: "budget_tokens"; min?: number; max?: number };
+
+/** Backwards-compatible name for models.dev enrichment code. */
+export type ModelsDevReasoningOption = SourceReasoningOption;
 
 /** Only what the sync consumes: numeric corroboration/tiebreak data plus the reasoning-draft inputs. */
 export interface EnrichmentModel {

@@ -15,6 +15,7 @@ import { deepseekProvider } from "./deepseek/index.ts";
 import { moonshotProvider } from "./moonshot/index.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
 import { minimaxProvider } from "./minimax/index.ts";
+import { vercelProvider } from "./vercel/index.ts";
 import { openaiProvider } from "./openai/index.ts";
 import { googleProvider } from "./google/index.ts";
 import { registerAdapter } from "./registry.ts";
@@ -64,6 +65,10 @@ const PROVIDER_REGISTRATIONS: readonly ProviderRegistration[] = [
 	{
 		provider: azurefoundryProvider,
 		catalogUrl: new URL("./azurefoundry/catalog.json", import.meta.url),
+	},
+	{
+		provider: vercelProvider,
+		catalogUrl: new URL("./vercel/catalog.json", import.meta.url),
 	},
 ];
 
