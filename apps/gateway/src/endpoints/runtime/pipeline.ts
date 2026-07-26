@@ -81,11 +81,14 @@ export function parseBody<T>(schema: z.ZodType<T>, json: unknown): T {
 export async function preflight(
 	c: Context<AppEnv>,
 	model: string,
+	options?: { writeHeaders?: boolean },
 ): Promise<void> {
 	const auth = getAuth(c);
 	assertModelAllowed(auth, model);
-	if (auth.type === "virtual")
-		setHeaders(c, (await enforceVirtualKey(auth.key)).headers);
+	if (auth.type === "virtual") {
+		const limited = await enforceVirtualKey(auth.key);
+		if (options?.writeHeaders !== false) setHeaders(c, limited.headers);
+	}
 }
 
 export function extensionScope(
@@ -108,7 +111,7 @@ export function extensionScope(
 		endpoint: c.req.path,
 		publicModel,
 		auth: publicAuth,
-		signal: c.req.raw.signal,
+		signal: c.get("turnSignal") ?? c.req.raw.signal,
 	};
 }
 

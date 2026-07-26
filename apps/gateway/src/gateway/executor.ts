@@ -33,7 +33,12 @@ import type {
 
 export type ChatExecResult =
 	| { kind: "json"; response: CanonicalChatResponse }
-	| { kind: "stream"; chunks: AsyncIterable<CanonicalChatStreamChunk> };
+	| {
+			kind: "stream";
+			chunks: AsyncIterable<CanonicalChatStreamChunk>;
+			/** Private provider id used only to continue a gateway-owned WebSocket session. */
+			upstreamResponseId?: Promise<string | null>;
+	  };
 
 export type ImageExecResult =
 	| { kind: "json"; response: CanonicalImageResponse }

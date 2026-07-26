@@ -23,32 +23,33 @@ function extractKey(c: Context): string | undefined {
 	return q ? q.trim() : undefined;
 }
 
+/** Resolves and revalidates request credentials. WebSocket sessions call this before every turn. */
+export async function authenticateRequest(c: Context): Promise<Auth> {
+	const key = extractKey(c);
+	if (!key) {
+		throw new GatewayError({
+			class: "auth",
+			message: "Missing API key (Authorization: Bearer <key>)",
+		});
+	}
+
+	if (key === env.MASTER_KEY) return { type: "master" };
+
+	const vk = await getCachedVirtualKey(key);
+	if (!vk)
+		throw new GatewayError({ class: "auth", message: "Invalid API key" });
+	if (!vk.enabled)
+		throw new GatewayError({ class: "auth", message: "API key is disabled" });
+	if (vk.expiresAt && new Date(vk.expiresAt).getTime() < Date.now()) {
+		throw new GatewayError({ class: "auth", message: "API key has expired" });
+	}
+	return { type: "virtual", key: vk };
+}
+
 /** Resolves the identity (master or virtual key) and stores it in c.get('auth'). */
 export function authMiddleware(): MiddlewareHandler<AppEnv> {
 	return async (c, next) => {
-		const key = extractKey(c);
-		if (!key) {
-			throw new GatewayError({
-				class: "auth",
-				message: "Missing API key (Authorization: Bearer <key>)",
-			});
-		}
-
-		if (key === env.MASTER_KEY) {
-			c.set("auth", { type: "master" });
-			return next();
-		}
-
-		const vk = await getCachedVirtualKey(key);
-		if (!vk)
-			throw new GatewayError({ class: "auth", message: "Invalid API key" });
-		if (!vk.enabled)
-			throw new GatewayError({ class: "auth", message: "API key is disabled" });
-		if (vk.expiresAt && new Date(vk.expiresAt).getTime() < Date.now()) {
-			throw new GatewayError({ class: "auth", message: "API key has expired" });
-		}
-
-		c.set("auth", { type: "virtual", key: vk });
+		c.set("auth", await authenticateRequest(c));
 		return next();
 	};
 }

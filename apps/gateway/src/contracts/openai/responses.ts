@@ -99,6 +99,45 @@ export const responsesRequestSchema = z
 
 export type ResponsesRequest = z.infer<typeof responsesRequestSchema>;
 
+const webSocketResponseCreateEnvelopeSchema = z
+	.object({
+		type: z.literal("response.create"),
+		generate: z.boolean().optional().default(true),
+	})
+	.loose();
+
+export interface WebSocketResponseCreate {
+	request: ResponsesRequest;
+	generate: boolean;
+}
+
+/**
+ * Parses the client event used by Responses WebSocket mode. Transport-only HTTP fields are rejected,
+ * while the remaining body stays exactly on the normal Responses request contract.
+ */
+export function parseWebSocketResponseCreate(
+	value: unknown,
+): WebSocketResponseCreate {
+	const envelope = webSocketResponseCreateEnvelopeSchema.parse(value);
+	const raw = value as Record<string, unknown>;
+	for (const field of ["stream", "stream_options", "background"] as const) {
+		if (Object.hasOwn(raw, field)) {
+			throw new z.ZodError([
+				{
+					code: "custom",
+					path: [field],
+					message: `'${field}' must not be sent in WebSocket response.create messages`,
+				},
+			]);
+		}
+	}
+	const { type: _type, generate, ...body } = envelope;
+	return {
+		request: responsesRequestSchema.parse({ ...body, stream: true }),
+		generate,
+	};
+}
+
 export const compactResponseRequestSchema = z
 	.object({
 		model: z.string(),

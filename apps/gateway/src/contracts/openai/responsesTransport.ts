@@ -512,12 +512,28 @@ export async function* responsesEventsToCanonicalChunks(
 		const type = (ev.event ?? d.type) as string | undefined;
 		if (type === "error" || type === "response.failed") {
 			const response = d.response as Record<string, unknown> | undefined;
-			const error = (d.error ?? response?.error ?? d) as unknown;
+			const error = (d.error ?? response?.error ?? d) as
+				| Record<string, unknown>
+				| undefined;
+			const code =
+				typeof error?.code === "string" ? error.code : "upstream_stream_error";
+			const providerStatus =
+				typeof d.status === "number"
+					? d.status
+					: typeof response?.status === "number"
+						? response.status
+						: 502;
+			const param = typeof error?.param === "string" ? error.param : null;
 			throw new GatewayError({
-				class: "server",
-				code: "upstream_stream_error",
+				class:
+					code === "previous_response_not_found" ? "bad_request" : "server",
+				code,
+				param,
 				message: "Responses upstream emitted a terminal stream error",
-				provider: { status: 502, body: error },
+				provider: { status: providerStatus, body: error },
+				...(code === "previous_response_not_found"
+					? { deploymentHealth: "neutral" as const }
+					: {}),
 			});
 		}
 

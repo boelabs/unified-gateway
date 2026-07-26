@@ -21,5 +21,10 @@ export type Auth =
 
 /** Typed variables of the Hono context. */
 export interface AppEnv {
-	Variables: { auth: Auth; requestId: string };
+	Variables: {
+		auth: Auth;
+		requestId: string;
+		turnRequestId: string | undefined;
+		turnSignal: AbortSignal | undefined;
+	};
 }

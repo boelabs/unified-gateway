@@ -29,6 +29,7 @@ export const openaiAdapter = makeOpenAIStyleAdapter({
 	defaultBaseUrl: "https://api.openai.com/v1",
 	defaultTransport: "responses",
 	supportedChatTransports: ["responses", "chat_completions"],
+	responsesWebSocket: true,
 	contentInputs: {
 		responses: {
 			file: {
