@@ -14,13 +14,15 @@ export function requestContextMiddleware(): MiddlewareHandler<AppEnv> {
 	return async (c, next) => {
 		const requestId = incomingRequestId(c) ?? randomUUID();
 		c.set("requestId", requestId);
-		c.header("x-request-id", requestId);
+		// WebSocket upgrade headers are owned by the adapter and become immutable during upgrade.
+		if (c.req.header("upgrade")?.toLowerCase() !== "websocket")
+			c.header("x-request-id", requestId);
 		await next();
 	};
 }
 
 export function getRequestId(c: Context<AppEnv>): string {
-	return c.get("requestId");
+	return c.get("turnRequestId") ?? c.get("requestId");
 }
 
 export function setHeaders(c: Context, headers: Record<string, string>): void {

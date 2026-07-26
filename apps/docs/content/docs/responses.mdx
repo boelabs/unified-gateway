@@ -90,6 +90,54 @@ Same SSE mechanics as every other endpoint. Terminal upstream failure events are
 and a stored stream is committed before its terminal success event is emitted. See
 [Streaming](/docs/streaming).
 
+## WebSocket mode
+
+Open a persistent connection to `wss://YOUR_GATEWAY/v1/responses` using the same bearer key as HTTP.
+Each turn starts with a top-level `response.create` object:
+
+```json
+{
+  "type": "response.create",
+  "model": "general",
+  "store": false,
+  "input": "Find the bug"
+}
+```
+
+Do not send the HTTP-only `stream`, `stream_options`, or `background` fields. Server messages are the
+normal JSON `response.*` streaming event objects, without SSE framing. A connection processes one
+turn at a time; additional `response.create` messages are queued in arrival order. Open another
+connection for parallel runs.
+
+The connection keeps the most recent response state in memory. Continue with only new items and its
+public id:
+
+```json
+{
+  "type": "response.create",
+  "model": "general",
+  "store": false,
+  "previous_response_id": "resp_...",
+  "input": [
+    {
+      "type": "function_call_output",
+      "call_id": "call_...",
+      "output": "tool result"
+    }
+  ]
+}
+```
+
+This works with `store: false` while the socket remains open. After reconnecting, only `store: true`
+responses can be hydrated from Postgres; otherwise send the complete context or a compacted window.
+Connections close after 60 minutes with `websocket_connection_limit_reached`.
+
+`generate: false` performs an OpenAI-compatible warmup. Providers without native Responses
+WebSockets receive a gateway-local semantic warmup. When the selected OpenAI deployment supports
+the native transport, the gateway maintains a separate upstream socket and private upstream response
+id. Public ids and events are still regenerated through the canonical core; provider traffic is
+never passed directly to the client.
+
 ## What to read next
 
 - [Chat completions](/docs/chat-completions) — the fields shared between both contracts.

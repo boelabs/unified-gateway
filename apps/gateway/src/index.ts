@@ -1,11 +1,12 @@
+import { type WebSocketServerLike, serve } from "@hono/node-server";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { GatewayError } from "./core/errors.ts";
 import { pingRedis } from "./cache/redis.ts";
-import { serve } from "@hono/node-server";
 import { Hono, type Context } from "hono";
 import { pingDb } from "./db/client.ts";
 import { log } from "./logging/log.ts";
 import { env } from "./config/env.ts";
+import { WebSocketServer } from "ws";
 import { logger } from "hono/logger";
 
 import {
@@ -32,6 +33,8 @@ import { adminApp } from "./admin/index.ts";
 
 import {
 	listResponseInputItemsHandler,
+	responsesWebSocketHandler,
+	closeResponsesWebSockets,
 	retrieveResponseHandler,
 	compactResponseHandler,
 	deleteResponseHandler,
@@ -196,6 +199,7 @@ app.route("/admin", adminApp);
 app.use("/v1/*", authMiddleware());
 app.post("/v1/chat/completions", chatCompletionsHandler);
 app.post("/v1/responses", responsesHandler);
+app.get("/v1/responses", responsesWebSocketHandler);
 app.post("/v1/responses/compact", compactResponseHandler);
 app.get("/v1/responses/:id", retrieveResponseHandler);
 app.delete("/v1/responses/:id", deleteResponseHandler);
@@ -211,13 +215,26 @@ app.delete("/v1/videos/:id", videoDeleteHandler);
 app.post("/v1/audio/transcriptions", transcriptionsHandler);
 app.post("/v1/embeddings", embeddingsHandler);
 
-const server = serve({ fetch: app.fetch, port: env.PORT }, (info) => {
-	log.info("server", "listening", { port: info.port, env: env.NODE_ENV });
+const webSocketServer = new WebSocketServer({
+	noServer: true,
+	maxPayload: 16 * 1024 * 1024,
+	perMessageDeflate: false,
 });
+const server = serve(
+	{
+		fetch: app.fetch,
+		port: env.PORT,
+		websocket: { server: webSocketServer as WebSocketServerLike },
+	},
+	(info) => {
+		log.info("server", "listening", { port: info.port, env: env.NODE_ENV });
+	},
+);
 
 installGracefulShutdown({
 	server,
 	stopJobs: [
+		closeResponsesWebSockets,
 		stopPartitions,
 		stopResponseStateGc,
 		stopExtensionReload,

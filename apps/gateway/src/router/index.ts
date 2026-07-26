@@ -32,6 +32,8 @@ export interface RouteOptions {
 	preferredTransport?: UpstreamTransport;
 	/** Excludes deployments incompatible with the request before balancing, without cooldown. */
 	candidateEligibility?: (candidate: DeploymentCandidate) => void;
+	/** Session affinity hint; used only when this deployment is still healthy and eligible. */
+	preferredDeploymentId?: string;
 }
 
 /** Executes the upstream call for a candidate; throws GatewayError on failure. */
@@ -209,7 +211,10 @@ export async function route<T>(
 				(candidate) =>
 					(attemptsByDeployment.get(candidate.row.id) ?? 0) === minAttempts,
 			);
-			const chosen = pickDeployment(settings.routingStrategy, pool, metrics);
+			const chosen =
+				pool.find(
+					(candidate) => candidate.row.id === opts.preferredDeploymentId,
+				) ?? pickDeployment(settings.routingStrategy, pool, metrics);
 			const transport = resolveTransport(
 				chosen,
 				callType,

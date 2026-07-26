@@ -71,7 +71,8 @@ are stripped symmetrically so call/result matching keeps working.
 For reasoning-capable OpenAI models the gateway requests
 `include: ["reasoning.encrypted_content"]` upstream and always calls the upstream with
 `store: false` (OpenAI only returns encrypted reasoning for unstored responses; the gateway never
-uses upstream storage).
+uses persisted upstream storage). A live Responses WebSocket may use OpenAI's connection-local
+previous-response cache, but public and upstream response ids remain separate.
 
 Per surface:
 

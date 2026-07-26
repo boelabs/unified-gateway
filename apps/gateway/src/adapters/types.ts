@@ -102,6 +102,33 @@ export interface ChatHandler {
 	mapError(err: unknown, ctx: AdapterContext): GatewayError;
 }
 
+/**
+ * A persistent upstream Responses WebSocket. The gateway still translates every event through the
+ * canonical core; this is a transport optimization, never a public-protocol passthrough.
+ */
+export interface ResponsesWebSocketTurn {
+	chunks: AsyncIterable<CanonicalChatStreamChunk>;
+	/** Resolves after response.created (or the terminal event when no id was emitted). */
+	upstreamResponseId: Promise<string | null>;
+}
+
+export interface ResponsesWebSocketSession {
+	create(
+		req: CanonicalChatRequest,
+		options: {
+			previousResponseId?: string;
+			generate: boolean;
+			signal: AbortSignal;
+		},
+	): Promise<ResponsesWebSocketTurn>;
+	close(code?: number, reason?: string): void;
+	readonly closed: boolean;
+}
+
+export interface ResponsesWebSocketHandler {
+	connect(ctx: AdapterContext): Promise<ResponsesWebSocketSession>;
+}
+
 export interface ImageHandler {
 	buildRequest(
 		req: CanonicalImageRequest,
@@ -191,6 +218,8 @@ export interface Adapter {
 	};
 	supportedCallTypes: ReadonlySet<CallType>;
 	chat?: ChatHandler;
+	/** Optional native persistent /responses WebSocket transport. */
+	responsesWebSocket?: ResponsesWebSocketHandler;
 	imageGeneration?: ImageHandler;
 	imageEdit?: ImageHandler;
 	videoGeneration?: VideoHandler;

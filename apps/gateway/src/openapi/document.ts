@@ -195,10 +195,23 @@ export function buildOpenApiDocument() {
 				},
 			},
 			"/v1/responses": {
+				get: {
+					tags: ["Inference"],
+					summary: "Responses WebSocket upgrade",
+					description:
+						"OpenAI/OpenResponses-compatible persistent WebSocket mode. Requires Upgrade: websocket. Client messages are top-level response.create JSON objects; server messages are response.* streaming event objects. Turns are sequential and the connection lifetime is 60 minutes.",
+					responses: {
+						"101": { description: "Switching Protocols" },
+						"401": errorResponse,
+						"429": errorResponse,
+					},
+				},
 				post: {
 					tags: ["Inference"],
 					summary:
 						"Responses (OpenResponses, provider-agnostic, stream + no-stream)",
+					description:
+						"This resource also supports OpenAI-compatible WebSocket upgrades with GET /v1/responses. Send response.create JSON events; the server returns the normal response.* streaming event objects. WebSocket turns are sequential and connections last at most 60 minutes.",
 					parameters: cacheParams,
 					requestBody: jsonBody(c.ResponsesRequest, {
 						simple: {

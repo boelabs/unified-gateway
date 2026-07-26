@@ -105,6 +105,21 @@ export const env = createEnv({
 			.default(3_600_000),
 		/** Default for `store` when the client omits it. true = OpenAI-compatible; set false for privacy-first. */
 		RESPONSES_STORE_DEFAULT: boolString.default(true),
+		RESPONSES_WEBSOCKET_MAX_CONNECTIONS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(1000),
+		RESPONSES_WEBSOCKET_MAX_CONNECTIONS_PER_KEY: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(20),
+		RESPONSES_WEBSOCKET_MAX_QUEUED_TURNS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(64),
 
 		OBJECT_STORAGE_BACKEND: z
 			.enum(["disabled", "local", "s3"])

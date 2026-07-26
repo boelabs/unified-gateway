@@ -68,10 +68,10 @@ export class RequestLogDraft {
 	constructor(
 		c: Context<AppEnv>,
 		callType: string,
-		opts?: { publicModel?: string },
+		opts?: { publicModel?: string; requestId?: string },
 	) {
 		const auth = getAuth(c);
-		this.requestId = getRequestId(c);
+		this.requestId = opts?.requestId ?? getRequestId(c);
 		this.virtualKeyId = auth.type === "virtual" ? auth.key.id : null;
 		this.callType = callType;
 		this.ip = clientIp(c);

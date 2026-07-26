@@ -69,12 +69,14 @@
 		"postgres": "3.4.9",
 		"sharp": "0.35.3",
 		"unpdf": "1.6.2",
+		"ws": "8.21.1",
 		"zod": "4.4.3"
 	},
 	"devDependencies": {
 		"@boelabs/tsconfig": "workspace:*",
 		"@types/busboy": "1.5.4",
 		"@types/node": "26.1.0",
+		"@types/ws": "8.18.1",
 		"drizzle-kit": "0.31.10",
 		"typescript": "6.0.3",
 		"yaml": "2.9.0",

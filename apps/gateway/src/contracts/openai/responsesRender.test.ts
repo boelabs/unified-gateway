@@ -1,6 +1,6 @@
-import { responsesRequestSchema } from "./responses.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { z } from "zod";
 
 import {
 	canonicalChunksToResponsesEvents,
@@ -18,6 +18,11 @@ import type {
 	CanonicalChatStreamChunk,
 	CanonicalChatResponse,
 } from "#core/canonical.ts";
+
+import {
+	parseWebSocketResponseCreate,
+	responsesRequestSchema,
+} from "./responses.ts";
 
 function parse(body: unknown) {
 	return responsesRequestSchema.parse(body);
@@ -171,6 +176,60 @@ test("contract: rejects background:true, prompt, and conversation+previous_respo
 			background: false,
 		}).success,
 		true,
+	);
+});
+
+test("contract: WebSocket response.create reuses the Responses body and forces streaming", () => {
+	const parsed = parseWebSocketResponseCreate({
+		type: "response.create",
+		model: "gpt-5.6",
+		store: false,
+		input: "hello",
+		reasoning: { effort: "max" },
+	});
+	assert.equal(parsed.generate, true);
+	assert.equal(parsed.request.stream, true);
+	assert.equal(parsed.request.model, "gpt-5.6");
+	assert.deepEqual(parsed.request.reasoning, { effort: "max" });
+});
+
+test("contract: WebSocket response.create supports generate:false", () => {
+	const parsed = parseWebSocketResponseCreate({
+		type: "response.create",
+		model: "gpt-5.6",
+		input: "warm this state",
+		generate: false,
+		tools: [{ type: "function", name: "lookup", parameters: {} }],
+	});
+	assert.equal(parsed.generate, false);
+	assert.equal(parsed.request.stream, true);
+});
+
+test("contract: WebSocket rejects HTTP-only fields and unknown client events", () => {
+	for (const field of ["stream", "stream_options", "background"]) {
+		assert.throws(
+			() =>
+				parseWebSocketResponseCreate({
+					type: "response.create",
+					model: "gpt-5.6",
+					input: "hello",
+					[field]: field === "stream" ? true : {},
+				}),
+			(error) =>
+				error instanceof z.ZodError &&
+				error.issues[0]?.path.join(".") === field &&
+				error.issues[0]?.message.includes("must not be sent") === true,
+		);
+	}
+	assert.throws(
+		() =>
+			parseWebSocketResponseCreate({
+				type: "response.cancel",
+				model: "gpt-5.6",
+				input: "hello",
+			}),
+		(error) =>
+			error instanceof z.ZodError && error.issues[0]?.path.join(".") === "type",
 	);
 });
 

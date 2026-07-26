@@ -1,3 +1,4 @@
+import { makeOpenAIResponsesWebSocketHandler } from "./openaiResponsesWebSocket.ts";
 import type { Adapter, AdapterContext, ChatHandler } from "./types.ts";
 import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
@@ -109,6 +110,8 @@ export interface OpenAIStyleConfig {
 		"videos" | "videos_async"
 	>[];
 	defaultVideoTransport?: Extract<UpstreamTransport, "videos" | "videos_async">;
+	/** This provider exposes persistent WebSocket mode at its /responses resource. */
+	responsesWebSocket?: boolean;
 }
 
 /**
@@ -830,6 +833,23 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 		},
 		supportedCallTypes,
 		chat,
+		...(config.responsesWebSocket
+			? {
+					responsesWebSocket: makeOpenAIResponsesWebSocketHandler({
+						label: config.label,
+						resolveConnection(ctx) {
+							const credentials = resolveCreds(ctx);
+							return {
+								url: credentials.base,
+								headers: buildAuthHeaders(credentials),
+							};
+						},
+						mapError(err) {
+							return mapError(err);
+						},
+					}),
+				}
+			: {}),
 		// The chat_completions transport emits reasoning_effort (openai_effort), top-level thinking
 		// (openai_body), ignores fixed reasoners, and supports chat_template_kwargs.
 		reasoningKinds: new Set<ReasoningControlKind>([

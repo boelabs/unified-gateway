@@ -1,6 +1,7 @@
 import type { CanonicalEmbeddingsRequest } from "#core/embeddings.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { AdapterContext } from "#adapters/types.ts";
+import { GatewayError } from "#core/errors.ts";
 import { openaiAdapter } from "./index.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -518,6 +519,40 @@ test("openai.parseStream: terminal failures throw instead of completing", async 
 			// consume
 		}
 	}, /terminal stream error/);
+});
+
+test("openai.parseStream: preserves WebSocket continuation error details", async () => {
+	async function* events() {
+		yield {
+			event: "error",
+			data: JSON.stringify({
+				type: "error",
+				status: 400,
+				error: {
+					code: "previous_response_not_found",
+					message: "missing",
+					param: "previous_response_id",
+				},
+			}),
+		};
+	}
+	const { responsesEventsToCanonicalChunks } = await import(
+		"#contracts/openai/responsesTransport.ts"
+	);
+	await assert.rejects(
+		async () => {
+			for await (const _chunk of responsesEventsToCanonicalChunks(events())) {
+				// consume
+			}
+		},
+		(error) =>
+			GatewayError.is(error) &&
+			error.httpStatus === 400 &&
+			error.code === "previous_response_not_found" &&
+			error.param === "previous_response_id" &&
+			error.deploymentHealth === "neutral" &&
+			error.provider?.status === 400,
+	);
 });
 
 test("openai chat stream: in-band error objects throw", async () => {

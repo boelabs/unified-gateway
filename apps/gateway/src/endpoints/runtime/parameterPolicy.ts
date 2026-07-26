@@ -4,6 +4,7 @@ import { nativeTransportForPublicWire } from "#core/transport.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { EffectiveSettings } from "#router/settings.ts";
 import type { ChatExecResult } from "#gateway/executor.ts";
+import type { AdapterContext } from "#adapters/types.ts";
 import { resolveTransport } from "#router/transport.ts";
 import { executeChat } from "#gateway/executor.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -24,6 +25,11 @@ import {
 } from "#files/requestContentInputs.ts";
 
 export type ParameterPolicyRecorder = (result: ParameterPolicyResult) => void;
+export type ChatCandidateExecutor = (
+	candidate: DeploymentCandidate,
+	ctx: AdapterContext,
+	request: CanonicalChatRequest,
+) => Promise<ChatExecResult>;
 
 export function parameterEligibility(
 	req: CanonicalChatRequest,
@@ -55,6 +61,11 @@ export async function routeChat(
 	canonical: CanonicalChatRequest,
 	requestId: string,
 	settings: EffectiveSettings,
+	options?: {
+		signal?: AbortSignal;
+		execute?: ChatCandidateExecutor;
+		preferredDeploymentId?: string;
+	},
 ): Promise<{
 	routing: RouteResult<ChatExecResult>;
 	parameterPolicy: ParameterPolicyResult | null;
@@ -64,7 +75,7 @@ export async function routeChat(
 	let contentInputResolution: ContentInputResolutionMetadata | null = null;
 	const contentInputResolver = createContentInputResolver(
 		canonical,
-		c.req.raw.signal,
+		options?.signal ?? c.req.raw.signal,
 	);
 	const eligibility = parameterEligibility(
 		canonical,
@@ -103,9 +114,12 @@ export async function routeChat(
 		canonical.model,
 		"chat",
 		{
-			clientSignal: c.req.raw.signal,
+			clientSignal: options?.signal ?? c.req.raw.signal,
 			requestId,
 			preferredTransport,
+			...(options?.preferredDeploymentId
+				? { preferredDeploymentId: options.preferredDeploymentId }
+				: {}),
 			...(candidateEligibility ? { candidateEligibility } : {}),
 		},
 		async (cand, ctx) => {
@@ -114,18 +128,17 @@ export async function routeChat(
 				ctx.transport,
 			);
 			contentInputResolution = resolved.metadata ?? null;
-			return executeChat(
-				cand.adapter,
-				requestForCandidate(
-					resolved.request,
-					cand,
-					settings.unsupportedParameterStrategy,
-					(result) => {
-						parameterPolicy = result;
-					},
-				),
-				ctx,
+			const candidateRequest = requestForCandidate(
+				resolved.request,
+				cand,
+				settings.unsupportedParameterStrategy,
+				(result) => {
+					parameterPolicy = result;
+				},
 			);
+			return options?.execute
+				? options.execute(cand, ctx, candidateRequest)
+				: executeChat(cand.adapter, candidateRequest, ctx);
 		},
 	);
 	return { routing, parameterPolicy, contentInputResolution };
