@@ -687,6 +687,10 @@ export const CreateDeployment = z
 			description:
 				"Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label).",
 		}),
+		failureDomain: nullableString.optional().meta({
+			description:
+				"Shared provider account or quota domain. Deployments with the same value share upstream throttle state; null keeps the deployment independent.",
+		}),
 		metadata: z.record(z.string(), z.unknown()).optional().meta({
 			description:
 				"Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim.",
@@ -740,6 +744,10 @@ export const ResolveDeployment = z
 			description:
 				"Accepted for body reuse with POST /admin/deployments, but ignored by resolve.",
 		}),
+		failureDomain: nullableString.optional().meta({
+			description:
+				"Accepted for body reuse with POST /admin/deployments, but ignored by resolve.",
+		}),
 		metadata: z.record(z.string(), z.unknown()).optional().meta({
 			description:
 				"Accepted for body reuse with POST /admin/deployments, but ignored by resolve.",
@@ -756,6 +764,9 @@ export const UpdateDeployment = z
 		}),
 		label: nullableString.optional().meta({
 			description: "Human identifier; null clears it.",
+		}),
+		failureDomain: nullableString.optional().meta({
+			description: "Shared quota domain; null clears it.",
 		}),
 		metadata: z.record(z.string(), z.unknown()).optional().meta({
 			description: "Replaces the stored metadata object.",
@@ -834,13 +845,23 @@ export const RouterSettings = z
 			}),
 		allowedFails: z.int().min(0).optional().meta({
 			description:
-				"Accumulated failures that trigger cooldown for a deployment.",
+				"Consecutive logical-request failures in the fixed failure window that open a deployment circuit. Zero disables automatic circuit opening.",
 		}),
-		cooldownSeconds: z.int().min(0).optional(),
+		cooldownSeconds: z.int().min(0).optional().meta({
+			description:
+				"Initial transient cooldown. Zero disables automatic circuit opening.",
+		}),
+		failureWindowSeconds: z.int().min(1).optional(),
+		maxCooldownSeconds: z.int().min(1).optional(),
+		halfOpenProbeSeconds: z.int().min(1).optional(),
+		configurationCooldownSeconds: z.int().min(1).optional(),
+		throttleCooldownSeconds: z.int().min(1).optional(),
 		numRetries: z.int().min(0).optional().meta({
 			description:
-				"Maximum retries per deployment, in addition to the initial attempt. Resets for each deployment in each fallback pool.",
+				"Maximum retries per deployment, still bounded by the pool and request attempt budgets.",
 		}),
+		maxAttemptsPerPool: z.int().min(1).optional(),
+		maxAttemptsPerRequest: z.int().min(1).optional(),
 		timeoutSeconds: z
 			.int()
 			.min(1)

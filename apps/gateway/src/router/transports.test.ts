@@ -12,6 +12,7 @@ function candidate(): DeploymentCandidate {
 			upstreamModel: "image",
 			credentials: { v: 1, iv: "", tag: "", ct: "" },
 			label: null,
+			failureDomain: null,
 			metadata: {},
 			catalogEntry: null,
 			pricing: null,

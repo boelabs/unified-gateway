@@ -43,7 +43,14 @@ export interface RouterSettingsPatch {
 		| undefined;
 	allowedFails?: number | undefined;
 	cooldownSeconds?: number | undefined;
+	failureWindowSeconds?: number | undefined;
+	maxCooldownSeconds?: number | undefined;
+	halfOpenProbeSeconds?: number | undefined;
+	configurationCooldownSeconds?: number | undefined;
+	throttleCooldownSeconds?: number | undefined;
 	numRetries?: number | undefined;
+	maxAttemptsPerPool?: number | undefined;
+	maxAttemptsPerRequest?: number | undefined;
 	timeoutSeconds?: number | undefined;
 	retryAfterSeconds?: number | undefined;
 }

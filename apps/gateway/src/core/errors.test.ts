@@ -91,6 +91,7 @@ test("health-neutral and request-scoped dispositions stay internal to logs", () 
 		message: "candidate cannot consume this image source",
 		routing_scope: "request",
 		deployment_health: "neutral",
+		failure_kind: "request",
 	});
 	assert.equal("deployment_health" in err.toOpenAI().error, false);
 });
@@ -109,7 +110,7 @@ test("provider request rejections do not count as deployment failures", () => {
 		assert.equal(err.deploymentHealth, "neutral");
 	}
 
-	for (const cls of ["auth", "rate_limit", "server"] as const) {
+	for (const cls of ["auth", "server"] as const) {
 		const err = new GatewayError({
 			class: cls,
 			message: "deployment failure",
@@ -117,4 +118,12 @@ test("provider request rejections do not count as deployment failures", () => {
 		});
 		assert.equal(err.deploymentHealth, "penalize");
 	}
+
+	const throttled = new GatewayError({
+		class: "rate_limit",
+		message: "shared quota exhausted",
+		provider: { status: 429, body: {} },
+	});
+	assert.equal(throttled.failureKind, "throttle");
+	assert.equal(throttled.deploymentHealth, "neutral");
 });

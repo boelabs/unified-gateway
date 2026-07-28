@@ -7,8 +7,26 @@ export function classifyStatus(status: number): ErrorClass {
 	if (status === 429) return "rate_limit";
 	if (status === 408 || status === 504) return "timeout";
 	if (status >= 500) return "server";
-	if (status === 400 || status === 422) return "bad_request";
+	// A provider-side 4xx is a rejection of this request or deployment configuration. It is never
+	// evidence of a transient server outage merely because the gateway does not recognize the exact
+	// status (402, 409, 413, 415, 425, 451, ...).
+	if (status >= 400 && status < 500) return "bad_request";
 	return "server";
+}
+
+/** Parses Retry-After as either delta-seconds or an HTTP date. Invalid/past values return undefined. */
+export function parseRetryAfter(
+	value: string | null | undefined,
+	nowMs = Date.now(),
+): number | undefined {
+	if (!value) return undefined;
+	const seconds = Number(value);
+	if (Number.isFinite(seconds) && seconds >= 0)
+		return Math.min(Math.ceil(seconds * 1000), 86_400_000);
+	const dateMs = Date.parse(value);
+	if (!Number.isFinite(dateMs)) return undefined;
+	const delay = dateMs - nowMs;
+	return delay > 0 ? Math.min(delay, 86_400_000) : undefined;
 }
 
 /** Is the error an AbortController cancellation/timeout? Robust to non-Error DOMException. */

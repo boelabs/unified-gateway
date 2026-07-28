@@ -1,4 +1,5 @@
 import { authMiddleware, requireMaster, getAuth } from "#auth/middleware.ts";
+import { invalidateRouterSettingsCache } from "#router/settings.ts";
 import { invalidateResponseCache } from "#cache/responseCache.ts";
 import { invalidateVirtualKey } from "#auth/virtualKeyCache.ts";
 import { clearVirtualKeyBudget } from "#ratelimit/index.ts";
@@ -539,7 +540,14 @@ const routerSettingsSchema = z
 		unsupportedParameterStrategy: z.enum(["drop", "error", "allow"]),
 		allowedFails: z.int().min(0),
 		cooldownSeconds: z.int().min(0),
+		failureWindowSeconds: z.int().min(1),
+		maxCooldownSeconds: z.int().min(1),
+		halfOpenProbeSeconds: z.int().min(1),
+		configurationCooldownSeconds: z.int().min(1),
+		throttleCooldownSeconds: z.int().min(1),
 		numRetries: z.int().min(0),
+		maxAttemptsPerPool: z.int().min(1),
+		maxAttemptsPerRequest: z.int().min(1),
 		timeoutSeconds: z.int().min(1),
 		retryAfterSeconds: z.int().min(0),
 	})
@@ -551,7 +559,9 @@ adminApp.get("/router-settings", async (c) => {
 
 adminApp.put("/router-settings", async (c) => {
 	const patch = await parseJson(c, routerSettingsSchema);
-	return ok(c, await updateRouterSettings(patch));
+	const updated = await updateRouterSettings(patch);
+	invalidateRouterSettingsCache();
+	return ok(c, updated);
 });
 
 /* --------------------------------------------------------------- fallbacks */

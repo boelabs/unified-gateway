@@ -81,6 +81,7 @@ One entry per deployment behind the pool, each with its own metrics:
       "model": "gpt-image",
       "provider": "openai",
       "status": "available",
+      "retry_after_ms": null,
       "created": 1735689600,
       "weight": 1,
       "limits": { "rpm": null, "tpm": null },
@@ -105,10 +106,11 @@ One entry per deployment behind the pool, each with its own metrics:
 `id` is a deterministic, opaque hash (`dep_` + a truncated SHA-256 of the internal deployment id) — it
 identifies the deployment across calls without exposing the real database id. `metrics` mirrors exactly
 what [Routing](/docs/routing) uses to make decisions, so this endpoint doubles as a live dashboard for
-"why did the router pick that one."
+"why did the router pick that one." `status` is one of `available`, `cooldown`, `half_open`, or
+`rate_limited`; `retry_after_ms` is the remaining circuit/probe TTL when applicable.
 
 ## What to read next
 
 - [Routing](/docs/routing) — how these same per-deployment metrics drive selection.
-- [Creating deployments](/docs/creating-deployments) — `weight`, `rpmLimit`, `tpmLimit`.
+- [Creating deployments](/docs/creating-deployments) — weights, limits, and shared failure domains.
 - [Security](/docs/security) — the general redaction rules for anything the gateway exposes publicly.

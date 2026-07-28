@@ -4,6 +4,7 @@ import { supportedParameterNames } from "#catalog/parameters.ts";
 import type { ResolvedModelMetadata } from "#catalog/types.ts";
 import type { DeploymentRow } from "#db/repos/deployments.ts";
 import type { OperationId } from "#operations/registry.ts";
+import { getEffectiveSettings } from "#router/settings.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
 import { resolveModelMetadata } from "#catalog/index.ts";
 import { OPERATIONS } from "#operations/registry.ts";
@@ -13,6 +14,12 @@ import { GatewayError } from "#core/errors.ts";
 import type { AppEnv } from "#auth/types.ts";
 import { createHash } from "node:crypto";
 import type { Context } from "hono";
+
+import {
+	getCircuitSnapshots,
+	deploymentSubject,
+	capacitySubject,
+} from "#router/circuit.ts";
 
 type Modality =
 	| "text"
@@ -262,16 +269,39 @@ function deploymentPricing(
 }
 
 async function deploymentObjects(group: PublicModelGroup): Promise<object[]> {
-	const metrics = await fetchMetrics(group.rows.map((row) => row.id));
+	const settings = await getEffectiveSettings();
+	const circuitsEnabled =
+		settings.allowedFails > 0 && settings.cooldownSeconds > 0;
+	const [metrics, circuits] = await Promise.all([
+		fetchMetrics(group.rows.map((row) => row.id)),
+		circuitsEnabled
+			? getCircuitSnapshots(
+					group.rows.map((row) => ({
+						deployment: deploymentSubject(row.id),
+						capacity: capacitySubject(row.id, row.failureDomain),
+					})),
+				)
+			: Promise.resolve(
+					group.rows.map(() => ({
+						status: "available" as const,
+						retryAfterMs: null,
+					})),
+				),
+	]);
 	return group.rows.map((row, index) => {
 		const meta = group.metas[index]!;
 		const m = metrics.get(row.id);
+		const circuit = circuits[index] ?? {
+			status: "available" as const,
+			retryAfterMs: null,
+		};
 		return {
 			id: publicDeploymentId(row),
 			object: "model.deployment",
 			model: row.publicModel,
 			provider: row.adapterKey,
-			status: "available",
+			status: circuit.status,
+			retry_after_ms: circuit.retryAfterMs,
 			created: Math.floor(row.createdAt.getTime() / 1000),
 			weight: row.weight,
 			limits: {

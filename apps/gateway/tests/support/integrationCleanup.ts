@@ -1,4 +1,5 @@
 import { invalidateResponseCache } from "#cache/responseCache.ts";
+import { capacitySubject } from "#router/circuit.ts";
 import { redis } from "#cache/redis.ts";
 import { sql } from "#db/client.ts";
 
@@ -37,6 +38,10 @@ const VIRTUAL_KEY_NAME_PATTERN = `^embeddings-e2e-${UUID_PATTERN}$`;
 
 interface IdRow {
 	id: string;
+}
+
+interface DeploymentStateRow extends IdRow {
+	failureDomain: string | null;
 }
 
 export interface IntegrationCleanupSummary {
@@ -79,7 +84,7 @@ async function deleteRedisPatterns(patterns: string[]): Promise<number> {
 }
 
 async function cleanupRedis(
-	deploymentIds: string[],
+	deployments: DeploymentStateRow[],
 	virtualKeyIds: string[],
 ): Promise<number> {
 	try {
@@ -89,13 +94,16 @@ async function cleanupRedis(
 				deleted += await invalidateResponseCache({ namespace: id });
 			}
 		}
-		const patterns = deploymentIds.flatMap((id) => [
-			`rt:inflight:${id}`,
-			`rt:fails:${id}`,
-			`rt:cooldown:${id}`,
-			`rt:cooldown:cause:${id}`,
-			`rt:rpm:${id}:*`,
-			`rt:tpm:${id}:*`,
+		const patterns = deployments.flatMap((deployment) => [
+			`rt:inflight:${deployment.id}`,
+			`rt:failures:${deployment.id}`,
+			`rt:successes:${deployment.id}`,
+			`rt:latency_ms:${deployment.id}`,
+			`rt:throughput_tps:${deployment.id}`,
+			`rt:rpm:${deployment.id}:*`,
+			`rt:tpm:${deployment.id}:*`,
+			`rt:circuit:deployment:${deployment.id}:*`,
+			`rt:circuit:capacity:${capacitySubject(deployment.id, deployment.failureDomain).id}:*`,
 		]);
 		if (patterns.length > 0) deleted += await deleteRedisPatterns(patterns);
 		return deleted;
@@ -105,8 +113,8 @@ async function cleanupRedis(
 }
 
 export async function cleanupIntegrationArtifacts(): Promise<IntegrationCleanupSummary> {
-	const deploymentRows = await sql<IdRow[]>`
-		select id::text as id
+	const deploymentRows = await sql<DeploymentStateRow[]>`
+		select id::text as id, failure_domain as "failureDomain"
 		from model_deployments
 		where public_model ~ ${PUBLIC_MODEL_PATTERN}
 	`;
@@ -123,7 +131,7 @@ export async function cleanupIntegrationArtifacts(): Promise<IntegrationCleanupS
 
 	const summary = emptySummary();
 	summary.redisKeys = await cleanupRedis(
-		deploymentRows.map((row) => row.id),
+		deploymentRows,
 		virtualKeyRows.map((row) => row.id),
 	);
 

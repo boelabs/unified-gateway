@@ -91,7 +91,17 @@ async function dispatch(
 	}
 
 	if (!res.ok) {
-		throw mapError({ status: res.status, body: await parseBody(res) }, ctx);
+		const retryAfter = res.headers.get("retry-after");
+		throw mapError(
+			{
+				status: res.status,
+				body: await parseBody(res),
+				...(retryAfter !== null
+					? { headers: { "retry-after": retryAfter } }
+					: {}),
+			},
+			ctx,
+		);
 	}
 	return res;
 }

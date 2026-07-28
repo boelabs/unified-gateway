@@ -7,6 +7,7 @@ import "#adapters/index.ts";
 import { redisAvailable, pgAvailable } from "#test-support/infra.ts";
 import { GatewayError, type ErrorClass } from "#core/errors.ts";
 import { configureFallback } from "#fallbacks/service.ts";
+import { capacitySubject } from "#router/circuit.ts";
 import { route } from "#router/index.ts";
 import { redis } from "#cache/redis.ts";
 
@@ -37,6 +38,8 @@ before(async () => {
 		allowedFails: 100,
 		cooldownSeconds: 1,
 		numRetries: 2,
+		maxAttemptsPerPool: 3,
+		maxAttemptsPerRequest: 10,
 		timeoutSeconds: 10,
 		retryAfterSeconds: 0,
 	});
@@ -48,7 +51,15 @@ after(async () => {
 			routingStrategy: originalSettings.routingStrategy,
 			allowedFails: originalSettings.allowedFails,
 			cooldownSeconds: originalSettings.cooldownSeconds,
+			failureWindowSeconds: originalSettings.failureWindowSeconds,
+			maxCooldownSeconds: originalSettings.maxCooldownSeconds,
+			halfOpenProbeSeconds: originalSettings.halfOpenProbeSeconds,
+			configurationCooldownSeconds:
+				originalSettings.configurationCooldownSeconds,
+			throttleCooldownSeconds: originalSettings.throttleCooldownSeconds,
 			numRetries: originalSettings.numRetries,
+			maxAttemptsPerPool: originalSettings.maxAttemptsPerPool,
+			maxAttemptsPerRequest: originalSettings.maxAttemptsPerRequest,
 			timeoutSeconds: originalSettings.timeoutSeconds,
 			retryAfterSeconds: originalSettings.retryAfterSeconds,
 		}).catch(() => {});
@@ -59,12 +70,16 @@ function modelName(prefix: string): string {
 	return `${prefix}-${randomUUID()}`;
 }
 
-async function deployment(publicModel: string): Promise<DeploymentRow> {
+async function deployment(
+	publicModel: string,
+	failureDomain?: string,
+): Promise<DeploymentRow> {
 	return createDeployment({
 		publicModel,
 		adapterKey: "openaicompatible",
 		upstreamModel: `text-${randomUUID()}`,
 		credentials: { apiKey: "test", baseUrl: "https://example.test/v1" },
+		...(failureDomain !== undefined ? { failureDomain } : {}),
 		catalogEntry: {
 			operations: {
 				"text.generate": {
@@ -91,6 +106,12 @@ async function cleanupState(deployments: DeploymentRow[]): Promise<void> {
 		`rt:cooldown:cause:${item.id}`,
 		`rt:rpm:${item.id}:${bucket}`,
 		`rt:tpm:${item.id}:${bucket}`,
+		...["cooldown", "cause", "failures", "history", "probe"].flatMap(
+			(suffix) => [
+				`rt:circuit:deployment:${item.id}:${suffix}`,
+				`rt:circuit:capacity:${capacitySubject(item.id, item.failureDomain).id}:${suffix}`,
+			],
+		),
 	]);
 	if (keys.length > 0) await redis.del(...keys);
 }
@@ -107,7 +128,7 @@ function fail(errorClass: ErrorClass): never {
 	});
 }
 
-test("router: numRetries belongs to each primary and fallback deployment", {
+test("router: pool and request budgets bound retries across fallbacks", {
 	skip,
 }, async () => {
 	const primaryModel = modelName("retry-primary");
@@ -136,13 +157,105 @@ test("router: numRetries belongs to each primary and fallback deployment", {
 				return fail("server");
 			},
 		);
-		assert.equal(counts.get(deployments[0]!.id), 3);
-		assert.equal(counts.get(deployments[1]!.id), 3);
+		assert.equal(
+			(counts.get(deployments[0]!.id) ?? 0) +
+				(counts.get(deployments[1]!.id) ?? 0),
+			3,
+		);
+		assert.ok((counts.get(deployments[0]!.id) ?? 0) >= 1);
+		assert.ok((counts.get(deployments[1]!.id) ?? 0) >= 1);
 		assert.equal(counts.get(deployments[2]!.id), 3);
 		assert.equal(counts.get(deployments[3]!.id), 1);
-		assert.equal(result.attempts, 10);
+		assert.equal(result.attempts, 7);
 		assert.equal(result.fallbackUsed, true);
+		const logicalFailureCounts = await redis.mget(
+			...deployments
+				.slice(0, 3)
+				.map((item) => `rt:circuit:deployment:${item.id}:failures`),
+		);
+		assert.deepEqual(logicalFailureCounts, ["1", "1", "1"]);
 		await result.finish(null);
+	} finally {
+		await cleanupDeployments(deployments);
+	}
+});
+
+test("router: a large failing pool cannot amplify one request beyond its pool budget", {
+	skip,
+}, async () => {
+	const publicModel = modelName("retry-primary");
+	const deployments = await Promise.all(
+		Array.from({ length: 12 }, () => deployment(publicModel)),
+	);
+	const attempted = new Set<string>();
+	let calls = 0;
+	try {
+		await assert.rejects(() =>
+			route(
+				publicModel,
+				"chat",
+				{
+					clientSignal: new AbortController().signal,
+					requestId: randomUUID(),
+				},
+				async (candidate) => {
+					calls += 1;
+					attempted.add(candidate.row.id);
+					return fail("server");
+				},
+			),
+		);
+		assert.equal(calls, 3);
+		assert.equal(attempted.size, 3);
+	} finally {
+		await cleanupDeployments(deployments);
+	}
+});
+
+test("router: provider throttling blocks one shared quota domain without lowering health", {
+	skip,
+}, async () => {
+	const publicModel = modelName("retry-primary");
+	const failureDomain = `shared-quota-${randomUUID()}`;
+	const deployments = [
+		await deployment(publicModel, failureDomain),
+		await deployment(publicModel, failureDomain),
+	];
+	let calls = 0;
+	try {
+		await assert.rejects(
+			() =>
+				route(
+					publicModel,
+					"chat",
+					{
+						clientSignal: new AbortController().signal,
+						requestId: randomUUID(),
+					},
+					async () => {
+						calls += 1;
+						throw new GatewayError({
+							class: "rate_limit",
+							message: "synthetic shared quota",
+							retryAfterMs: 2000,
+							headers: { "Retry-After": "2" },
+						});
+					},
+				),
+			(error: unknown) => {
+				const failure = error as GatewayError;
+				return (
+					failure.class === "rate_limit" &&
+					failure.retryAfterMs === 2000 &&
+					failure.headers?.["Retry-After"] === "2"
+				);
+			},
+		);
+		assert.equal(calls, 1);
+		const healthFailures = await redis.mget(
+			...deployments.map((item) => `rt:failures:${item.id}`),
+		);
+		assert.deepEqual(healthFailures, [null, null]);
 	} finally {
 		await cleanupDeployments(deployments);
 	}
@@ -225,14 +338,15 @@ test("router: candidate input incompatibilities do not affect deployment health"
 				);
 			},
 		);
-		const [inflight, recentFails, healthFailures, cooldown] = await redis.mget(
-			`rt:inflight:${deployed.id}`,
-			`rt:fails:${deployed.id}`,
-			`rt:failures:${deployed.id}`,
-			`rt:cooldown:${deployed.id}`,
-		);
+		const [inflight, circuitFailures, healthFailures, cooldown] =
+			await redis.mget(
+				`rt:inflight:${deployed.id}`,
+				`rt:circuit:deployment:${deployed.id}:failures`,
+				`rt:failures:${deployed.id}`,
+				`rt:circuit:deployment:${deployed.id}:cooldown`,
+			);
 		assert.ok(inflight === null || inflight === "0");
-		assert.equal(recentFails, null);
+		assert.equal(circuitFailures, null);
 		assert.equal(healthFailures, null);
 		assert.equal(cooldown, null);
 	} finally {
@@ -325,10 +439,10 @@ test("router: mixed primary causes use the general chain", {
 			},
 		);
 		assert.equal(counts.get(contextDeployment!.id), 1);
-		assert.equal(counts.get(serverDeployment!.id), 3);
+		assert.equal(counts.get(serverDeployment!.id), 2);
 		assert.equal(counts.get(deployments[2]!.id), 1);
 		assert.equal(counts.get(deployments[3]!.id), undefined);
-		assert.equal(result.attempts, 5);
+		assert.equal(result.attempts, 4);
 		await result.finish(null);
 	} finally {
 		await cleanupDeployments(deployments);

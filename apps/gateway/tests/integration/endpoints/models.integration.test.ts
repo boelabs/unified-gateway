@@ -81,11 +81,18 @@ test("GET /v1/models and /v1/models/{id} are public, but /v1/models/{id}/deploym
 		);
 		assert.equal(deploymentsWithKey.status, 200);
 		const deploymentsBody = (await deploymentsWithKey.json()) as {
-			data: Array<{ weight: number; limits: { rpm: number | null } }>;
+			data: Array<{
+				weight: number;
+				status: string;
+				retry_after_ms: number | null;
+				limits: { rpm: number | null };
+			}>;
 		};
 		assert.equal(deploymentsBody.data.length, 1);
 		assert.equal(deploymentsBody.data[0]?.weight, 7);
 		assert.equal(deploymentsBody.data[0]?.limits.rpm, 42);
+		assert.equal(deploymentsBody.data[0]?.status, "available");
+		assert.equal(deploymentsBody.data[0]?.retry_after_ms, null);
 	} finally {
 		if (virtualKey) {
 			await invalidateVirtualKey(virtualKey.row.keyHash);

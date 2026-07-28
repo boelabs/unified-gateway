@@ -155,6 +155,7 @@ test("admin platform: deployment label and metadata round-trip through create, g
 		upstreamModel: "gpt-image-2",
 		credentials: { apiKey: "secret-key" },
 		label: "OpenAI - billing team key",
+		failureDomain: "openai-billing-account",
 		metadata: { team: "billing", environment: "prod", keyAlias: "X" },
 	};
 	let deploymentId: string | undefined;
@@ -166,19 +167,30 @@ test("admin platform: deployment label and metadata round-trip through create, g
 		});
 		assert.equal(createResponse.status, 201);
 		const created = (await createResponse.json()) as {
-			data: { id: string; label: string; metadata: Record<string, unknown> };
+			data: {
+				id: string;
+				label: string;
+				failureDomain: string;
+				metadata: Record<string, unknown>;
+			};
 		};
 		deploymentId = created.data.id;
 		assert.equal(created.data.label, input.label);
+		assert.equal(created.data.failureDomain, input.failureDomain);
 		assert.deepEqual(created.data.metadata, input.metadata);
 
 		const getResponse = await platformTestApp.request(
 			`/deployments/${deploymentId}`,
 		);
 		const fetched = (await getResponse.json()) as {
-			data: { label: string; metadata: Record<string, unknown> };
+			data: {
+				label: string;
+				failureDomain: string;
+				metadata: Record<string, unknown>;
+			};
 		};
 		assert.equal(fetched.data.label, input.label);
+		assert.equal(fetched.data.failureDomain, input.failureDomain);
 		assert.deepEqual(fetched.data.metadata, input.metadata);
 
 		const patchResponse = await platformTestApp.request(
@@ -186,14 +198,23 @@ test("admin platform: deployment label and metadata round-trip through create, g
 			{
 				method: "PATCH",
 				headers: { "content-type": "application/json" },
-				body: JSON.stringify({ label: "OpenAI - renamed", metadata: {} }),
+				body: JSON.stringify({
+					label: "OpenAI - renamed",
+					failureDomain: null,
+					metadata: {},
+				}),
 			},
 		);
 		assert.equal(patchResponse.status, 200);
 		const patched = (await patchResponse.json()) as {
-			data: { label: string; metadata: Record<string, unknown> };
+			data: {
+				label: string;
+				failureDomain: string | null;
+				metadata: Record<string, unknown>;
+			};
 		};
 		assert.equal(patched.data.label, "OpenAI - renamed");
+		assert.equal(patched.data.failureDomain, null);
 		assert.deepEqual(patched.data.metadata, {});
 
 		const badCredentialsPatch = await platformTestApp.request(

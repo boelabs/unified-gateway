@@ -534,7 +534,7 @@ paths:
             type: string
       responses:
         "200":
-          description: "{ object: 'list', data: [{ id, object: 'model.deployment', model, provider, status, top_provider, pricing, operations, supported_parameters, metrics }] }"
+          description: "{ object: 'list', data: [{ id, object: 'model.deployment', model, provider, status, retry_after_ms, top_provider, pricing, operations, supported_parameters, metrics }] }"
         "404": *a1
   /admin/operations:
     get:
@@ -1142,7 +1142,14 @@ paths:
                   unsupportedParameterStrategy: drop
                   allowedFails: 3
                   cooldownSeconds: 5
+                  failureWindowSeconds: 60
+                  maxCooldownSeconds: 300
+                  halfOpenProbeSeconds: 30
+                  configurationCooldownSeconds: 300
+                  throttleCooldownSeconds: 5
                   numRetries: 3
+                  maxAttemptsPerPool: 3
+                  maxAttemptsPerRequest: 6
                   timeoutSeconds: 600
                   retryAfterSeconds: 0
       responses:
@@ -2143,6 +2150,11 @@ components:
           anyOf:
             - type: string
             - type: "null"
+        failureDomain:
+          description: Accepted for body reuse with POST /admin/deployments, but ignored by resolve.
+          anyOf:
+            - type: string
+            - type: "null"
         metadata:
           description: Accepted for body reuse with POST /admin/deployments, but ignored by resolve.
           type: object
@@ -2228,6 +2240,11 @@ components:
           anyOf:
             - type: string
             - type: "null"
+        failureDomain:
+          description: Shared provider account or quota domain. Deployments with the same value share upstream throttle state; null keeps the deployment independent.
+          anyOf:
+            - type: string
+            - type: "null"
         metadata:
           description: Free-form operator annotations (team, environment, key alias, rotation date, notes...). Up to 16 KiB; stored and returned verbatim.
           type: object
@@ -2285,6 +2302,11 @@ components:
           additionalProperties: {}
         label:
           description: Human identifier; null clears it.
+          anyOf:
+            - type: string
+            - type: "null"
+        failureDomain:
+          description: Shared quota domain; null clears it.
           anyOf:
             - type: string
             - type: "null"
@@ -2440,18 +2462,47 @@ components:
             - error
             - allow
         allowedFails:
-          description: Accumulated failures that trigger cooldown for a deployment.
+          description: Consecutive logical-request failures in the fixed failure window that open a deployment circuit. Zero disables automatic circuit opening.
           type: integer
           minimum: 0
           maximum: 9007199254740991
         cooldownSeconds:
+          description: Initial transient cooldown. Zero disables automatic circuit opening.
           type: integer
           minimum: 0
           maximum: 9007199254740991
+        failureWindowSeconds:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        maxCooldownSeconds:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        halfOpenProbeSeconds:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        configurationCooldownSeconds:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        throttleCooldownSeconds:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
         numRetries:
-          description: Maximum retries per deployment, in addition to the initial attempt. Resets for each deployment in each fallback pool.
+          description: Maximum retries per deployment, still bounded by the pool and request attempt budgets.
           type: integer
           minimum: 0
+          maximum: 9007199254740991
+        maxAttemptsPerPool:
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
+        maxAttemptsPerRequest:
+          type: integer
+          minimum: 1
           maximum: 9007199254740991
         timeoutSeconds:
           description: Timeout per upstream attempt.

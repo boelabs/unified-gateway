@@ -1,12 +1,11 @@
 /**
  * The gateway's canonical error. Adapters map upstream errors to one of these classes (`mapError`),
- * and the router decides what to do based on the class:
- *  - rate_limit | timeout | server -> retryable per deployment; counts toward cooldown.
+ * and the router decides what to do based on the class/disposition:
+ *  - timeout | server -> transient retry; counts toward the deployment circuit.
+ *  - rate_limit -> retryable capacity pressure; never lowers deployment health.
  *  - context_window | content_policy -> exhausts that deployment without repeating it; if the whole
  *    pool fails with the same class, selects its dedicated chain.
- *  - auth | bad_request | not_found -> exhausts that deployment without repeating it and continues the pool.
- * Provider-side request rejections (`bad_request`, `context_window`, `content_policy`) are
- * health-neutral: they describe this input, not whether the deployment is operational.
+ *  - auth | not_found -> configuration quarantine; bad_request -> health-neutral request rejection.
  */
 export type ErrorClass =
 	| "bad_request"
@@ -18,6 +17,18 @@ export type ErrorClass =
 	| "content_policy"
 	| "timeout"
 	| "server";
+
+/**
+ * Router-facing failure semantics. This is deliberately provider-agnostic: adapters classify the
+ * meaning of a failure, while the router decides whether to retry, quarantine, or leave health
+ * untouched.
+ */
+export type FailureKind =
+	| "request"
+	| "transient"
+	| "throttle"
+	| "configuration"
+	| "gateway";
 
 export interface OpenAIErrorBody {
 	error: {
@@ -147,7 +158,29 @@ export interface GatewayErrorOptions {
 	routingScope?: "candidate" | "request";
 	/** Whether this error is evidence that the selected deployment is unhealthy. */
 	deploymentHealth?: "penalize" | "neutral";
+	/** Explicit router disposition. Defaults from the canonical error class. */
+	failureKind?: FailureKind;
+	/** Provider-requested retry delay, normalized to milliseconds. */
+	retryAfterMs?: number;
+	/** Overrides the class default when a transport has more precise retry semantics. */
+	retryable?: boolean;
 	cause?: unknown;
+}
+
+function defaultFailureKind(cls: ErrorClass): FailureKind {
+	switch (cls) {
+		case "rate_limit":
+			return "throttle";
+		case "timeout":
+		case "server":
+			return "transient";
+		case "auth":
+		case "permission":
+		case "not_found":
+			return "configuration";
+		default:
+			return "request";
+	}
 }
 
 export class GatewayError extends Error {
@@ -164,6 +197,8 @@ export class GatewayError extends Error {
 	readonly headers?: Record<string, string>;
 	readonly routingScope: "candidate" | "request";
 	readonly deploymentHealth: "penalize" | "neutral";
+	readonly failureKind: FailureKind;
+	readonly retryAfterMs?: number;
 	/** Router attempts that led to this error (attached by the router; for logs). */
 	attempts?: unknown[];
 
@@ -179,20 +214,21 @@ export class GatewayError extends Error {
 		this.openaiType = meta.openaiType;
 		this.code = opts.code !== undefined ? opts.code : meta.defaultCode;
 		this.param = opts.param ?? null;
-		this.retryable = meta.retryable;
+		this.retryable = opts.retryable ?? meta.retryable;
 		// By default the client sees the class's GENERIC message; the detail stays in `message`.
 		this.publicMessage = opts.publicMessage ?? GENERIC_PUBLIC[opts.class];
 		if (opts.provider !== undefined) this.provider = opts.provider;
 		if (opts.headers !== undefined) this.headers = opts.headers;
 		this.routingScope = opts.routingScope ?? "candidate";
-		const providerRejectedInput =
-			opts.provider !== undefined &&
-			(opts.class === "bad_request" ||
-				opts.class === "context_window" ||
-				opts.class === "content_policy");
+		this.failureKind = opts.failureKind ?? defaultFailureKind(opts.class);
+		if (opts.retryAfterMs !== undefined)
+			this.retryAfterMs = Math.max(0, Math.floor(opts.retryAfterMs));
 		this.deploymentHealth =
 			opts.deploymentHealth ??
-			(this.routingScope === "request" || providerRejectedInput
+			(this.routingScope === "request" ||
+			this.failureKind === "request" ||
+			this.failureKind === "throttle" ||
+			this.failureKind === "gateway"
 				? "neutral"
 				: "penalize");
 	}
@@ -209,6 +245,12 @@ export class GatewayError extends Error {
 				: {}),
 			...(this.deploymentHealth !== "penalize"
 				? { deployment_health: this.deploymentHealth }
+				: {}),
+			...(this.failureKind !== "transient"
+				? { failure_kind: this.failureKind }
+				: {}),
+			...(this.retryAfterMs !== undefined
+				? { retry_after_ms: this.retryAfterMs }
 				: {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
 		};

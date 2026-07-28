@@ -33,6 +33,7 @@ Authorization: Bearer $MASTER_KEY
 | `label` | no | Human identifier to tell deployments of the same `publicModel` apart (e.g. which API key). Snapshotted into each request log so you can see *which* deployment served a request. `null` clears it. |
 | `metadata` | no | Free-form operator annotations (`team`, `environment`, key alias, rotation date, notes…). A JSON object up to 16 KiB; stored and returned verbatim. |
 | `enabled`, `weight`, `tpmLimit`, `rpmLimit` | no | Deployment state and limits. |
+| `failureDomain` | no | Shared provider account/quota identity. Rows with the same value share upstream `429` circuit state. |
 
 ### Adapter credential requirements
 

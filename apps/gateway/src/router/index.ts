@@ -9,21 +9,33 @@ import { GatewayError } from "#core/errors.ts";
 import type { Usage } from "#core/usage.ts";
 
 import {
-	partitionByCooldown,
-	type CooldownCause,
-	getCooldownCauses,
-	onAttemptCancel,
-	onSuccessFinish,
-	onAttemptStart,
-	onAttemptFail,
-	fetchMetrics,
-} from "./state.ts";
+	recordConfigurationFailure,
+	recordTransientFailure,
+	recordThrottleFailure,
+	type CircuitSettings,
+	acquireCircuitPermit,
+	releaseCircuitPermit,
+	getCircuitSnapshots,
+	deploymentSubject,
+	getCircuitCauses,
+	capacitySubject,
+	closeCircuits,
+} from "./circuit.ts";
 
 import {
 	decryptDeploymentCredentials,
 	listDeploymentCandidates,
 	type DeploymentCandidate,
 } from "#gateway/deploymentCandidates.ts";
+
+import {
+	type CooldownCause,
+	onAttemptFailure,
+	onAttemptCancel,
+	onSuccessFinish,
+	onAttemptStart,
+	fetchMetrics,
+} from "./state.ts";
 
 export interface RouteOptions {
 	clientSignal: AbortSignal;
@@ -52,6 +64,7 @@ interface AttemptRecord {
 	ms: number;
 	ok: boolean;
 	errorClass?: string;
+	failureKind?: string;
 	httpStatus?: number;
 	/** Present for failures intentionally excluded from deployment health and cooldown accounting. */
 	deploymentHealth?: "neutral";
@@ -116,7 +129,7 @@ function buildContext(
 }
 
 /**
- * Generic router: balancing + per-deployment retries + cooldown + per-reason fallbacks, for any
+ * Generic router: balancing + bounded retries + atomic circuits + per-reason fallbacks, for any
  * CallType. The concrete execution is injected via `execute`.
  */
 export async function route<T>(
@@ -126,12 +139,22 @@ export async function route<T>(
 	execute: ExecuteFn<T>,
 ): Promise<RouteResult<T>> {
 	const settings = await getEffectiveSettings();
+	const circuitSettings: CircuitSettings = {
+		enabled: settings.allowedFails > 0 && settings.cooldownSeconds > 0,
+		allowedFails: settings.allowedFails,
+		failureWindowMs: settings.failureWindowSeconds * 1000,
+		baseCooldownMs: settings.cooldownSeconds * 1000,
+		maxCooldownMs: settings.maxCooldownSeconds * 1000,
+		probeTtlMs: settings.halfOpenProbeSeconds * 1000,
+	};
 	let attempts = 0;
 	let lastError: GatewayError | undefined;
 	let eligibilityError: GatewayError | undefined;
 	let neutralCandidateError: GatewayError | undefined;
 	let deploymentFailureCount = 0;
+	let shortestRetryAfterMs: number | undefined;
 	const attemptLog: AttemptRecord[] = [];
+	const countedTransientDeployments = new Set<string>();
 
 	type PublicModelAttempt =
 		| { ok: true; result: RouteResult<T> }
@@ -165,31 +188,77 @@ export async function route<T>(
 		}
 
 		const attemptsByDeployment = new Map<string, number>();
+		const blockedDeployments = new Set<string>();
+		const blockedCapacity = new Set<string>();
 		const failureReasons = new Set<FallbackReason>();
 		const maxAttemptsPerDeployment = settings.numRetries + 1;
+		const poolStartedAt = attempts;
 		let reason: FailReason = "exhausted";
 
-		while (true) {
-			const withAttemptsLeft = candidates.filter(
-				(candidate) =>
-					(attemptsByDeployment.get(candidate.row.id) ?? 0) <
-					maxAttemptsPerDeployment,
-			);
-			if (withAttemptsLeft.length === 0) break;
+		if (circuitSettings.enabled) {
+			const subjects = candidates.map((candidate) => ({
+				deployment: deploymentSubject(candidate.row.id),
+				capacity: capacitySubject(
+					candidate.row.id,
+					candidate.row.failureDomain,
+				),
+			}));
+			const snapshots = await getCircuitSnapshots(subjects);
+			snapshots.forEach((snapshot, index) => {
+				const subject = subjects[index];
+				if (!snapshot || !subject) return;
+				if (snapshot.status === "cooldown")
+					blockedDeployments.add(subject.deployment.id);
+				if (snapshot.status === "rate_limited")
+					blockedCapacity.add(subject.capacity.id);
+				if (
+					snapshot.status === "half_open" &&
+					snapshot.blockedBy === "deployment"
+				)
+					blockedDeployments.add(subject.deployment.id);
+				if (
+					snapshot.status === "half_open" &&
+					snapshot.blockedBy === "capacity"
+				)
+					blockedCapacity.add(subject.capacity.id);
+				if (snapshot.retryAfterMs !== null) {
+					shortestRetryAfterMs =
+						shortestRetryAfterMs === undefined
+							? snapshot.retryAfterMs
+							: Math.min(shortestRetryAfterMs, snapshot.retryAfterMs);
+				}
+			});
+		}
 
-			const { healthy } = await partitionByCooldown(
-				withAttemptsLeft.map((c) => c.row.id),
-			);
-			const healthySet = new Set(healthy);
-			const live = withAttemptsLeft.filter((c) => healthySet.has(c.row.id));
-			if (live.length === 0) {
-				reason = "cooldown";
+		while (true) {
+			if (
+				attempts >= settings.maxAttemptsPerRequest ||
+				attempts - poolStartedAt >= settings.maxAttemptsPerPool
+			) {
+				reason = "attempt_budget";
+				break;
+			}
+			const withAttemptsLeft = candidates.filter((candidate) => {
+				const capacity = capacitySubject(
+					candidate.row.id,
+					candidate.row.failureDomain,
+				);
+				return (
+					(attemptsByDeployment.get(candidate.row.id) ?? 0) <
+						maxAttemptsPerDeployment &&
+					!blockedDeployments.has(candidate.row.id) &&
+					!blockedCapacity.has(capacity.id)
+				);
+			});
+			if (withAttemptsLeft.length === 0) {
+				if (blockedDeployments.size > 0) reason = "cooldown";
+				else if (blockedCapacity.size > 0) reason = "rate_limited";
 				break;
 			}
 
 			// Exclude deployments that exceed their own RPM/TPM limit.
-			const metrics = await fetchMetrics(live.map((c) => c.row.id));
-			const available = live.filter((c) => {
+			const metrics = await fetchMetrics(withAttemptsLeft.map((c) => c.row.id));
+			const available = withAttemptsLeft.filter((c) => {
 				const m = metrics.get(c.row.id);
 				if (!m) return true;
 				if (c.row.rpmLimit != null && m.rpm >= c.row.rpmLimit) return false;
@@ -220,13 +289,38 @@ export async function route<T>(
 				callType,
 				opts.preferredTransport,
 			);
+			const deployment = deploymentSubject(chosen.row.id);
+			const capacity = capacitySubject(chosen.row.id, chosen.row.failureDomain);
+			const permitResult = await acquireCircuitPermit(
+				deployment,
+				capacity,
+				circuitSettings,
+			);
+			if (!permitResult.allowed) {
+				if (permitResult.blockedBy === "deployment")
+					blockedDeployments.add(chosen.row.id);
+				else blockedCapacity.add(capacity.id);
+				shortestRetryAfterMs =
+					shortestRetryAfterMs === undefined
+						? permitResult.retryAfterMs
+						: Math.min(shortestRetryAfterMs, permitResult.retryAfterMs);
+				reason =
+					permitResult.blockedBy === "capacity" ? "rate_limited" : "cooldown";
+				continue;
+			}
+			const permit = permitResult.permit;
 
 			attemptsByDeployment.set(
 				chosen.row.id,
 				(attemptsByDeployment.get(chosen.row.id) ?? 0) + 1,
 			);
 			attempts += 1;
-			await onAttemptStart(chosen.row.id);
+			try {
+				await onAttemptStart(chosen.row.id);
+			} catch (error) {
+				await releaseCircuitPermit(permit);
+				throw error;
+			}
 			const startedAt = Date.now();
 			try {
 				const ctx = buildContext(chosen, callType, settings, opts);
@@ -250,11 +344,15 @@ export async function route<T>(
 						upstreamStartedAt: startedAt,
 						attemptLog,
 						finish: (usage, finishedAt) =>
-							onSuccessFinish(chosen.row.id, {
-								totalTokens: usage?.totalTokens ?? null,
-								completionTokens: usage?.completionTokens ?? null,
-								durationMs: (finishedAt ?? Date.now()) - startedAt,
-							}),
+							onSuccessFinish(
+								chosen.row.id,
+								{
+									totalTokens: usage?.totalTokens ?? null,
+									completionTokens: usage?.completionTokens ?? null,
+									durationMs: (finishedAt ?? Date.now()) - startedAt,
+								},
+								permit,
+							),
 					},
 				};
 			} catch (err) {
@@ -262,7 +360,7 @@ export async function route<T>(
 				// release the inflight, do not count toward allowed_fails/cooldown, and do not retry.
 				// Prevents quickly cancelling requests from putting the deployment pool into cooldown.
 				if (opts.clientSignal.aborted) {
-					await onAttemptCancel(chosen.row.id);
+					await onAttemptCancel(chosen.row.id, permit);
 					attemptLog.push({
 						deploymentId: chosen.row.id,
 						...(chosen.row.label != null ? { label: chosen.row.label } : {}),
@@ -288,10 +386,13 @@ export async function route<T>(
 					: new GatewayError({
 							class: "server",
 							message: String(err),
+							failureKind: "gateway",
+							deploymentHealth: "neutral",
+							retryable: false,
 							cause: err,
 						});
 				if (ge.routingScope === "request") {
-					await onAttemptCancel(chosen.row.id);
+					await onAttemptCancel(chosen.row.id, permit);
 					attemptLog.push({
 						deploymentId: chosen.row.id,
 						...(chosen.row.label != null ? { label: chosen.row.label } : {}),
@@ -300,34 +401,75 @@ export async function route<T>(
 						ms: Date.now() - startedAt,
 						ok: false,
 						errorClass: ge.class,
+						failureKind: ge.failureKind,
 						httpStatus: ge.httpStatus,
 						deploymentHealth: "neutral",
 					});
 					ge.attempts = attemptLog;
 					throw ge;
 				}
-				if (ge.deploymentHealth === "neutral") {
-					await onAttemptCancel(chosen.row.id);
-					neutralCandidateError ??= ge;
-				} else {
-					// Attach upstream detail to the cooldown cause (if this failure triggers it).
-					const cause: CooldownCause = {
-						class: ge.class,
-						message: ge.message,
-						...(ge.provider?.status !== undefined
-							? { status: ge.provider.status }
-							: {}),
-						...(ge.provider?.body !== undefined
-							? { body: ge.provider.body }
-							: {}),
-					};
-					await onAttemptFail(
-						chosen.row.id,
-						settings.allowedFails,
-						settings.cooldownSeconds,
-						cause,
-					);
-					deploymentFailureCount += 1;
+				const cause: CooldownCause = {
+					class: ge.class,
+					message: ge.message,
+					...(ge.provider?.status !== undefined
+						? { status: ge.provider.status }
+						: {}),
+					...(ge.provider?.body !== undefined
+						? { body: ge.provider.body }
+						: {}),
+				};
+				switch (ge.failureKind) {
+					case "transient": {
+						await onAttemptFailure(chosen.row.id, true);
+						const firstSignal =
+							!countedTransientDeployments.has(chosen.row.id) ||
+							permit.deploymentMode === "half_open";
+						if (firstSignal) {
+							countedTransientDeployments.add(chosen.row.id);
+							await recordTransientFailure(permit, circuitSettings, cause);
+						}
+						deploymentFailureCount += 1;
+						break;
+					}
+					case "configuration":
+						await onAttemptFailure(chosen.row.id, true);
+						await recordConfigurationFailure(
+							permit,
+							circuitSettings,
+							cause,
+							settings.configurationCooldownSeconds * 1000,
+						);
+						deploymentFailureCount += 1;
+						break;
+					case "throttle": {
+						await onAttemptFailure(chosen.row.id, false);
+						const throttleMs = Math.max(
+							ge.retryAfterMs ?? 0,
+							settings.throttleCooldownSeconds * 1000,
+						);
+						await recordThrottleFailure(
+							permit,
+							circuitSettings,
+							cause,
+							throttleMs,
+						);
+						shortestRetryAfterMs =
+							shortestRetryAfterMs === undefined
+								? throttleMs
+								: Math.min(shortestRetryAfterMs, throttleMs);
+						neutralCandidateError ??= ge;
+						break;
+					}
+					case "request":
+						await onAttemptFailure(chosen.row.id, false);
+						// A deterministic request rejection still proves a half-open upstream is alive.
+						await closeCircuits(permit);
+						neutralCandidateError ??= ge;
+						break;
+					case "gateway":
+						await onAttemptCancel(chosen.row.id, permit);
+						neutralCandidateError ??= ge;
+						break;
 				}
 				lastError = ge;
 				attemptLog.push({
@@ -338,6 +480,7 @@ export async function route<T>(
 					ms: Date.now() - startedAt,
 					ok: false,
 					errorClass: ge.class,
+					failureKind: ge.failureKind,
 					httpStatus: ge.httpStatus,
 					...(ge.deploymentHealth === "neutral"
 						? { deploymentHealth: "neutral" as const }
@@ -368,8 +511,19 @@ export async function route<T>(
 						(attemptsByDeployment.get(candidate.row.id) ?? 0) <
 						maxAttemptsPerDeployment,
 				);
-				if (ge.retryable && hasAttemptsLeft && settings.retryAfterSeconds > 0) {
-					await sleep(settings.retryAfterSeconds * 1000);
+				if (
+					ge.failureKind === "transient" &&
+					ge.retryable &&
+					hasAttemptsLeft &&
+					attempts < settings.maxAttemptsPerRequest &&
+					attempts - poolStartedAt < settings.maxAttemptsPerPool
+				) {
+					const exponent = Math.min(5, attempts - poolStartedAt - 1);
+					const ceiling = Math.min(
+						2000,
+						Math.max(settings.retryAfterSeconds * 1000, 100 * 2 ** exponent),
+					);
+					await sleep(Math.floor(Math.random() * ceiling));
 				}
 			}
 		}
@@ -417,11 +571,15 @@ export async function route<T>(
 		throw neutralCandidateError;
 	}
 
-	// If it cut on cooldown (possibly with no attempts in THIS request), retrieve the stored causes
-	// of its deployments: they explain why they are all cooling down.
+	// Stored redacted causes explain a zero-attempt circuit cut without changing the public error.
 	const cooldownCauses =
 		lastReason === "cooldown"
-			? await getCooldownCauses(primaryCandidates.map((c) => c.row.id))
+			? await getCircuitCauses(
+					primaryCandidates.flatMap((candidate) => [
+						deploymentSubject(candidate.row.id),
+						capacitySubject(candidate.row.id, candidate.row.failureDomain),
+					]),
+				)
 			: new Map<string, CooldownCause>();
 
 	// ROUTING error (gateway info, public and specific): explains why it could not be served.
@@ -432,7 +590,7 @@ export async function route<T>(
 		attempts,
 		reason: lastReason,
 		triedFallback,
-		cooldownSeconds: settings.cooldownSeconds,
+		retryAfterMs: shortestRetryAfterMs,
 		lastError,
 		cooldownCauses,
 	});
@@ -440,7 +598,12 @@ export async function route<T>(
 	throw routingError;
 }
 
-type FailReason = "no_candidates" | "cooldown" | "rate_limited" | "exhausted";
+type FailReason =
+	| "no_candidates"
+	| "cooldown"
+	| "rate_limited"
+	| "attempt_budget"
+	| "exhausted";
 
 const attemptsLabel = (n: number): string =>
 	`${n} attempt${n === 1 ? "" : "s"}`;
@@ -469,7 +632,7 @@ function buildRoutingError(p: {
 	attempts: number;
 	reason: FailReason;
 	triedFallback: boolean;
-	cooldownSeconds: number;
+	retryAfterMs: number | undefined;
 	lastError: GatewayError | undefined;
 	cooldownCauses: Map<string, CooldownCause>;
 }): GatewayError {
@@ -497,10 +660,20 @@ function buildRoutingError(p: {
 					}
 				: provider;
 		return new GatewayError({
-			class: "rate_limit",
+			class: "server",
+			status: 503,
 			message: internal,
-			publicMessage: `All deployments for public model "${p.publicModel}" are in cooldown${fbNote}. Try again in ~${p.cooldownSeconds}s.`,
+			publicMessage: `All deployments for public model "${p.publicModel}" are temporarily unavailable${fbNote}. Please retry shortly.`,
 			code: "deployments_in_cooldown",
+			...(p.retryAfterMs !== undefined
+				? {
+						headers: {
+							"Retry-After": String(
+								Math.max(1, Math.ceil(p.retryAfterMs / 1000)),
+							),
+						},
+					}
+				: {}),
 			...causeProvider,
 		});
 	}
@@ -510,6 +683,15 @@ function buildRoutingError(p: {
 			message: internal,
 			publicMessage: `All deployments for public model "${p.publicModel}" exceeded their RPM/TPM limit${fbNote}. Please try again later.`,
 			code: "rate_limit_exceeded",
+			...(p.retryAfterMs !== undefined
+				? {
+						headers: {
+							"Retry-After": String(
+								Math.max(1, Math.ceil(p.retryAfterMs / 1000)),
+							),
+						},
+					}
+				: {}),
 			...provider,
 		});
 	}
@@ -522,6 +704,10 @@ function buildRoutingError(p: {
 		publicMessage: `No deployments for public model "${p.publicModel}" were able to handle the request${fbNote} after ${attemptsLabel(p.attempts)}${cause}. Please try again later.`,
 		code: "no_deployments_available",
 		...(p.lastError?.httpStatus ? { status: p.lastError.httpStatus } : {}),
+		...(p.lastError?.headers ? { headers: p.lastError.headers } : {}),
+		...(p.lastError?.retryAfterMs !== undefined
+			? { retryAfterMs: p.lastError.retryAfterMs }
+			: {}),
 		...provider,
 	});
 }

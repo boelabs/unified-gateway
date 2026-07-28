@@ -50,28 +50,28 @@ chain. If the pool's causes are mixed, `general` is used.
 The `reason` is decided once, from the primary pool. After that the chosen chain is traversed
 linearly; fallback Public Models do not recursively open their own chains.
 
-## Per-deployment retries
+## Retry budgets
 
-`router_settings.num_retries` belongs to each deployment, not to the Public Model. Each deployment
-gets an initial attempt plus up to `numRetries` retries:
+Three limits apply simultaneously:
 
 ```text
 max per deployment = 1 + numRetries
-max per pool = eligible deployments × (1 + numRetries)
+max per pool = maxAttemptsPerPool
+max for primary + all fallbacks = maxAttemptsPerRequest
 ```
 
 The router makes a first pass over all eligible deployments before starting the second, and so on.
-Each deployment pool in the chain receives the same per-deployment budget. Execution ends immediately
-when one succeeds.
+It advances to the next fallback when the current pool reaches its budget. Execution ends immediately
+when one succeeds, and the full-chain budget prevents a long fallback list from amplifying an outage.
 
 Non-retryable errors, including `context_window` and `content_policy`, exhaust that deployment after a
-single attempt, but do not cut the pool: the others are still tried. Cooldown, RPM/TPM, and
+single attempt, but do not cut the pool: the others are still tried. Circuit state, RPM/TPM, and
 availability can reduce the actual number of attempts below the maximum.
 
-Example with `numRetries = 2`:
+Example with `numRetries = 2`, `maxAttemptsPerPool = 3`, and a sufficiently large request budget:
 
 ```text
-primary (deployments A, B): A1, B1, A2, B2, A3, B3
+primary (deployments A, B): A1, B1, A2
 fallback-1 (deployment C): C1, C2, C3
 fallback-2 (deployment D): D1 → success
 ```
