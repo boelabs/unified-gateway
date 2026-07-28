@@ -4723,6 +4723,42 @@
 				"cacheReadCentsPerMTokens": 30
 			}
 		},
+		"moonshotai/kimi-k3-fast": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 131072,
+					"modalities": {
+						"input": ["image", "pdf", "text"],
+						"output": ["text"]
+					},
+					"contracts": ["chat.completions", "responses"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"stop": true,
+						"tool_choice": true,
+						"tools": true
+					},
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"]
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 450,
+				"outputCentsPerMTokens": 2250,
+				"cacheReadCentsPerMTokens": 45
+			}
+		},
 		"morph/morph-v3-fast": {
 			"operations": {
 				"text.generate": {
