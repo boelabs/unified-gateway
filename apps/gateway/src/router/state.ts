@@ -110,7 +110,7 @@ function ewma(previous: string | null, sample: number): number {
 		: sample;
 }
 
-/** Success: releases inflight, updates usage/performance, and closes owned half-open probes. */
+/** Success: updates telemetry, closes owned probes, and resets closed-circuit failure counters. */
 export async function onSuccessFinish(
 	id: string,
 	telemetry: SuccessTelemetry,

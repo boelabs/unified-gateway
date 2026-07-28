@@ -21,9 +21,8 @@ export interface EffectiveSettings {
 	halfOpenProbeSeconds: number;
 	configurationCooldownSeconds: number;
 	throttleCooldownSeconds: number;
-	/** Maximum retries per deployment, on top of the initial attempt. */
+	/** Retries for one Public Model pool, on top of the initial attempt. */
 	numRetries: number;
-	maxAttemptsPerPool: number;
 	maxAttemptsPerRequest: number;
 	timeoutSeconds: number;
 	retryAfterSeconds: number;
@@ -40,7 +39,6 @@ const DEFAULTS: EffectiveSettings = {
 	configurationCooldownSeconds: 300,
 	throttleCooldownSeconds: 5,
 	numRetries: 3,
-	maxAttemptsPerPool: 3,
 	maxAttemptsPerRequest: 6,
 	timeoutSeconds: 600,
 	retryAfterSeconds: 0,
@@ -66,7 +64,6 @@ async function loadGlobal(): Promise<EffectiveSettings> {
 				configurationCooldownSeconds: row.configurationCooldownSeconds,
 				throttleCooldownSeconds: row.throttleCooldownSeconds,
 				numRetries: row.numRetries,
-				maxAttemptsPerPool: row.maxAttemptsPerPool,
 				maxAttemptsPerRequest: row.maxAttemptsPerRequest,
 				timeoutSeconds: row.timeoutSeconds,
 				retryAfterSeconds: row.retryAfterSeconds,

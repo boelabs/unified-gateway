@@ -140,7 +140,7 @@ export async function route<T>(
 ): Promise<RouteResult<T>> {
 	const settings = await getEffectiveSettings();
 	const circuitSettings: CircuitSettings = {
-		enabled: settings.allowedFails > 0 && settings.cooldownSeconds > 0,
+		enabled: settings.cooldownSeconds > 0,
 		allowedFails: settings.allowedFails,
 		failureWindowMs: settings.failureWindowSeconds * 1000,
 		baseCooldownMs: settings.cooldownSeconds * 1000,
@@ -191,7 +191,8 @@ export async function route<T>(
 		const blockedDeployments = new Set<string>();
 		const blockedCapacity = new Set<string>();
 		const failureReasons = new Set<FallbackReason>();
-		const maxAttemptsPerDeployment = settings.numRetries + 1;
+		const maxAttemptsPerPool = settings.numRetries + 1;
+		const maxAttemptsPerDeployment = maxAttemptsPerPool;
 		const poolStartedAt = attempts;
 		let reason: FailReason = "exhausted";
 
@@ -233,7 +234,7 @@ export async function route<T>(
 		while (true) {
 			if (
 				attempts >= settings.maxAttemptsPerRequest ||
-				attempts - poolStartedAt >= settings.maxAttemptsPerPool
+				attempts - poolStartedAt >= maxAttemptsPerPool
 			) {
 				reason = "attempt_budget";
 				break;
@@ -516,14 +517,15 @@ export async function route<T>(
 					ge.retryable &&
 					hasAttemptsLeft &&
 					attempts < settings.maxAttemptsPerRequest &&
-					attempts - poolStartedAt < settings.maxAttemptsPerPool
+					attempts - poolStartedAt < maxAttemptsPerPool
 				) {
 					const exponent = Math.min(5, attempts - poolStartedAt - 1);
-					const ceiling = Math.min(
-						2000,
-						Math.max(settings.retryAfterSeconds * 1000, 100 * 2 ** exponent),
+					const minimum = Math.max(
+						settings.retryAfterSeconds * 1000,
+						ge.retryAfterMs ?? 0,
 					);
-					await sleep(Math.floor(Math.random() * ceiling));
+					const jitterCeiling = Math.min(2000, 100 * 2 ** exponent);
+					await sleep(minimum + Math.floor(Math.random() * jitterCeiling));
 				}
 			}
 		}
@@ -681,7 +683,7 @@ function buildRoutingError(p: {
 		return new GatewayError({
 			class: "rate_limit",
 			message: internal,
-			publicMessage: `All deployments for public model "${p.publicModel}" exceeded their RPM/TPM limit${fbNote}. Please try again later.`,
+			publicMessage: `All deployments for public model "${p.publicModel}" are temporarily rate limited${fbNote}, either by configured RPM/TPM limits or by upstream capacity. Please try again later.`,
 			code: "rate_limit_exceeded",
 			...(p.retryAfterMs !== undefined
 				? {

@@ -52,23 +52,24 @@ linearly; fallback Public Models do not recursively open their own chains.
 
 ## Retry budgets
 
-Three limits apply simultaneously:
+Two limits apply simultaneously:
 
 ```text
-max per deployment = 1 + numRetries
-max per pool = maxAttemptsPerPool
+max per Public Model pool = 1 + numRetries
 max for primary + all fallbacks = maxAttemptsPerRequest
 ```
 
 The router makes a first pass over all eligible deployments before starting the second, and so on.
 It advances to the next fallback when the current pool reaches its budget. Execution ends immediately
 when one succeeds, and the full-chain budget prevents a long fallback list from amplifying an outage.
+`maxAttemptsPerRequest` must be at least `numRetries + 1`, so it never truncates the configured retry
+count for the primary pool.
 
 Non-retryable errors, including `context_window` and `content_policy`, exhaust that deployment after a
 single attempt, but do not cut the pool: the others are still tried. Circuit state, RPM/TPM, and
 availability can reduce the actual number of attempts below the maximum.
 
-Example with `numRetries = 2`, `maxAttemptsPerPool = 3`, and a sufficiently large request budget:
+Example with `numRetries = 2` and a sufficiently large request budget:
 
 ```text
 primary (deployments A, B): A1, B1, A2
