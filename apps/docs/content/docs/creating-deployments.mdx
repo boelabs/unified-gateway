@@ -342,7 +342,7 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
 - For several providers behind the same public name, create several deployments with the same
   `publicModel` (the router balances and applies fallback).
 - Edit with `PATCH /admin/deployments/:id` (same fields; `catalogEntry`/`pricing` accept `null` to clear).
-- The semantics of per-deployment retries, `reason`, and chain lifecycle are in [fallbacks](/docs/fallbacks).
+- The semantics of pool-wide retries, `reason`, and chain lifecycle are in [fallbacks](/docs/fallbacks).
 
 ## What to read next
 

@@ -24,7 +24,7 @@ that don't apply to them (parameter policy, response caching).
                                  every step below
 8.  parameter-policy eligibility — "error" strategy only: excludes candidates lacking a requested
                                  parameter before routing even starts
-9.  routing                    — pickDeployment (strategy) + per-deployment retries + cooldown;
+9.  routing                    — pickDeployment (strategy) + pool-wide retries + cooldown;
                                  "drop"/"allow" parameter policy applied to the request actually sent
                                  to the CHOSEN deployment, not before
 10. adapter execution           — canonical -> upstream wire format -> canonical response

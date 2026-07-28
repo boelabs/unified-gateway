@@ -111,7 +111,7 @@ types and their Transport. Do not use **Unified**.
 
 An ordered chain of Public Models identified by `(primaryModel, reason)`. `reason` is `general`,
 `context_window`, or `content_policy`; it is not an operation. Each target represents its deployment
-pool and receives the same per-deployment retry budget as the primary.
+pool and receives the same pool-wide retry budget as the primary.
 
 Do not use the former field **kind** for fallbacks. `kind` is still valid in domains where it does
 discriminate a variant, such as reasoning controls or canonical events.
