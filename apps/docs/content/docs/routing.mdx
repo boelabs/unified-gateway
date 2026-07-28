@@ -76,32 +76,39 @@ deployment (set on the deployment, not the router settings):
 
 Configured globally via `PUT /admin/router-settings`:
 
+These five controls match the router's primary reliability contract:
+
 | Field | Default | Meaning |
 |---|---|---|
-| `allowedFails` | `3` | Consecutive logical-request failures in the fixed window that open a deployment circuit. `0` disables automatic circuit opening. |
+| `allowedFails` | `3` | Transient logical-request failures a deployment is allowed before the **next** one opens cooldown. A success resets the count; `0` opens on the first failure. |
+| `cooldownSeconds` | `5` | Time a deployment stays in cooldown after exceeding `allowedFails`. `0` disables automatic cooldown circuits. |
+| `numRetries` | `3` | Retries for a failed Public Model request, in addition to the initial attempt and shared across its deployment pool. |
+| `timeoutSeconds` | `600` | Per-attempt upstream timeout. |
+| `retryAfterSeconds` | `0` | Minimum wait before a transient retry; exponential full jitter is added above this floor. |
+
+The remaining fields are advanced safety controls:
+
+| Field | Default | Meaning |
+|---|---|---|
 | `failureWindowSeconds` | `60` | Fixed (non-sliding) failure-counting window |
-| `cooldownSeconds` | `5` | Initial transient cooldown. `0` disables automatic circuit opening. |
 | `maxCooldownSeconds` | `300` | Maximum exponential cooldown after failed recovery probes |
 | `halfOpenProbeSeconds` | `30` | Ownership TTL for the single half-open recovery probe |
 | `configurationCooldownSeconds` | `300` | Immediate quarantine for invalid credentials/model access |
 | `throttleCooldownSeconds` | `5` | Minimum shared-capacity cooldown for provider `429` responses |
-| `numRetries` | `3` | Per-deployment ceiling, subordinate to both hard attempt budgets |
-| `maxAttemptsPerPool` | `3` | Hard attempts allowed for one Public Model pool |
-| `maxAttemptsPerRequest` | `6` | Hard attempts across the primary and complete fallback chain |
-| `timeoutSeconds` | `600` | Per-attempt upstream timeout |
-| `retryAfterSeconds` | `0` | Minimum base for jittered transient retry backoff |
+| `maxAttemptsPerRequest` | `6` | Hard attempts across the primary and complete fallback chain; must be at least `numRetries + 1` and is raised automatically when only `numRetries` requires it. |
 
-The router still makes a first pass across deployments before repeating one, but stops at the first of
-three ceilings: `numRetries + 1` for that deployment, `maxAttemptsPerPool` for that Public Model, or
-`maxAttemptsPerRequest` for the full fallback chain. The default request can therefore never fan out
-into dozens of upstream calls just because dozens of deployments exist.
+One Public Model pool receives at most `numRetries + 1` attempts. The router makes a first pass across
+eligible deployments before repeating one, so adding deployments cannot silently multiply the retry
+budget. `maxAttemptsPerRequest` separately bounds amplification across the primary and its complete
+fallback chain.
 
 Failures are classified by effect rather than by a broad "provider error" bucket:
 
 - **Request** (`400`-class input/context/content failures, including otherwise unknown provider
   `4xx` statuses): try a different candidate if useful, but never lower health or open a circuit.
 - **Throttle** (`429`): do not lower deployment health. Open the shared `failureDomain` capacity
-  circuit and honor the provider's `Retry-After` value when present.
+  circuit immediately and honor the provider's `Retry-After` value when present. These capacity
+  signals do not increment `allowedFails`.
 - **Transient** (timeouts, network failures, provider `5xx`): retry with exponential full jitter and
   count at most one failure per logical request and deployment toward the circuit.
 - **Configuration** (invalid provider auth/access/model): quarantine that deployment immediately
@@ -117,6 +124,8 @@ Circuit transitions are atomic in Redis. Once the fixed failure threshold opens 
 in-flight failures cannot extend it. After cooldown it becomes **half-open**: exactly one request owns
 the recovery probe while concurrent requests use other candidates. A successful probe closes it; a
 failed probe reopens it with exponential cooldown and jitter, capped by `maxCooldownSeconds`.
+While closed, every successful upstream call clears that deployment's accumulated transient-failure
+count.
 
 If every deployment circuit is open, the gateway returns `503 deployments_in_cooldown` with an
 accurate `Retry-After` header. If shared capacity is the blocker, it returns `429
@@ -154,8 +163,7 @@ curl -X PUT "$GATEWAY/admin/router-settings" \
     "halfOpenProbeSeconds": 30,
     "configurationCooldownSeconds": 300,
     "throttleCooldownSeconds": 5,
-    "numRetries": 2,
-    "maxAttemptsPerPool": 3,
+    "numRetries": 3,
     "maxAttemptsPerRequest": 6,
     "timeoutSeconds": 300,
     "retryAfterSeconds": 1

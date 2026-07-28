@@ -129,7 +129,7 @@ test("circuit: fixed failure window does not slide on every failure", {
 	}
 });
 
-test("circuit: threshold is atomic, half-open admits one probe, and backoff recovers", {
+test("circuit: allowed failures are honored before cooldown, half-open admits one probe", {
 	skip,
 }, async () => {
 	const id = randomUUID();
@@ -141,17 +141,22 @@ test("circuit: threshold is atomic, half-open admits one probe, and backoff reco
 		probeTtlMs: 2000,
 	});
 	try {
-		for (const message of ["first", "second"]) {
+		for (const message of ["first", "second", "third"]) {
 			const acquired = await acquireCircuitPermit(deployment, capacity, config);
 			assert.equal(acquired.allowed, true);
 			if (!acquired.allowed) return;
 			await recordTransientFailure(acquired.permit, config, {
 				class: "server",
 				message,
-				...(message === "second"
+				...(message === "third"
 					? { body: { error: { message: "sensitive provider detail" } } }
 					: {}),
 			});
+			const [current] = await getCircuitSnapshots([{ deployment, capacity }]);
+			assert.equal(
+				current?.status,
+				message === "third" ? "cooldown" : "available",
+			);
 		}
 		let [snapshot] = await getCircuitSnapshots([{ deployment, capacity }]);
 		assert.equal(snapshot?.status, "cooldown");
@@ -188,6 +193,67 @@ test("circuit: threshold is atomic, half-open admits one probe, and backoff reco
 		assert.equal(recovery.permit.deploymentMode, "half_open");
 		await closeCircuits(recovery.permit);
 		[snapshot] = await getCircuitSnapshots([{ deployment, capacity }]);
+		assert.equal(snapshot?.status, "available");
+	} finally {
+		await cleanup([], [prefix(deployment), prefix(capacity)]);
+	}
+});
+
+test("circuit: zero allowed failures opens on the first transient failure", {
+	skip,
+}, async () => {
+	const id = randomUUID();
+	const deployment = deploymentSubject(id);
+	const capacity = capacitySubject(id, null);
+	const config = settings({ allowedFails: 0, baseCooldownMs: 1000 });
+	try {
+		const acquired = await acquireCircuitPermit(deployment, capacity, config);
+		assert.equal(acquired.allowed, true);
+		if (!acquired.allowed) return;
+		await recordTransientFailure(acquired.permit, config, {
+			class: "server",
+			message: "first",
+		});
+		const [snapshot] = await getCircuitSnapshots([{ deployment, capacity }]);
+		assert.equal(snapshot?.status, "cooldown");
+	} finally {
+		await cleanup([], [prefix(deployment), prefix(capacity)]);
+	}
+});
+
+test("circuit: a successful call resets accumulated transient failures", {
+	skip,
+}, async () => {
+	const id = randomUUID();
+	const deployment = deploymentSubject(id);
+	const capacity = capacitySubject(id, null);
+	const config = settings({ allowedFails: 1 });
+	try {
+		const first = await acquireCircuitPermit(deployment, capacity, config);
+		assert.equal(first.allowed, true);
+		if (!first.allowed) return;
+		await recordTransientFailure(first.permit, config, {
+			class: "server",
+			message: "first",
+		});
+
+		const success = await acquireCircuitPermit(deployment, capacity, config);
+		assert.equal(success.allowed, true);
+		if (!success.allowed) return;
+		await closeCircuits(success.permit);
+
+		const afterSuccess = await acquireCircuitPermit(
+			deployment,
+			capacity,
+			config,
+		);
+		assert.equal(afterSuccess.allowed, true);
+		if (!afterSuccess.allowed) return;
+		await recordTransientFailure(afterSuccess.permit, config, {
+			class: "server",
+			message: "after success",
+		});
+		const [snapshot] = await getCircuitSnapshots([{ deployment, capacity }]);
 		assert.equal(snapshot?.status, "available");
 	} finally {
 		await cleanup([], [prefix(deployment), prefix(capacity)]);

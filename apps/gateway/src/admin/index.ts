@@ -546,7 +546,6 @@ const routerSettingsSchema = z
 		configurationCooldownSeconds: z.int().min(1),
 		throttleCooldownSeconds: z.int().min(1),
 		numRetries: z.int().min(0),
-		maxAttemptsPerPool: z.int().min(1),
 		maxAttemptsPerRequest: z.int().min(1),
 		timeoutSeconds: z.int().min(1),
 		retryAfterSeconds: z.int().min(0),
@@ -559,7 +558,28 @@ adminApp.get("/router-settings", async (c) => {
 
 adminApp.put("/router-settings", async (c) => {
 	const patch = await parseJson(c, routerSettingsSchema);
-	const updated = await updateRouterSettings(patch);
+	const current = await getRouterSettings();
+	const numRetries = patch.numRetries ?? current?.numRetries ?? 3;
+	const maxAttemptsPerRequest =
+		patch.maxAttemptsPerRequest ?? current?.maxAttemptsPerRequest ?? 6;
+	const minimumRequestAttempts = numRetries + 1;
+	if (
+		patch.maxAttemptsPerRequest !== undefined &&
+		maxAttemptsPerRequest < minimumRequestAttempts
+	) {
+		throw new GatewayError({
+			class: "bad_request",
+			message:
+				"maxAttemptsPerRequest must be at least numRetries + 1 so the configured retry count can be honored",
+			code: "invalid_router_settings",
+		});
+	}
+	const updated = await updateRouterSettings({
+		...patch,
+		...(maxAttemptsPerRequest < minimumRequestAttempts
+			? { maxAttemptsPerRequest: minimumRequestAttempts }
+			: {}),
+	});
 	invalidateRouterSettingsCache();
 	return ok(c, updated);
 });

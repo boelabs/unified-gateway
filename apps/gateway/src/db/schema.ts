@@ -209,10 +209,9 @@ export const routerSettings = pgTable(
 		throttleCooldownSeconds: integer("throttle_cooldown_seconds")
 			.notNull()
 			.default(5),
-		/** Maximum retries per deployment, on top of the initial attempt. */
+		/** Retries for one Public Model pool, on top of the initial attempt. */
 		numRetries: integer("num_retries").notNull().default(3),
-		/** Hard retry-amplification bounds across one pool and the full fallback chain. */
-		maxAttemptsPerPool: integer("max_attempts_per_pool").notNull().default(3),
+		/** Hard retry-amplification bound across the primary and full fallback chain. */
 		maxAttemptsPerRequest: integer("max_attempts_per_request")
 			.notNull()
 			.default(6),
@@ -256,12 +255,8 @@ export const routerSettings = pgTable(
 		),
 		check("router_settings_num_retries_valid", sql`${t.numRetries} >= 0`),
 		check(
-			"router_settings_max_attempts_per_pool_valid",
-			sql`${t.maxAttemptsPerPool} > 0`,
-		),
-		check(
 			"router_settings_max_attempts_per_request_valid",
-			sql`${t.maxAttemptsPerRequest} > 0`,
+			sql`${t.maxAttemptsPerRequest} >= ${t.numRetries} + 1`,
 		),
 		check(
 			"router_settings_timeout_seconds_valid",

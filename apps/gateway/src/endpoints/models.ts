@@ -270,8 +270,7 @@ function deploymentPricing(
 
 async function deploymentObjects(group: PublicModelGroup): Promise<object[]> {
 	const settings = await getEffectiveSettings();
-	const circuitsEnabled =
-		settings.allowedFails > 0 && settings.cooldownSeconds > 0;
+	const circuitsEnabled = settings.cooldownSeconds > 0;
 	const [metrics, circuits] = await Promise.all([
 		fetchMetrics(group.rows.map((row) => row.id)),
 		circuitsEnabled

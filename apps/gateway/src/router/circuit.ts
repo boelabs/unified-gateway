@@ -75,7 +75,7 @@ return { 1, deployment[1], capacity[1] }
 
 const RECORD_FAILURE_SCRIPT = `
 local mode = ARGV[1]
-local threshold = tonumber(ARGV[2])
+local allowed_fails = tonumber(ARGV[2])
 local window_ms = tonumber(ARGV[3])
 local base_ms = tonumber(ARGV[4])
 local max_ms = tonumber(ARGV[5])
@@ -93,7 +93,7 @@ if mode == "threshold" then
   if redis.call("EXISTS", KEYS[4]) == 1 then return { 0, 0 } end
   local failures = redis.call("INCR", KEYS[3])
   if failures == 1 then redis.call("PEXPIRE", KEYS[3], window_ms) end
-  if failures < threshold then return { 0, redis.call("PTTL", KEYS[3]) } end
+  if failures <= allowed_fails then return { 0, redis.call("PTTL", KEYS[3]) } end
   redis.call("SET", KEYS[4], "1", "PX", history_ttl)
 elseif mode == "half_open" then
   if redis.call("GET", KEYS[5]) ~= token then return { 0, 0 } end

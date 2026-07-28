@@ -1180,7 +1180,6 @@ export function buildOpenApiDocument() {
 								configurationCooldownSeconds: 300,
 								throttleCooldownSeconds: 5,
 								numRetries: 3,
-								maxAttemptsPerPool: 3,
 								maxAttemptsPerRequest: 6,
 								timeoutSeconds: 600,
 								retryAfterSeconds: 0,

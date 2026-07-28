@@ -1148,7 +1148,6 @@ paths:
                   configurationCooldownSeconds: 300
                   throttleCooldownSeconds: 5
                   numRetries: 3
-                  maxAttemptsPerPool: 3
                   maxAttemptsPerRequest: 6
                   timeoutSeconds: 600
                   retryAfterSeconds: 0
@@ -2462,12 +2461,12 @@ components:
             - error
             - allow
         allowedFails:
-          description: Consecutive logical-request failures in the fixed failure window that open a deployment circuit. Zero disables automatic circuit opening.
+          description: Number of transient logical-request failures a deployment may accumulate in the fixed window before the next failure opens its cooldown circuit. A successful call resets the count; zero opens on the first failure.
           type: integer
           minimum: 0
           maximum: 9007199254740991
         cooldownSeconds:
-          description: Initial transient cooldown. Zero disables automatic circuit opening.
+          description: Time a deployment remains unavailable after exceeding allowedFails. Zero disables automatic cooldown circuits.
           type: integer
           minimum: 0
           maximum: 9007199254740991
@@ -2492,15 +2491,12 @@ components:
           minimum: 1
           maximum: 9007199254740991
         numRetries:
-          description: Maximum retries per deployment, still bounded by the pool and request attempt budgets.
+          description: Retries for one failed Public Model request, on top of its initial attempt and shared across the deployments in that pool.
           type: integer
           minimum: 0
           maximum: 9007199254740991
-        maxAttemptsPerPool:
-          type: integer
-          minimum: 1
-          maximum: 9007199254740991
         maxAttemptsPerRequest:
+          description: Safety ceiling across the primary pool and complete fallback chain. Must be at least numRetries + 1; it is raised automatically when numRetries alone requires more attempts.
           type: integer
           minimum: 1
           maximum: 9007199254740991
@@ -2510,6 +2506,7 @@ components:
           minimum: 1
           maximum: 9007199254740991
         retryAfterSeconds:
+          description: Minimum wait before a transient retry. Exponential full jitter is added above this floor.
           type: integer
           minimum: 0
           maximum: 9007199254740991

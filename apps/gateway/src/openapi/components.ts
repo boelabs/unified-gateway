@@ -845,11 +845,11 @@ export const RouterSettings = z
 			}),
 		allowedFails: z.int().min(0).optional().meta({
 			description:
-				"Consecutive logical-request failures in the fixed failure window that open a deployment circuit. Zero disables automatic circuit opening.",
+				"Number of transient logical-request failures a deployment may accumulate in the fixed window before the next failure opens its cooldown circuit. A successful call resets the count; zero opens on the first failure.",
 		}),
 		cooldownSeconds: z.int().min(0).optional().meta({
 			description:
-				"Initial transient cooldown. Zero disables automatic circuit opening.",
+				"Time a deployment remains unavailable after exceeding allowedFails. Zero disables automatic cooldown circuits.",
 		}),
 		failureWindowSeconds: z.int().min(1).optional(),
 		maxCooldownSeconds: z.int().min(1).optional(),
@@ -858,16 +858,21 @@ export const RouterSettings = z
 		throttleCooldownSeconds: z.int().min(1).optional(),
 		numRetries: z.int().min(0).optional().meta({
 			description:
-				"Maximum retries per deployment, still bounded by the pool and request attempt budgets.",
+				"Retries for one failed Public Model request, on top of its initial attempt and shared across the deployments in that pool.",
 		}),
-		maxAttemptsPerPool: z.int().min(1).optional(),
-		maxAttemptsPerRequest: z.int().min(1).optional(),
+		maxAttemptsPerRequest: z.int().min(1).optional().meta({
+			description:
+				"Safety ceiling across the primary pool and complete fallback chain. Must be at least numRetries + 1; it is raised automatically when numRetries alone requires more attempts.",
+		}),
 		timeoutSeconds: z
 			.int()
 			.min(1)
 			.optional()
 			.meta({ description: "Timeout per upstream attempt." }),
-		retryAfterSeconds: z.int().min(0).optional(),
+		retryAfterSeconds: z.int().min(0).optional().meta({
+			description:
+				"Minimum wait before a transient retry. Exponential full jitter is added above this floor.",
+		}),
 	})
 	.meta({ id: "RouterSettings" });
 
