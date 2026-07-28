@@ -4,8 +4,26 @@ import { test } from "node:test";
 import {
 	looksLikeContextWindowError,
 	describeUnknownError,
+	parseRetryAfter,
+	classifyStatus,
 	isAbortError,
 } from "./httpError.ts";
+
+test("classifyStatus: every upstream 4xx is non-transient unless explicitly classified", () => {
+	for (const status of [402, 409, 413, 415, 425, 451])
+		assert.equal(classifyStatus(status), "bad_request");
+	assert.equal(classifyStatus(429), "rate_limit");
+	assert.equal(classifyStatus(503), "server");
+});
+
+test("parseRetryAfter: supports delta seconds and HTTP dates", () => {
+	assert.equal(parseRetryAfter("1.5"), 1500);
+	assert.equal(
+		parseRetryAfter("Wed, 21 Oct 2015 07:28:01 GMT", 1_445_412_480_000),
+		1000,
+	);
+	assert.equal(parseRetryAfter("invalid"), undefined);
+});
 
 test("looksLikeContextWindowError: detects known provider phrases", () => {
 	// OpenAI

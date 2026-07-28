@@ -52,7 +52,7 @@ decision (no client-side caching):
   ranked behind anything with an actual track record, without permanently blacklisting it either.
 
 None of these metrics factor into deployment **eligibility** — a slow or low-health deployment is still
-tried, just less often. Eligibility is decided separately by cooldowns and per-deployment RPM/TPM
+tried, just less often. Eligibility is decided separately by circuit state and per-deployment RPM/TPM
 **limits** (see below).
 
 ## Pools, weights, and per-deployment limits
@@ -68,35 +68,60 @@ deployment (set on the deployment, not the router settings):
   is excluded from the candidate pool for this attempt (not cooled down, just skipped this round). If
   **every** deployment in the pool is over its limit, the request fails with `rate_limit_exceeded`
   (`429`) before any upstream call is made.
+- **`failureDomain`** — optional shared provider-account/quota identity. A provider `429` opens one
+  capacity circuit for every deployment with the same value, so duplicating rows backed by one account
+  does not multiply retries. Omit it when the deployments have genuinely independent quotas.
 
-## Cooldowns and retries
+## Circuit breakers and bounded retries
 
 Configured globally via `PUT /admin/router-settings`:
 
 | Field | Default | Meaning |
 |---|---|---|
-| `allowedFails` | `3` | Consecutive failures (in a rolling 60s window) before a deployment enters cooldown |
-| `cooldownSeconds` | `5` | How long a cooled-down deployment is excluded from selection |
-| `numRetries` | `3` | Extra attempts per deployment, on top of the initial one (so 4 total) |
+| `allowedFails` | `3` | Consecutive logical-request failures in the fixed window that open a deployment circuit. `0` disables automatic circuit opening. |
+| `failureWindowSeconds` | `60` | Fixed (non-sliding) failure-counting window |
+| `cooldownSeconds` | `5` | Initial transient cooldown. `0` disables automatic circuit opening. |
+| `maxCooldownSeconds` | `300` | Maximum exponential cooldown after failed recovery probes |
+| `halfOpenProbeSeconds` | `30` | Ownership TTL for the single half-open recovery probe |
+| `configurationCooldownSeconds` | `300` | Immediate quarantine for invalid credentials/model access |
+| `throttleCooldownSeconds` | `5` | Minimum shared-capacity cooldown for provider `429` responses |
+| `numRetries` | `3` | Per-deployment ceiling, subordinate to both hard attempt budgets |
+| `maxAttemptsPerPool` | `3` | Hard attempts allowed for one Public Model pool |
+| `maxAttemptsPerRequest` | `6` | Hard attempts across the primary and complete fallback chain |
 | `timeoutSeconds` | `600` | Per-attempt upstream timeout |
-| `retryAfterSeconds` | `0` | Delay before retrying a *retryable* failure, if the pool still has attempts left |
+| `retryAfterSeconds` | `0` | Minimum base for jittered transient retry backoff |
 
-The router tries each deployment in **rounds**: every deployment gets one attempt before any deployment
-gets a second, up to `numRetries + 1` attempts each. Only errors whose class is retryable
-(`rate_limit`, `timeout`, `server`) consume a retry slot **and** get retried at all; a non-retryable
-class (`bad_request`, `auth`, `context_window`, `content_policy`, ...) exhausts that deployment's
-attempts immediately but does **not** cut the rest of the pool — the router just moves on to the next
-deployment.
+The router still makes a first pass across deployments before repeating one, but stops at the first of
+three ceilings: `numRetries + 1` for that deployment, `maxAttemptsPerPool` for that Public Model, or
+`maxAttemptsPerRequest` for the full fallback chain. The default request can therefore never fan out
+into dozens of upstream calls just because dozens of deployments exist.
+
+Failures are classified by effect rather than by a broad "provider error" bucket:
+
+- **Request** (`400`-class input/context/content failures, including otherwise unknown provider
+  `4xx` statuses): try a different candidate if useful, but never lower health or open a circuit.
+- **Throttle** (`429`): do not lower deployment health. Open the shared `failureDomain` capacity
+  circuit and honor the provider's `Retry-After` value when present.
+- **Transient** (timeouts, network failures, provider `5xx`): retry with exponential full jitter and
+  count at most one failure per logical request and deployment toward the circuit.
+- **Configuration** (invalid provider auth/access/model): quarantine that deployment immediately
+  instead of repeatedly spending the request budget on it.
+- **Gateway/request-scoped** failures: do not penalize any deployment.
 
 Candidate incompatibilities discovered by gateway preprocessing (for example, an image source or file
 type that one transport cannot consume) are **health-neutral**. They may move routing to another
 candidate or fallback, but they do not increment the deployment's failure counters, lower its health
 score, or trigger cooldown. Request-scoped validation errors stop immediately and are neutral as well.
 
-If a deployment accumulates `allowedFails` deployment/provider failures, it goes into cooldown for
-`cooldownSeconds`, and the triggering error is stored alongside it — so if the **entire pool** ends up
-cooling down (zero attempts possible this request), the client's `429 deployments_in_cooldown` error
-still surfaces the real upstream cause that put them there, not just "try again later."
+Circuit transitions are atomic in Redis. Once the fixed failure threshold opens a circuit, late
+in-flight failures cannot extend it. After cooldown it becomes **half-open**: exactly one request owns
+the recovery probe while concurrent requests use other candidates. A successful probe closes it; a
+failed probe reopens it with exponential cooldown and jitter, capped by `maxCooldownSeconds`.
+
+If every deployment circuit is open, the gateway returns `503 deployments_in_cooldown` with an
+accurate `Retry-After` header. If shared capacity is the blocker, it returns `429
+rate_limit_exceeded`. The authenticated `GET /v1/models/{model}/deployments` view reports each
+deployment as `available`, `cooldown`, `half_open`, or `rate_limited`, plus `retry_after_ms`.
 
 ## Fallbacks
 
@@ -124,7 +149,14 @@ curl -X PUT "$GATEWAY/admin/router-settings" \
     "routingStrategy": "latency-based",
     "allowedFails": 3,
     "cooldownSeconds": 10,
+    "failureWindowSeconds": 60,
+    "maxCooldownSeconds": 300,
+    "halfOpenProbeSeconds": 30,
+    "configurationCooldownSeconds": 300,
+    "throttleCooldownSeconds": 5,
     "numRetries": 2,
+    "maxAttemptsPerPool": 3,
+    "maxAttemptsPerRequest": 6,
     "timeoutSeconds": 300,
     "retryAfterSeconds": 1
   }'
@@ -138,4 +170,4 @@ are optional in the `PUT` body — omitted fields keep their current value.
 - [Parameter policy](/docs/parameter-policy) — the other global router behavior, orthogonal to strategy.
 - [Fallbacks](/docs/fallbacks) — what happens when a whole pool fails.
 - [Headers](/docs/headers) — the exact shape of `x-unified-routing-metadata`.
-- [Creating deployments](/docs/creating-deployments) — `weight`, `rpmLimit`, `tpmLimit` on a deployment.
+- [Creating deployments](/docs/creating-deployments) — `weight`, limits, and `failureDomain`.

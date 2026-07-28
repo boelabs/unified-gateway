@@ -141,6 +141,11 @@ export const modelDeployments = pgTable(
 		upstreamModel: text("upstream_model").notNull(),
 		/** Operator-facing human label to tell deployments of the same pool apart (e.g. which API key). */
 		label: text("label"),
+		/**
+		 * Optional shared capacity/quota domain. Deployments with the same value share throttle
+		 * circuit state, preventing retries across rows backed by the same provider account.
+		 */
+		failureDomain: text("failure_domain"),
 		/** Free-form operator annotations (team, environment, key alias, rotation date, notes...). */
 		metadata: jsonb("metadata")
 			.$type<Record<string, unknown>>()
@@ -191,8 +196,26 @@ export const routerSettings = pgTable(
 			.default("simple-shuffle"),
 		allowedFails: integer("allowed_fails").notNull().default(3),
 		cooldownSeconds: integer("cooldown_seconds").notNull().default(5),
+		failureWindowSeconds: integer("failure_window_seconds")
+			.notNull()
+			.default(60),
+		maxCooldownSeconds: integer("max_cooldown_seconds").notNull().default(300),
+		halfOpenProbeSeconds: integer("half_open_probe_seconds")
+			.notNull()
+			.default(30),
+		configurationCooldownSeconds: integer("configuration_cooldown_seconds")
+			.notNull()
+			.default(300),
+		throttleCooldownSeconds: integer("throttle_cooldown_seconds")
+			.notNull()
+			.default(5),
 		/** Maximum retries per deployment, on top of the initial attempt. */
 		numRetries: integer("num_retries").notNull().default(3),
+		/** Hard retry-amplification bounds across one pool and the full fallback chain. */
+		maxAttemptsPerPool: integer("max_attempts_per_pool").notNull().default(3),
+		maxAttemptsPerRequest: integer("max_attempts_per_request")
+			.notNull()
+			.default(6),
 		timeoutSeconds: integer("timeout_seconds").notNull().default(600),
 		retryAfterSeconds: integer("retry_after_seconds").notNull().default(0),
 		unsupportedParameterStrategy: unsupportedParameterStrategyEnum(
@@ -204,7 +227,51 @@ export const routerSettings = pgTable(
 			.notNull()
 			.defaultNow(),
 	},
-	(t) => [check("router_settings_id_singleton", sql`${t.id} = 1`)],
+	(t) => [
+		check("router_settings_id_singleton", sql`${t.id} = 1`),
+		check("router_settings_allowed_fails_valid", sql`${t.allowedFails} >= 0`),
+		check(
+			"router_settings_cooldown_seconds_valid",
+			sql`${t.cooldownSeconds} >= 0`,
+		),
+		check(
+			"router_settings_failure_window_seconds_valid",
+			sql`${t.failureWindowSeconds} > 0`,
+		),
+		check(
+			"router_settings_max_cooldown_seconds_valid",
+			sql`${t.maxCooldownSeconds} > 0`,
+		),
+		check(
+			"router_settings_half_open_probe_seconds_valid",
+			sql`${t.halfOpenProbeSeconds} > 0`,
+		),
+		check(
+			"router_settings_configuration_cooldown_seconds_valid",
+			sql`${t.configurationCooldownSeconds} > 0`,
+		),
+		check(
+			"router_settings_throttle_cooldown_seconds_valid",
+			sql`${t.throttleCooldownSeconds} > 0`,
+		),
+		check("router_settings_num_retries_valid", sql`${t.numRetries} >= 0`),
+		check(
+			"router_settings_max_attempts_per_pool_valid",
+			sql`${t.maxAttemptsPerPool} > 0`,
+		),
+		check(
+			"router_settings_max_attempts_per_request_valid",
+			sql`${t.maxAttemptsPerRequest} > 0`,
+		),
+		check(
+			"router_settings_timeout_seconds_valid",
+			sql`${t.timeoutSeconds} > 0`,
+		),
+		check(
+			"router_settings_retry_after_seconds_valid",
+			sql`${t.retryAfterSeconds} >= 0`,
+		),
+	],
 );
 
 /* ------------------------------------------------------ fallback_policies */

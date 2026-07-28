@@ -62,6 +62,8 @@ export interface CreateDeploymentInput {
 	credentials: Record<string, unknown>;
 	/** Operator-facing label; null/absent leaves it unset. */
 	label?: string | null;
+	/** Optional shared provider account/quota domain; null keeps this deployment independent. */
+	failureDomain?: string | null;
 	/** Free-form operator annotations; absent defaults to {}. */
 	metadata?: Record<string, unknown>;
 	/** Inline CatalogEntry for custom models; null/absent for catalog models. */
@@ -103,6 +105,7 @@ export async function createDeployment(
 				upstreamModel: input.upstreamModel,
 				credentials: encryptJson(input.credentials),
 				label: input.label ?? null,
+				failureDomain: input.failureDomain ?? null,
 				metadata: input.metadata ?? {},
 				catalogEntry: input.catalogEntry ?? null,
 				pricing: input.pricing ?? null,
@@ -124,6 +127,7 @@ export interface UpdateDeploymentInput {
 	credentials?: Record<string, unknown>;
 	/** Operator label; null clears it. */
 	label?: string | null;
+	failureDomain?: string | null;
 	/** Free-form operator annotations; replaces the stored object. */
 	metadata?: Record<string, unknown>;
 	catalogEntry?: CatalogEntry | null;
@@ -149,6 +153,8 @@ export async function updateDeployment(
 	if (input.credentials !== undefined)
 		set.credentials = encryptJson(input.credentials);
 	if (input.label !== undefined) set.label = input.label;
+	if (input.failureDomain !== undefined)
+		set.failureDomain = input.failureDomain;
 	if (input.metadata !== undefined) set.metadata = input.metadata;
 	if (input.catalogEntry !== undefined) set.catalogEntry = input.catalogEntry;
 	if (input.pricing !== undefined) set.pricing = input.pricing;

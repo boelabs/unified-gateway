@@ -68,6 +68,7 @@ const adapterKeySchema = z
 
 /** Operator-facing label for a deployment. `null` clears it on update. */
 const labelSchema = z.string().min(1).max(200).nullable();
+const failureDomainSchema = z.string().min(1).max(200).nullable();
 
 // Free-form operator annotations: a JSON object capped at 16 KiB. It is stored as jsonb and echoed
 // back verbatim (never merged into a live object), so prototype-polluting keys are not a concern here.
@@ -85,6 +86,7 @@ function deploymentView(row: DeploymentRow) {
 		adapterKey: row.adapterKey,
 		upstreamModel: row.upstreamModel,
 		label: row.label,
+		failureDomain: row.failureDomain,
 		metadata: row.metadata,
 		custom: row.catalogEntry != null,
 		catalogEntry: row.catalogEntry,
@@ -106,6 +108,7 @@ export const createDeploymentSchema = z
 		upstreamModel: z.string().min(1).max(300),
 		credentials: z.record(z.string(), z.unknown()),
 		label: labelSchema.optional(),
+		failureDomain: failureDomainSchema.optional(),
 		metadata: metadataSchema.optional(),
 		catalogEntry: customCatalogEntrySchema.optional(),
 		pricing: pricingSchema.optional(),
@@ -128,6 +131,7 @@ const resolveDeploymentSchema = z
 		// Accepted (and ignored) so the same body as POST /deployments can be reused.
 		credentials: z.record(z.string(), z.unknown()).optional(),
 		label: labelSchema.optional(),
+		failureDomain: failureDomainSchema.optional(),
 		metadata: metadataSchema.optional(),
 	})
 	.strict();
@@ -138,6 +142,7 @@ export const updateDeploymentSchema = z
 		upstreamModel: z.string().min(1).max(300).optional(),
 		credentials: z.record(z.string(), z.unknown()).optional(),
 		label: labelSchema.optional(),
+		failureDomain: failureDomainSchema.optional(),
 		metadata: metadataSchema.optional(),
 		catalogEntry: customCatalogEntrySchema.nullable().optional(),
 		pricing: pricingSchema.nullable().optional(),
@@ -252,6 +257,9 @@ platformAdminApp.post("/deployments", async (c) => {
 			? { transportOverrides: input.transportOverrides }
 			: {}),
 		...(input.label !== undefined ? { label: input.label } : {}),
+		...(input.failureDomain !== undefined
+			? { failureDomain: input.failureDomain }
+			: {}),
 		...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		...(input.catalogEntry !== undefined
 			? { catalogEntry: input.catalogEntry as CatalogEntry }
@@ -295,6 +303,9 @@ platformAdminApp.patch("/deployments/:id", async (c) => {
 			? { credentials: input.credentials }
 			: {}),
 		...(input.label !== undefined ? { label: input.label } : {}),
+		...(input.failureDomain !== undefined
+			? { failureDomain: input.failureDomain }
+			: {}),
 		...(input.metadata !== undefined ? { metadata: input.metadata } : {}),
 		...(input.catalogEntry !== undefined
 			? { catalogEntry: input.catalogEntry as CatalogEntry | null }

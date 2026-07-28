@@ -649,7 +649,7 @@ export function buildOpenApiDocument() {
 					responses: {
 						"200": {
 							description:
-								"{ object: 'list', data: [{ id, object: 'model.deployment', model, provider, status, top_provider, pricing, operations, supported_parameters, metrics }] }",
+								"{ object: 'list', data: [{ id, object: 'model.deployment', model, provider, status, retry_after_ms, top_provider, pricing, operations, supported_parameters, metrics }] }",
 						},
 						"404": errorResponse,
 					},
@@ -1174,7 +1174,14 @@ export function buildOpenApiDocument() {
 								unsupportedParameterStrategy: "drop",
 								allowedFails: 3,
 								cooldownSeconds: 5,
+								failureWindowSeconds: 60,
+								maxCooldownSeconds: 300,
+								halfOpenProbeSeconds: 30,
+								configurationCooldownSeconds: 300,
+								throttleCooldownSeconds: 5,
 								numRetries: 3,
+								maxAttemptsPerPool: 3,
+								maxAttemptsPerRequest: 6,
 								timeoutSeconds: 600,
 								retryAfterSeconds: 0,
 							},

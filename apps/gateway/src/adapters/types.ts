@@ -39,6 +39,8 @@ export interface UpstreamError {
 	status: number;
 	/** Already-parsed error body (JSON) or raw text. */
 	body: unknown;
+	/** Selected response headers that affect retry behavior. */
+	headers?: Record<string, string>;
 }
 
 /** HTTP request built toward the upstream. The executor runs it with fetch. */

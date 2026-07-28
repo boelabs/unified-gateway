@@ -3,6 +3,7 @@ import type { UpstreamError } from "./types.ts";
 
 import {
 	describeUnknownError,
+	parseRetryAfter,
 	classifyStatus,
 	isAbortError,
 } from "#core/httpError.ts";
@@ -56,11 +57,16 @@ export function mapUpstreamHttpError(
 			cls = mapping.refineBadRequest(message, up.body) ?? cls;
 		}
 		// Provider detail -> logs (raw provider); the client sees the generic public message.
+		const retryAfterMs = parseRetryAfter(up.headers?.["retry-after"]);
 		return new GatewayError({
 			class: cls,
 			message,
 			status: up.status,
 			provider: { status: up.status, body: up.body },
+			...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+			...(up.headers?.["retry-after"] !== undefined
+				? { headers: { "Retry-After": up.headers["retry-after"] } }
+				: {}),
 		});
 	}
 	const d = describeUnknownError(err);

@@ -38,6 +38,7 @@ export interface CreateDeploymentInput extends PreviewDeploymentInput {
 	/** Plaintext credentials; the repo encrypts them. */
 	credentials: Record<string, unknown>;
 	label?: string | null;
+	failureDomain?: string | null;
 	metadata?: Record<string, unknown>;
 	enabled?: boolean;
 	weight?: number;
@@ -50,6 +51,7 @@ export interface UpdateDeploymentInput {
 	upstreamModel?: string;
 	credentials?: Record<string, unknown>;
 	label?: string | null;
+	failureDomain?: string | null;
 	metadata?: Record<string, unknown>;
 	catalogEntry?: CatalogEntry | null;
 	pricing?: RuntimeModelMetadata["pricing"] | null;
@@ -260,6 +262,7 @@ export async function createDeployment(
 		upstreamModel: input.upstreamModel,
 		credentials: input.credentials,
 		label: input.label ?? null,
+		failureDomain: input.failureDomain ?? null,
 		metadata: input.metadata ?? {},
 		catalogEntry:
 			preview.source === "custom" ? (input.catalogEntry ?? null) : null,
@@ -331,6 +334,9 @@ export async function updateDeployment(
 				? { credentials: patch.credentials }
 				: {}),
 			...(patch.label !== undefined ? { label: patch.label } : {}),
+			...(patch.failureDomain !== undefined
+				? { failureDomain: patch.failureDomain }
+				: {}),
 			...(patch.metadata !== undefined ? { metadata: patch.metadata } : {}),
 		});
 	} catch (error) {
