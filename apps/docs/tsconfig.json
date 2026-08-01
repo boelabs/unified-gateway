@@ -1,6 +1,5 @@
 {
 	"compilerOptions": {
-		"baseUrl": ".",
 		"ignoreDeprecations": "6.0",
 		"jsx": "react-jsx",
 		"lib": ["dom", "dom.iterable", "es2022"],

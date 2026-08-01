@@ -1106,8 +1106,12 @@ test("request fidelity: file URLs, phases, multimodal outputs, and allowed tools
 		}),
 	);
 	assert.equal(canonical.messages[0]?.phase, "commentary");
+	const firstMessageContent = canonical.messages[0]?.content;
+	assert.ok(Array.isArray(firstMessageContent));
+	const firstPart = firstMessageContent[0];
+	assert.equal(firstPart?.type, "file");
 	assert.equal(
-		(canonical.messages[0]?.content as any[])[0]?.fileUrl,
+		firstPart?.type === "file" ? firstPart.fileUrl : undefined,
 		"https://example.com/a.pdf",
 	);
 	assert.deepEqual(canonical.messages[1]?.content, [

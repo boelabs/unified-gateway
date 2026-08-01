@@ -4,6 +4,9 @@ const withMDX = createMDX();
 
 /** @type {import("next").NextConfig} */
 const nextConfig = {
+	experimental: {
+		useTypeScriptCli: true,
+	},
 	reactStrictMode: true,
 };
 

@@ -810,7 +810,7 @@ async function extractPortableText(file: MaterializedInput): Promise<string> {
 				}
 				result = await extractText(document, { mergePages: true });
 			} finally {
-				await document.destroy().catch(() => undefined);
+				await document.loadingTask.destroy().catch(() => undefined);
 			}
 		} catch (cause) {
 			if (GatewayError.is(cause)) throw cause;
