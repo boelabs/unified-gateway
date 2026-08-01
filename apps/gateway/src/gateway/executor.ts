@@ -1,6 +1,19 @@
 import { assertTextRequestSupported } from "./textRequestValidation.ts";
+import type { AdapterDiagnostics } from "#adapters/types.ts";
+import { upstreamFetch } from "./instrumentedTransport.ts";
+import { abortGatewayError } from "./abortReason.ts";
 import { imageProfileFor } from "#catalog/types.ts";
-import type { GatewayError } from "#core/errors.ts";
+import { GatewayError } from "#core/errors.ts";
+
+import {
+	observeTranscriptionStream,
+	terminalForChatResponse,
+	type CanonicalTerminal,
+	type StreamObservation,
+	observeImageStream,
+	observeChatStream,
+	completedTerminal,
+} from "./streamLifecycle.ts";
 
 import type {
 	CanonicalTranscriptionStreamEvent,
@@ -25,6 +38,16 @@ import type {
 	CanonicalEmbeddingsRequest,
 } from "#core/embeddings.ts";
 
+import {
+	finishOperationChildTelemetry,
+	startOperationChildTelemetry,
+} from "#telemetry/index.ts";
+
+import {
+	adapterContextDiagnostics,
+	adapterDiagnostics,
+} from "#adapters/diagnostics.ts";
+
 import type {
 	UpstreamHttpRequest,
 	AdapterContext,
@@ -32,28 +55,51 @@ import type {
 } from "#adapters/types.ts";
 
 export type ChatExecResult =
-	| { kind: "json"; response: CanonicalChatResponse }
+	| {
+			kind: "json";
+			response: CanonicalChatResponse;
+			terminal: CanonicalTerminal;
+			diagnostics?: AdapterDiagnostics;
+	  }
 	| {
 			kind: "stream";
 			chunks: AsyncIterable<CanonicalChatStreamChunk>;
+			observation: StreamObservation;
 			/** Private provider id used only to continue a gateway-owned WebSocket session. */
 			upstreamResponseId?: Promise<string | null>;
 	  };
 
 export type ImageExecResult =
-	| { kind: "json"; response: CanonicalImageResponse }
-	| { kind: "stream"; events: AsyncIterable<CanonicalImageStreamEvent> };
+	| {
+			kind: "json";
+			response: CanonicalImageResponse;
+			terminal: CanonicalTerminal;
+			diagnostics: AdapterDiagnostics;
+	  }
+	| {
+			kind: "stream";
+			events: AsyncIterable<CanonicalImageStreamEvent>;
+			observation: StreamObservation;
+	  };
 
 export type TranscriptionExecResult =
-	| { kind: "json"; response: CanonicalTranscriptionResponse }
+	| {
+			kind: "json";
+			response: CanonicalTranscriptionResponse;
+			terminal: CanonicalTerminal;
+			diagnostics: AdapterDiagnostics;
+	  }
 	| {
 			kind: "stream";
 			events: AsyncIterable<CanonicalTranscriptionStreamEvent>;
+			observation: StreamObservation;
 	  };
 
 export type EmbeddingsExecResult = {
 	kind: "json";
 	response: CanonicalEmbeddingsResponse;
+	terminal: CanonicalTerminal;
+	diagnostics: AdapterDiagnostics;
 };
 
 async function parseBody(res: Response): Promise<unknown> {
@@ -68,6 +114,87 @@ async function parseBody(res: Response): Promise<unknown> {
 /** A handler's error mapper: turns a network error or a non-2xx upstream response into a GatewayError. */
 type MapError = (err: unknown, ctx: AdapterContext) => GatewayError;
 
+function firstOutputTimeout(): GatewayError {
+	return new GatewayError({
+		class: "timeout",
+		code: "upstream_first_output_timeout",
+		message: "Upstream execution exceeded the first output deadline",
+		failureKind: "transient",
+		deploymentHealth: "penalize",
+	});
+}
+
+function firstOutputRemaining(ctx: AdapterContext): number | null {
+	if (!ctx.executionPolicy) return null;
+	return Math.max(
+		0,
+		ctx.executionPolicy.firstOutputMs -
+			(Date.now() - (ctx.attemptStartedAt ?? Date.now())),
+	);
+}
+
+export async function beforeFirstOutput<T>(
+	promise: Promise<T>,
+	ctx: AdapterContext,
+): Promise<T> {
+	const remaining = firstOutputRemaining(ctx);
+	if (remaining === null) return promise;
+	if (remaining <= 0) throw firstOutputTimeout();
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		return await Promise.race([
+			promise,
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(firstOutputTimeout()), remaining);
+			}),
+		]);
+	} finally {
+		if (timer) clearTimeout(timer);
+	}
+}
+
+export function remainingExecutionPolicy(ctx: AdapterContext) {
+	if (!ctx.executionPolicy) return undefined;
+	return {
+		...ctx.executionPolicy,
+		firstOutputMs: Math.max(1, firstOutputRemaining(ctx) ?? 1),
+	};
+}
+
+async function* mapStreamErrors<T>(
+	items: AsyncIterable<T>,
+	ctx: AdapterContext,
+	mapError: MapError,
+): AsyncIterable<T> {
+	try {
+		for await (const item of items) yield item;
+	} catch (error) {
+		if (GatewayError.is(error)) throw error;
+		if (ctx.signal?.aborted) throw abortGatewayError(ctx.signal);
+		throw mapError(error, ctx);
+	}
+}
+
+export async function* traceUpstreamStream<T>(
+	items: AsyncIterable<T>,
+	ctx: AdapterContext,
+): AsyncIterable<T> {
+	const span = ctx.operationId
+		? startOperationChildTelemetry(ctx.operationId, "stream")
+		: null;
+	let errorCode: string | null = null;
+	try {
+		for await (const item of items) yield item;
+	} catch (error) {
+		errorCode = GatewayError.is(error)
+			? (error.code ?? error.class)
+			: "internal_error";
+		throw error;
+	} finally {
+		if (span) finishOperationChildTelemetry(span, errorCode);
+	}
+}
+
 /**
  * Performs the upstream fetch shared by every operation: dispatches the request, maps network errors
  * and non-2xx responses to GatewayError via the handler's `mapError`, and returns the raw 2xx
@@ -80,22 +207,39 @@ async function dispatch(
 ): Promise<Response> {
 	let res: Response;
 	try {
-		res = await fetch(httpReq.url, {
-			method: httpReq.method,
-			headers: httpReq.headers,
-			...(httpReq.body !== undefined ? { body: httpReq.body } : {}),
-			...(ctx.signal ? { signal: ctx.signal } : {}),
-		});
+		res = await beforeFirstOutput(
+			upstreamFetch(ctx, httpReq.url, {
+				method: httpReq.method,
+				headers: httpReq.headers,
+				...(httpReq.body !== undefined ? { body: httpReq.body } : {}),
+			}),
+			ctx,
+		);
 	} catch (err) {
+		if (GatewayError.is(err)) throw err;
 		throw mapError(err, ctx);
 	}
 
+	if (ctx.timings === undefined) ctx.timings = {};
+	ctx.timings.headersAt = Date.now();
+	for (const name of [
+		"x-request-id",
+		"request-id",
+		"x-goog-request-id",
+		"anthropic-request-id",
+	]) {
+		const value = res.headers.get(name);
+		if (value) {
+			adapterContextDiagnostics(ctx).providerRequestId = value;
+			break;
+		}
+	}
 	if (!res.ok) {
 		const retryAfter = res.headers.get("retry-after");
 		throw mapError(
 			{
 				status: res.status,
-				body: await parseBody(res),
+				body: await beforeFirstOutput(parseBody(res), ctx),
 				...(retryAfter !== null
 					? { headers: { "retry-after": retryAfter } }
 					: {}),
@@ -147,12 +291,38 @@ export async function executeChat(
 
 	if (req.stream) {
 		const body = requireStreamBody(res, ctx, handler.mapError);
-		return { kind: "stream", chunks: handler.parseStream(body, ctx) };
+		const observed = observeChatStream(
+			mapStreamErrors(handler.parseStream(body, ctx), ctx, handler.mapError),
+			remainingExecutionPolicy(ctx),
+			adapterContextDiagnostics(ctx),
+		);
+		return {
+			kind: "stream",
+			chunks: traceUpstreamStream(observed.items, ctx),
+			observation: observed.observation,
+		};
 	}
 
+	const response = await beforeFirstOutput(
+		Promise.resolve(parseBody(res)).then((raw) =>
+			handler.parseResponse(raw, ctx),
+		),
+		ctx,
+	);
+	const responseDiagnostics = adapterDiagnostics(response);
+	const diagnostics = {
+		...adapterContextDiagnostics(ctx),
+		...(responseDiagnostics ?? {}),
+		metadata: {
+			...(adapterContextDiagnostics(ctx).metadata ?? {}),
+			...(responseDiagnostics?.metadata ?? {}),
+		},
+	};
 	return {
 		kind: "json",
-		response: handler.parseResponse(await parseBody(res), ctx),
+		response,
+		terminal: terminalForChatResponse(response),
+		diagnostics,
 	};
 }
 
@@ -183,11 +353,36 @@ export async function executeImage(
 		handler.parseStream
 	) {
 		const body = requireStreamBody(res, ctx, handler.mapError);
-		return { kind: "stream", events: handler.parseStream(body, ctx) };
+		const observed = observeImageStream(
+			mapStreamErrors(handler.parseStream(body, ctx), ctx, handler.mapError),
+			remainingExecutionPolicy(ctx),
+			adapterContextDiagnostics(ctx),
+		);
+		return {
+			kind: "stream",
+			events: traceUpstreamStream(observed.items, ctx),
+			observation: observed.observation,
+		};
 	}
+	const response = await beforeFirstOutput(
+		Promise.resolve(parseBody(res)).then((raw) =>
+			handler.parseResponse(raw, ctx),
+		),
+		ctx,
+	);
+	if (response.data.length === 0)
+		throw new GatewayError({
+			class: "server",
+			code: "upstream_protocol_error",
+			message: "Upstream image response contained no images",
+			failureKind: "transient",
+			deploymentHealth: "penalize",
+		});
 	return {
 		kind: "json",
-		response: await handler.parseResponse(await parseBody(res), ctx),
+		response,
+		terminal: completedTerminal(),
+		diagnostics: adapterContextDiagnostics(ctx),
 	};
 }
 
@@ -215,11 +410,28 @@ export async function executeTranscription(
 
 	if (req.stream && handler.parseStream) {
 		const body = requireStreamBody(res, ctx, handler.mapError);
-		return { kind: "stream", events: handler.parseStream(body, ctx) };
+		const observed = observeTranscriptionStream(
+			mapStreamErrors(handler.parseStream(body, ctx), ctx, handler.mapError),
+			remainingExecutionPolicy(ctx),
+			adapterContextDiagnostics(ctx),
+		);
+		return {
+			kind: "stream",
+			events: traceUpstreamStream(observed.items, ctx),
+			observation: observed.observation,
+		};
 	}
+	const response = await beforeFirstOutput(
+		Promise.resolve(parseBody(res)).then((raw) =>
+			handler.parseResponse(raw, ctx),
+		),
+		ctx,
+	);
 	return {
 		kind: "json",
-		response: handler.parseResponse(await parseBody(res), ctx),
+		response,
+		terminal: completedTerminal(),
+		diagnostics: adapterContextDiagnostics(ctx),
 	};
 }
 
@@ -239,8 +451,24 @@ export async function executeEmbeddings(
 		handler.mapError,
 	);
 
+	const response = await beforeFirstOutput(
+		Promise.resolve(parseBody(res)).then((raw) =>
+			handler.parseResponse(raw, ctx),
+		),
+		ctx,
+	);
+	if (response.data.length === 0)
+		throw new GatewayError({
+			class: "server",
+			code: "upstream_protocol_error",
+			message: "Upstream embeddings response contained no embeddings",
+			failureKind: "transient",
+			deploymentHealth: "penalize",
+		});
 	return {
 		kind: "json",
-		response: handler.parseResponse(await parseBody(res), ctx),
+		response,
+		terminal: completedTerminal(),
+		diagnostics: adapterContextDiagnostics(ctx),
 	};
 }

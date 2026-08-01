@@ -1,4 +1,5 @@
 import type { UpstreamTransport, AdapterTransports } from "#core/transport.ts";
+import type { ExecutionPolicy } from "#core/executionPolicy.ts";
 import type { ReasoningControlKind } from "#core/reasoning.ts";
 import type { ResolvedModelMetadata } from "#catalog/types.ts";
 import type { GatewayError } from "#core/errors.ts";
@@ -85,8 +86,43 @@ export interface AdapterContext {
 	/** Upstream transport resolved for this call. */
 	transport: UpstreamTransport;
 	requestId: string;
+	operationId?: string;
+	/** Epoch at which the router acquired this attempt, used for request-wide first-output timing. */
+	attemptStartedAt?: number;
 	/** To cancel/timeout the upstream call. */
 	signal?: AbortSignal;
+	/** Provider-agnostic deadlines enforced by the executor, never interpreted by adapters. */
+	executionPolicy?: ExecutionPolicy;
+	/** Mutable private evidence for transport-level observations that do not produce a public frame. */
+	diagnostics?: AdapterDiagnostics;
+	/** Private transport timestamps populated by the instrumented executor. */
+	timings?: { headersAt?: number };
+	/** Byte counters populated only by the instrumented HTTP/WebSocket transport. */
+	transportStats?: { upstreamBytes: number };
+}
+
+/** Safe, private provider evidence retained for operator diagnostics and never rendered publicly. */
+export interface AdapterDiagnostics {
+	providerRequestId?: string;
+	modelVersion?: string;
+	originalTerminalReason?: string;
+	transportTerminator?:
+		| "eof"
+		| "done_marker"
+		| "semantic_event"
+		| "websocket_turn";
+	/** Private normalized evidence when a protocol outcome cannot be represented by finishReason alone. */
+	terminal?: {
+		outcome: "completed" | "incomplete" | "blocked";
+		reason:
+			| "stop"
+			| "length"
+			| "tool_calls"
+			| "content_filter"
+			| "refusal"
+			| "other";
+	};
+	metadata?: Record<string, unknown>;
 }
 
 /** An adapter's canonical text handler. */

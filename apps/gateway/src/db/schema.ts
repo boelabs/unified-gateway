@@ -25,6 +25,11 @@ import {
 	text,
 } from "drizzle-orm/pg-core";
 
+import {
+	DEFAULT_EXECUTION_POLICIES,
+	type ExecutionPolicies,
+} from "#core/executionPolicy.ts";
+
 /* ------------------------------------------------------------------ enums */
 
 export const routingStrategyEnum = pgEnum("routing_strategy", [
@@ -73,6 +78,32 @@ export const videoAssetVariantEnum = pgEnum("video_asset_variant", [
 	"video",
 	"thumbnail",
 	"spritesheet",
+]);
+
+export const operationLifecycleStateEnum = pgEnum("operation_lifecycle_state", [
+	"in_progress",
+	"finished",
+]);
+
+export const operationOutcomeEnum = pgEnum("operation_outcome", [
+	"success",
+	"incomplete",
+	"blocked",
+	"error",
+	"cancelled",
+	"abandoned",
+	"unknown",
+]);
+
+export const attemptOutcomeEnum = pgEnum("attempt_outcome", [
+	"in_progress",
+	"success",
+	"incomplete",
+	"blocked",
+	"error",
+	"cancelled",
+	"abandoned",
+	"unknown",
 ]);
 
 /* ----------------------------------------------------------------- types */
@@ -216,6 +247,10 @@ export const routerSettings = pgTable(
 			.notNull()
 			.default(6),
 		timeoutSeconds: integer("timeout_seconds").notNull().default(600),
+		executionPolicies: jsonb("execution_policies")
+			.$type<ExecutionPolicies>()
+			.notNull()
+			.default(DEFAULT_EXECUTION_POLICIES),
 		retryAfterSeconds: integer("retry_after_seconds").notNull().default(0),
 		unsupportedParameterStrategy: unsupportedParameterStrategyEnum(
 			"unsupported_parameter_strategy",
@@ -388,6 +423,167 @@ export const requestLogs = pgTable(
 			sql`${t.adapterKey} IS NULL OR ${t.adapterKey} ~ '^[a-z0-9]+$'`,
 		),
 	],
+);
+
+/* ------------------------------------------------------ gateway_operations */
+
+/**
+ * Provider-agnostic lifecycle projection. Unlike legacy request_logs, a row exists while work is
+ * in flight and success requires verified semantic termination.
+ */
+export const gatewayOperations = pgTable(
+	"gateway_operations",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		requestId: text("request_id").notNull(),
+		virtualKeyId: uuid("virtual_key_id"),
+		publicModel: text("public_model"),
+		callType: text("call_type").notNull(),
+		lifecycleState: operationLifecycleStateEnum("lifecycle_state")
+			.notNull()
+			.default("in_progress"),
+		outcome: operationOutcomeEnum("outcome"),
+		degraded: boolean("degraded").notNull().default(false),
+		terminalVerified: boolean("terminal_verified").notNull().default(false),
+		legacy: boolean("legacy").notNull().default(false),
+		stream: boolean("stream").notNull().default(false),
+		cacheHit: boolean("cache_hit").notNull().default(false),
+		httpStatus: integer("http_status"),
+		promptTokens: integer("prompt_tokens"),
+		completionTokens: integer("completion_tokens"),
+		reasoningTokens: integer("reasoning_tokens"),
+		cacheReadTokens: integer("cache_read_tokens"),
+		cacheWriteTokens: integer("cache_write_tokens"),
+		totalTokens: integer("total_tokens"),
+		consumerCostCents: numeric("consumer_cost_cents", {
+			precision: 20,
+			scale: 10,
+		}),
+		upstreamCostCents: numeric("upstream_cost_cents", {
+			precision: 20,
+			scale: 10,
+		}),
+		durationMs: integer("duration_ms"),
+		firstEventMs: integer("first_event_ms"),
+		firstReasoningMs: integer("first_reasoning_ms"),
+		firstOutputMs: integer("first_output_ms"),
+		maxInterEventGapMs: integer("max_inter_event_gap_ms"),
+		downstreamBlockedMs: integer("downstream_blocked_ms"),
+		upstreamBytes: integer("upstream_bytes"),
+		downstreamBytes: integer("downstream_bytes"),
+		lastProgressAt: timestamp("last_progress_at", { withTimezone: true }),
+		startedAt: timestamp("started_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		endedAt: timestamp("ended_at", { withTimezone: true }),
+		requestSummary: jsonb("request_summary").notNull().default({}),
+		responseSummary: jsonb("response_summary").notNull().default({}),
+		reasoning: jsonb("reasoning"),
+		metadata: jsonb("metadata").notNull().default({}),
+		error: jsonb("error"),
+	},
+	(t) => [
+		index("gateway_operations_request_id_idx").on(t.requestId),
+		index("gateway_operations_started_at_idx").on(t.startedAt),
+		index("gateway_operations_model_idx").on(t.publicModel),
+		index("gateway_operations_outcome_idx").on(t.outcome),
+		index("gateway_operations_active_idx").on(
+			t.lifecycleState,
+			t.lastProgressAt,
+		),
+		check(
+			"gateway_operations_verified_terminal",
+			sql`${t.outcome} IS NULL OR ${t.outcome} NOT IN ('success', 'incomplete', 'blocked') OR ${t.terminalVerified}`,
+		),
+	],
+);
+
+export const upstreamAttempts = pgTable(
+	"upstream_attempts",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		operationId: uuid("operation_id").notNull(),
+		ordinal: integer("ordinal").notNull(),
+		deploymentId: uuid("deployment_id"),
+		deploymentLabel: text("deployment_label"),
+		adapterKey: text("adapter_key"),
+		transport: text("transport"),
+		upstreamModel: text("upstream_model"),
+		outcome: attemptOutcomeEnum("outcome").notNull(),
+		terminalVerified: boolean("terminal_verified").notNull().default(false),
+		transportTerminator: text("transport_terminator"),
+		failureOwner: text("failure_owner"),
+		failureKind: text("failure_kind"),
+		failurePhase: text("failure_phase"),
+		healthEffect: text("health_effect").notNull().default("neutral"),
+		httpStatus: integer("http_status"),
+		providerStatus: integer("provider_status"),
+		durationMs: integer("duration_ms"),
+		headersMs: integer("headers_ms"),
+		firstEventMs: integer("first_event_ms"),
+		firstReasoningMs: integer("first_reasoning_ms"),
+		firstOutputMs: integer("first_output_ms"),
+		maxInterEventGapMs: integer("max_inter_event_gap_ms"),
+		downstreamBlockedMs: integer("downstream_blocked_ms"),
+		upstreamBytes: integer("upstream_bytes"),
+		downstreamBytes: integer("downstream_bytes"),
+		frames: integer("frames"),
+		metadataFrames: integer("metadata_frames"),
+		reasoningFrames: integer("reasoning_frames"),
+		contentFrames: integer("content_frames"),
+		toolFrames: integer("tool_frames"),
+		mediaFrames: integer("media_frames"),
+		usageFrames: integer("usage_frames"),
+		promptTokens: integer("prompt_tokens"),
+		completionTokens: integer("completion_tokens"),
+		reasoningTokens: integer("reasoning_tokens"),
+		cacheReadTokens: integer("cache_read_tokens"),
+		cacheWriteTokens: integer("cache_write_tokens"),
+		totalTokens: integer("total_tokens"),
+		lastProgressAt: timestamp("last_progress_at", { withTimezone: true }),
+		startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+		endedAt: timestamp("ended_at", { withTimezone: true }),
+		diagnostics: jsonb("diagnostics").notNull().default({}),
+		error: jsonb("error"),
+	},
+	(t) => [
+		uniqueIndex("upstream_attempts_operation_idx").on(t.operationId, t.ordinal),
+		index("upstream_attempts_deployment_idx").on(t.deploymentId, t.startedAt),
+	],
+);
+
+export const payloadSamples = pgTable(
+	"payload_samples",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		operationId: uuid("operation_id").notNull(),
+		captureReason: text("capture_reason").notNull(),
+		envelope: jsonb("envelope").$type<EncEnvelope>().notNull(),
+		createdAt: timestamp("created_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+		expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+		accessedAt: timestamp("accessed_at", { withTimezone: true }),
+	},
+	(t) => [
+		uniqueIndex("payload_samples_operation_idx").on(t.operationId),
+		index("payload_samples_expires_at_idx").on(t.expiresAt),
+	],
+);
+
+export const payloadAccessAudit = pgTable(
+	"payload_access_audit",
+	{
+		id: uuid("id").primaryKey().defaultRandom(),
+		operationId: uuid("operation_id").notNull(),
+		requestId: text("request_id").notNull(),
+		actor: text("actor").notNull(),
+		found: boolean("found").notNull(),
+		accessedAt: timestamp("accessed_at", { withTimezone: true })
+			.notNull()
+			.defaultNow(),
+	},
+	(t) => [index("payload_access_audit_operation_idx").on(t.operationId)],
 );
 
 /* --------------------------------------------------------- response_states */

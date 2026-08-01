@@ -42,6 +42,13 @@ import {
 	attachRoutingMetadata,
 } from "./runtime/routingMetadata.ts";
 
+import {
+	newDownstreamWriteObservation,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
+
 /** POST /v1/chat/completions - compatible public contract, stream and non-stream, with logging. */
 export async function chatCompletionsHandler(
 	c: Context<AppEnv>,
@@ -74,11 +81,19 @@ export async function chatCompletionsHandler(
 
 		const settings = await getEffectiveSettings();
 		const { routing, parameterPolicy, contentInputResolution } =
-			await routeChat(c, canonical, log.requestId, settings);
+			await routeChat(c, canonical, log.requestId, settings, {
+				signal: log.clientSignal,
+				operationId: log.operationId,
+			});
 		log.applyRouting(routing);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = {
+			...candidateMetadata(routing.candidate),
+			...(routing.value.kind === "stream"
+				? { streamLifecycle: routing.value.observation }
+				: { terminal: routing.value.terminal }),
+		};
 		const reasoning = reasoningLogInfo(
 			canonical.reasoning,
 			meta.capabilities.reasoning ? meta.reasoning : undefined,
@@ -139,11 +154,16 @@ export async function chatCompletionsHandler(
 			},
 		);
 		return streamSSE(c, async (stream) => {
+			stream.onAbort(() => log.abortClient());
+			const downstream = newDownstreamWriteObservation(log.operationId);
 			let finalUsage: Usage | null = null;
 			let content = "";
 			let streamError: GatewayError | null = null;
 			try {
-				for await (const chunk of chunks) {
+				for await (const chunk of withSSEHeartbeats(chunks, () =>
+					writeSSEHeartbeat(stream, downstream),
+				)) {
+					log.progress();
 					const transformed = await applyStreamEventExtensions(
 						c,
 						"chat",
@@ -161,23 +181,31 @@ export async function chatCompletionsHandler(
 						out = { ...transformed };
 						delete out.usage;
 					}
-					await stream.writeSSE({
-						data: JSON.stringify(toOpenAIChatChunk(out)),
-					});
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(toOpenAIChatChunk(out)),
+						},
+						downstream,
+					);
 				}
 				if (routingMetadata) {
-					await stream.writeSSE({
-						data: JSON.stringify({
-							id: `chatcmpl-${log.requestId}`,
-							object: "chat.completion.chunk",
-							created: Math.floor(Date.now() / 1000),
-							model: routing.candidate.row.publicModel,
-							choices: [],
-							unified_routing: routingMetadata,
-						}),
-					});
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify({
+								id: `chatcmpl-${log.requestId}`,
+								object: "chat.completion.chunk",
+								created: Math.floor(Date.now() / 1000),
+								model: routing.candidate.row.publicModel,
+								choices: [],
+								unified_routing: routingMetadata,
+							}),
+						},
+						downstream,
+					);
 				}
-				await stream.writeSSE({ data: "[DONE]" });
+				await writeSSE(stream, { data: "[DONE]" }, downstream);
 			} catch (err) {
 				streamError = GatewayError.is(err)
 					? err
@@ -187,11 +215,26 @@ export async function chatCompletionsHandler(
 							cause: err,
 						});
 				await notifyExtensionError(c, "chat", canonical.model, streamError);
-				await stream.writeSSE({ data: JSON.stringify(streamError.toOpenAI()) });
+				if (streamError.code !== "downstream_backpressure") {
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(streamError.toOpenAI()),
+						},
+						downstream,
+					);
+					await writeSSE(stream, { data: "[DONE]" }, downstream);
+				}
 			} finally {
 				if (firstTokenAt !== null)
 					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(finalUsage, lastChunkAt ?? undefined);
+				await routing.finish(
+					finalUsage,
+					lastChunkAt ?? undefined,
+					streamError,
+					undefined,
+					downstream,
+				);
 				const cost = accountUsage(c, meta, finalUsage);
 				log.write({
 					status: streamError ? "error" : "success",

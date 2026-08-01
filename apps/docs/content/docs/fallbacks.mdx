@@ -52,24 +52,22 @@ linearly; fallback Public Models do not recursively open their own chains.
 
 ## Retry budgets
 
-Two limits apply simultaneously:
+One request-wide limit applies:
 
 ```text
-max per Public Model pool = 1 + numRetries
-max for primary + all fallbacks = maxAttemptsPerRequest
+max for primary + all fallbacks = executionPolicies[operation][mode].maxAttempts
 ```
 
 The router makes a first pass over all eligible deployments before starting the second, and so on.
-It advances to the next fallback when the current pool reaches its budget. Execution ends immediately
-when one succeeds, and the full-chain budget prevents a long fallback list from amplifying an outage.
-`maxAttemptsPerRequest` must be at least `numRetries + 1`, so it never truncates the configured retry
-count for the primary pool.
+It advances to the next fallback when the current pool has no usable candidate. Execution ends
+immediately when one reaches a verified terminal, and the shared budget prevents a long fallback list
+from amplifying an outage.
 
 Non-retryable errors, including `context_window` and `content_policy`, exhaust that deployment after a
 single attempt, but do not cut the pool: the others are still tried. Circuit state, RPM/TPM, and
 availability can reduce the actual number of attempts below the maximum.
 
-Example with `numRetries = 2` and a sufficiently large request budget:
+Example with a request-wide `maxAttempts` large enough for the sequence:
 
 ```text
 primary (deployments A, B): A1, B1, A2
@@ -101,5 +99,5 @@ If the primary has no enabled deployment compatible with the requested operation
 - The runtime stays defensive: missing or incompatible targets are skipped if changes happened outside
   the application's normal services.
 
-Attempts are recorded in `request_logs.attempts` with `deploymentId`, adapter, transport, duration,
-and error; `fallback_used` indicates whether the winning response came from the chain.
+Attempts are durable `upstream_attempts` rows with deployment, adapter, transport, duration, terminal,
+and failure classification; `degraded` and the attempt timeline preserve recovered fallbacks.

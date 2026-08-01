@@ -4,7 +4,7 @@ description: "Health probes, secrets, data lifecycle, backups, and shutdown."
 ---
 
 Operational runbook for running Unified Gateway in production: health probes, rotating secrets,
-managing `request_logs` partitions, backups, and graceful shutdown. If you are still getting the
+managing operation retention, legacy partitions, backups, and graceful shutdown. If you are still getting the
 gateway running locally, start with the [Quickstart](/docs/quickstart) instead — this page assumes a
 real deployment. For observability (logs, telemetry, request/usage queries) see
 [Observability](/docs/observability); for pricing and spend, see [Cost accounting](/docs/cost-accounting).
@@ -35,8 +35,8 @@ edit an already-applied migration. See [Upgrades](/docs/upgrades) for the full r
   `500`), so well-behaved clients back off and retry.
 
 **Shutdown** — the process handles `SIGTERM`/`SIGINT`, stops accepting traffic, drains in-flight HTTP,
-then closes Redis/Postgres and flushes OpenTelemetry. Give the
-container at least `SHUTDOWN_TIMEOUT_MS` to drain.
+flushes the bounded operation-finalization queue, then closes Redis/Postgres and finally OpenTelemetry.
+Give the container at least `SHUTDOWN_TIMEOUT_MS` to drain.
 
 **Scaling** — replicas are safe to run concurrently: the partition-maintenance and response-state GC
 background jobs below use a Postgres advisory lock, so only one replica executes each per cycle.
@@ -49,6 +49,7 @@ Two secrets are critical. Store them in your secret manager (not in the image, n
 |---|---|---|
 | `MASTER_KEY` | Root admin credential; grants full access to `/admin/*`. | Strong random string (≥ 8 chars; use much longer). |
 | `CREDENTIALS_ENCRYPTION_KEY` | Encrypts provider credentials at rest (AES-256-GCM). | 32 bytes in hex (64 chars). |
+| `OBSERVABILITY_ENCRYPTION_KEY` | Encrypts forensic samples and derives separate HMAC fingerprint keys. | Independent 32-byte hex value (64 chars). |
 
 Generate values:
 
@@ -57,6 +58,9 @@ Generate values:
 openssl rand -base64 48
 
 # CREDENTIALS_ENCRYPTION_KEY (32 bytes hex)
+openssl rand -hex 32
+
+# OBSERVABILITY_ENCRYPTION_KEY (independent 32 bytes hex)
 openssl rand -hex 32
 ```
 
@@ -93,11 +97,25 @@ env var — existing ciphertext would no longer decrypt. Rotate by re-encrypting
 
 ### Leaked-secret response
 
-If `MASTER_KEY` leaks: rotate it immediately (above) and audit `request_logs` / admin access. If a
+If `MASTER_KEY` leaks: rotate it immediately (above) and audit `gateway_operations`, payload-access
+audit logs, and admin access. If a
 **provider** API key leaks, revoke it at the provider and `PATCH` the affected deployments with a new
 key.
 
-## `request_logs` partitioning
+## Operation retention and legacy rollback
+
+`gateway_operations` and `upstream_attempts` are the current operational source and expire after
+`OBSERVABILITY_METADATA_RETENTION_DAYS`. Encrypted `payload_samples` expire after
+`OBSERVABILITY_PAYLOAD_RETENTION_DAYS`; an in-process maintenance job
+also reconciles stale in-progress operations and attempts as `abandoned`. Run
+`bun run --filter @boelabs/unified-gateway db:backfill-observability -- --cutoff=<cutover-iso-timestamp>` after the application cutover to
+copy historical counts, usage, and costs as `outcome=unknown`, `terminalVerified=false`, and
+`legacy=true`, without copying bodies.
+
+Keep `request_logs` inaccessible through the API for the seven-day rollback window, verify counts and
+cost totals, and remove it in a later forward-only migration.
+
+### Legacy `request_logs` partitioning
 
 `request_logs` is partitioned by day. A background job runs every
 `REQUEST_LOG_PARTITION_JOB_INTERVAL_MS` and:

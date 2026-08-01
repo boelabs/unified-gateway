@@ -998,7 +998,7 @@ paths:
     get:
       tags:
         - Admin
-      summary: List request logs (master key, paginated, newest first)
+      summary: List gateway operations (master key, paginated, newest first)
       parameters:
         - $ref: "#/components/parameters/Limit"
         - $ref: "#/components/parameters/Offset"
@@ -1025,13 +1025,48 @@ paths:
           schema:
             type: string
           description: chat | responses | messages
-        - name: status
+        - name: outcome
           in: query
           schema:
             type: string
             enum:
               - success
+              - incomplete
+              - blocked
               - error
+              - cancelled
+              - abandoned
+              - unknown
+        - name: degraded
+          in: query
+          schema:
+            type: boolean
+        - name: active
+          in: query
+          schema:
+            type: boolean
+        - name: terminalVerified
+          in: query
+          schema:
+            type: boolean
+        - name: failureKind
+          in: query
+          schema:
+            type: string
+        - name: failurePhase
+          in: query
+          schema:
+            type: string
+        - name: minDurationMs
+          in: query
+          schema:
+            type: number
+            minimum: 0
+        - name: maxDurationMs
+          in: query
+          schema:
+            type: number
+            minimum: 0
         - name: requestId
           in: query
           schema:
@@ -1056,12 +1091,62 @@ paths:
         "200":
           description: "{ data: [<requestLog>], pagination: {...} }"
         "400": *a1
+  /admin/logs/{id}:
+    get:
+      tags:
+        - Admin
+      summary: Get one gateway operation and all upstream attempts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Operation detail
+        "404": *a1
+  /admin/logs/{id}/payload:
+    get:
+      tags:
+        - Admin
+      summary: Decrypt a retained forensic payload sample
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Decrypted sample
+        "404": *a1
+  /admin/observability/summary:
+    get:
+      tags:
+        - Admin
+      summary: Aggregate gateway lifecycle health
+      parameters:
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum:
+              - 5m
+              - 1h
+              - 24h
+            default: 1h
+      responses:
+        "200":
+          description: Lifecycle SLI summary
   /admin/usage:
     get:
       tags:
         - Admin
       summary: Aggregate usage (requests, tokens, cost), optionally grouped (master key)
-      description: Sums requests/tokens/cost over request_logs. Accepts the same filters as /admin/logs (virtualKeyId, publicModel, status, start, end, ...). groupBy=none returns a single total.
+      description: Sums consumer usage/cost and estimated upstream cost over gateway operations. Accepts the same filters as /admin/logs. groupBy=none returns a single total.
       parameters:
         - name: groupBy
           in: query
@@ -1071,7 +1156,6 @@ paths:
             enum:
               - public_model
               - virtual_key
-              - adapter_key
               - day
               - none
             default: none
@@ -1092,13 +1176,10 @@ paths:
           in: query
           schema:
             type: string
-        - name: status
+        - name: outcome
           in: query
           schema:
             type: string
-            enum:
-              - success
-              - error
         - name: cacheHit
           in: query
           schema:
@@ -1115,7 +1196,7 @@ paths:
             format: date-time
       responses:
         "200":
-          description: "{ data: [{ key, requests, promptTokens, completionTokens, totalTokens, costCents }] }"
+          description: "{ data: [{ key, requests, promptTokens, completionTokens, reasoningTokens, totalTokens, consumerCostCents, upstreamCostCents }] }"
         "400": *a1
   /admin/router-settings:
     get:
@@ -1135,22 +1216,6 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/RouterSettings"
-            examples:
-              default:
-                value:
-                  routingStrategy: simple-shuffle
-                  unsupportedParameterStrategy: drop
-                  allowedFails: 3
-                  cooldownSeconds: 5
-                  failureWindowSeconds: 60
-                  maxCooldownSeconds: 300
-                  halfOpenProbeSeconds: 30
-                  configurationCooldownSeconds: 300
-                  throttleCooldownSeconds: 5
-                  numRetries: 3
-                  maxAttemptsPerRequest: 6
-                  timeoutSeconds: 600
-                  retryAfterSeconds: 0
       responses:
         "200":
           description: "{ data: <settings> }"
@@ -2442,6 +2507,508 @@ components:
     RouterSettings:
       type: object
       properties:
+        executionPolicies:
+          type: object
+          properties:
+            chat:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
+            images.generations:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
+            images.edits:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
+            videos.generations:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
+            audio.transcriptions:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
+            embeddings:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
+          required:
+            - chat
+            - images.generations
+            - images.edits
+            - videos.generations
+            - audio.transcriptions
+            - embeddings
         routingStrategy:
           type: string
           enum:
@@ -2487,21 +3054,6 @@ components:
           minimum: 1
           maximum: 9007199254740991
         throttleCooldownSeconds:
-          type: integer
-          minimum: 1
-          maximum: 9007199254740991
-        numRetries:
-          description: Retries for one failed Public Model request, on top of its initial attempt and shared across the deployments in that pool.
-          type: integer
-          minimum: 0
-          maximum: 9007199254740991
-        maxAttemptsPerRequest:
-          description: Safety ceiling across the primary pool and complete fallback chain. Must be at least numRetries + 1; it is raised automatically when numRetries alone requires more attempts.
-          type: integer
-          minimum: 1
-          maximum: 9007199254740991
-        timeoutSeconds:
-          description: Timeout per upstream attempt.
           type: integer
           minimum: 1
           maximum: 9007199254740991

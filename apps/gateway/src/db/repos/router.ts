@@ -48,9 +48,7 @@ export interface RouterSettingsPatch {
 	halfOpenProbeSeconds?: number | undefined;
 	configurationCooldownSeconds?: number | undefined;
 	throttleCooldownSeconds?: number | undefined;
-	numRetries?: number | undefined;
-	maxAttemptsPerRequest?: number | undefined;
-	timeoutSeconds?: number | undefined;
+	executionPolicies?: RouterSettingsRow["executionPolicies"] | undefined;
 	retryAfterSeconds?: number | undefined;
 }
 

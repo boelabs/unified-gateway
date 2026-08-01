@@ -312,7 +312,12 @@ function mapFinishReason(f: unknown): CanonicalFinishReason | null {
 		f === "content_filter"
 	)
 		return f;
-	return "stop";
+	throw new GatewayError({
+		class: "server",
+		code: "upstream_protocol_error",
+		message: `OpenAI-compatible upstream returned an unknown finish reason: ${String(f)}`,
+		provider: { body: { finish_reason: f } },
+	});
 }
 
 interface TransportUsage {

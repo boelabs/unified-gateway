@@ -35,7 +35,7 @@ Everything else ships with production-ready defaults — override only what you 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MAX_STRING_LENGTH_PROMPT_IN_DB` | `8000` | Prompt/response truncation in `request_logs`. |
+| `OBSERVABILITY_ENCRYPTION_KEY` | unset | Optional 32-byte hex key for encrypted forensic samples. |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | Drain budget on `SIGTERM`/`SIGINT`. |
 | `REQUEST_LOG_PARTITION_CREATE_DAYS` | `7` | Future daily `request_logs` partitions kept ahead. |
 | `REQUEST_LOG_PARTITION_RETENTION_DAYS` | `30` | Daily partitions retained before being dropped. |

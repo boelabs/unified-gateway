@@ -41,6 +41,7 @@ export function mapUpstreamHttpError(
 	err: unknown,
 	mapping: UpstreamErrorMapping,
 ): GatewayError {
+	if (GatewayError.is(err)) return err;
 	const { label } = mapping;
 	if (isAbortError(err)) {
 		return new GatewayError({

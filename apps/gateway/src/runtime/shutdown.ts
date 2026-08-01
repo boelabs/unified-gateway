@@ -1,3 +1,4 @@
+import { flushOperationLogs } from "#logging/operations.ts";
 import { shutdownTelemetry } from "#telemetry/index.ts";
 import type { ServerType } from "@hono/node-server";
 import { closeRedis } from "#cache/redis.ts";
@@ -74,6 +75,7 @@ export function installGracefulShutdown(
 			log.error("shutdown", "server close failed", { err });
 		});
 
+		await flushOperationLogs();
 		await Promise.allSettled([closeRedis(), closeDb(), shutdownTelemetry()]);
 		log.info("shutdown", "complete");
 		process.exit(0);

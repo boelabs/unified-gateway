@@ -1,6 +1,7 @@
 import { makeOpenAIResponsesWebSocketHandler } from "./openaiResponsesWebSocket.ts";
 import type { Adapter, AdapterContext, ChatHandler } from "./types.ts";
 import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
+import { upstreamFetch } from "#gateway/instrumentedTransport.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
 import { GatewayError, type ErrorClass } from "#core/errors.ts";
 import { type BaseCreds, requireApiKeyCreds } from "./creds.ts";
@@ -54,6 +55,12 @@ import type {
 	VideoHandler,
 	VideoJobRef,
 } from "./types.ts";
+
+import {
+	recordUnknownAdapterEvent,
+	adapterContextDiagnostics,
+	attachAdapterDiagnostics,
+} from "./diagnostics.ts";
 
 import {
 	parseEmbeddingsResponse,
@@ -200,7 +207,7 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 	): Promise<unknown> {
 		let res: Response;
 		try {
-			res = await fetch(req.url, {
+			res = await upstreamFetch(ctx, req.url, {
 				method: req.method,
 				headers: req.headers,
 				...(req.body !== undefined ? { body: req.body } : {}),
@@ -222,7 +229,7 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 	) {
 		let res: Response;
 		try {
-			res = await fetch(url, {
+			res = await upstreamFetch(ctx, url, {
 				method: "GET",
 				headers,
 				...(ctx.signal ? { signal: ctx.signal } : {}),
@@ -250,19 +257,98 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 	// Stream of the chat_completions transport (OpenAI chunks -> canonical).
 	async function* completionsStream(
 		stream: ReadableStream<Uint8Array>,
+		ctx: AdapterContext,
 	): AsyncGenerator<ReturnType<typeof parseOpenAIChatChunk>> {
+		let transportDone = false;
 		for await (const event of parseSSE(stream)) {
-			if (event.data === "[DONE]") return;
+			if (event.data === "[DONE]") {
+				transportDone = true;
+				adapterContextDiagnostics(ctx).transportTerminator = "done_marker";
+				break;
+			}
 			let json: unknown;
 			try {
 				json = JSON.parse(event.data);
-			} catch {
-				continue;
+			} catch (cause) {
+				throw new GatewayError({
+					class: "server",
+					code: "upstream_protocol_error",
+					message: `${config.label}: stream contained malformed JSON`,
+					provider: { body: event.data },
+					cause,
+				});
 			}
 			if (json !== null && typeof json === "object" && "error" in json) {
 				throw mapError({ status: 502, body: json });
 			}
-			yield parseOpenAIChatChunk(json);
+			if (
+				json === null ||
+				typeof json !== "object" ||
+				(!("choices" in json) && !("usage" in json))
+			)
+				recordUnknownAdapterEvent(
+					adapterContextDiagnostics(ctx),
+					"chat_completions.unknown_json_shape",
+				);
+			const chunk = parseOpenAIChatChunk(json);
+			const originalTerminalReason = (
+				json as { choices?: Array<{ finish_reason?: unknown }> }
+			).choices?.find((choice) => choice.finish_reason != null)?.finish_reason;
+			yield originalTerminalReason == null
+				? chunk
+				: attachAdapterDiagnostics(chunk, {
+						originalTerminalReason: String(originalTerminalReason),
+					});
+		}
+		if (!transportDone)
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: `${config.label}: stream ended without [DONE]`,
+				failureKind: "transient",
+				deploymentHealth: "penalize",
+			});
+	}
+
+	async function* responsesStream(
+		stream: ReadableStream<Uint8Array>,
+		ctx: AdapterContext,
+	): AsyncGenerator<ReturnType<typeof parseOpenAIChatChunk>> {
+		const unknownEvents: string[] = [];
+		let originalTerminalReason: string | undefined;
+		let terminal:
+			| NonNullable<NonNullable<AdapterContext["diagnostics"]>["terminal"]>
+			| undefined;
+		for await (const chunk of responsesEventsToCanonicalChunks(
+			parseSSE(stream),
+			{
+				onUnknownEvent: (type) => {
+					unknownEvents.push(type);
+					recordUnknownAdapterEvent(adapterContextDiagnostics(ctx), type);
+				},
+				onTransportTerminator: (terminator) => {
+					adapterContextDiagnostics(ctx).transportTerminator = terminator;
+				},
+				onTerminalEvent: (type, originalReason, normalizedReason) => {
+					originalTerminalReason = originalReason;
+					terminal =
+						type === "response.incomplete"
+							? { outcome: "incomplete", reason: normalizedReason }
+							: { outcome: "completed", reason: normalizedReason };
+				},
+			},
+		)) {
+			if (unknownEvents.length > 0 || originalTerminalReason || terminal) {
+				yield attachAdapterDiagnostics(chunk, {
+					...(originalTerminalReason ? { originalTerminalReason } : {}),
+					...(terminal ? { terminal } : {}),
+					...(unknownEvents.length > 0
+						? { metadata: { unknownEvents: unknownEvents.splice(0) } }
+						: {}),
+				});
+				originalTerminalReason = undefined;
+				terminal = undefined;
+			} else yield chunk;
 		}
 	}
 
@@ -313,14 +399,45 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 			};
 		},
 		parseResponse(raw, ctx) {
-			return ctx.transport === "responses"
-				? parseResponsesResponse(raw)
-				: parseOpenAIChatResponse(raw);
+			const response =
+				ctx.transport === "responses"
+					? parseResponsesResponse(raw)
+					: parseOpenAIChatResponse(raw);
+			const record = (raw ?? {}) as {
+				status?: unknown;
+				incomplete_details?: { reason?: unknown };
+				choices?: Array<{ finish_reason?: unknown }>;
+			};
+			const originalTerminalReason =
+				ctx.transport === "responses"
+					? (record.incomplete_details?.reason ?? record.status)
+					: record.choices?.find((choice) => choice.finish_reason != null)
+							?.finish_reason;
+			const terminal =
+				ctx.transport === "responses"
+					? record.status === "incomplete"
+						? ({
+								outcome: "incomplete",
+								reason: response.choices[0]?.finishReason ?? "other",
+							} as const)
+						: ({
+								outcome: "completed",
+								reason: response.choices[0]?.finishReason ?? "other",
+							} as const)
+					: undefined;
+			return originalTerminalReason == null && terminal === undefined
+				? response
+				: attachAdapterDiagnostics(response, {
+						...(originalTerminalReason == null
+							? {}
+							: { originalTerminalReason: String(originalTerminalReason) }),
+						...(terminal ? { terminal } : {}),
+					});
 		},
 		parseStream(stream, ctx) {
 			return ctx.transport === "responses"
-				? responsesEventsToCanonicalChunks(parseSSE(stream))
-				: completionsStream(stream);
+				? responsesStream(stream, ctx)
+				: completionsStream(stream, ctx);
 		},
 		mapError(err) {
 			return mapError(err);
@@ -381,7 +498,13 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 						message: `${config.label}: image streaming requires transport images`,
 					});
 				}
-				return parseDirectImageStream(stream, operation);
+				return parseDirectImageStream(stream, operation, {
+					onUnknownEvent: (type) =>
+						recordUnknownAdapterEvent(adapterContextDiagnostics(ctx), type),
+					onTransportTerminator: (terminator) => {
+						adapterContextDiagnostics(ctx).transportTerminator = terminator;
+					},
+				});
 			},
 			mapError(err) {
 				return mapError(err);
@@ -747,8 +870,14 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 		parseResponse(raw) {
 			return parseTranscriptionResponse(raw);
 		},
-		parseStream(stream) {
-			return parseTranscriptionStream(stream);
+		parseStream(stream, ctx) {
+			return parseTranscriptionStream(stream, {
+				onUnknownEvent: (type) =>
+					recordUnknownAdapterEvent(adapterContextDiagnostics(ctx), type),
+				onTransportTerminator: (terminator) => {
+					adapterContextDiagnostics(ctx).transportTerminator = terminator;
+				},
+			});
 		},
 		mapError(err) {
 			return mapError(err);

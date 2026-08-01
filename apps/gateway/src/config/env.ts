@@ -41,6 +41,30 @@ export const env = createEnv({
 			.int()
 			.positive()
 			.default(8000),
+		OBSERVABILITY_ENCRYPTION_KEY: z
+			.string()
+			.regex(/^[0-9a-fA-F]{64}$/)
+			.optional(),
+		OBSERVABILITY_SUCCESS_SAMPLE_RATE: z.coerce
+			.number()
+			.min(0)
+			.max(1)
+			.default(0.01),
+		OBSERVABILITY_PAYLOAD_RETENTION_DAYS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(7),
+		OBSERVABILITY_METADATA_RETENTION_DAYS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(30),
+		OBSERVABILITY_PAYLOAD_MAX_BYTES: z.coerce
+			.number()
+			.int()
+			.min(128)
+			.default(32_768),
 		/** 16x50 MB + mask/fields; uploads are streamed to temporary disk, not memory. */
 		IMAGES_MAX_MULTIPART_BYTES: z.coerce
 			.number()
@@ -159,7 +183,6 @@ export const env = createEnv({
 			.int()
 			.positive()
 			.default(60_000),
-		OTEL_LOG_PAYLOADS: boolString.default(true),
 	},
 
 	runtimeEnv: process.env,

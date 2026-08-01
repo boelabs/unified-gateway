@@ -87,7 +87,12 @@ function shouldTimeOut(row: VideoJobRow, now = new Date()): boolean {
 async function candidateFromJob(
 	row: VideoJobRow,
 	signal?: AbortSignal,
-): Promise<{ candidate: DeploymentCandidate; ctx: AdapterContext }> {
+	mode: "json" | "stream" = "json",
+): Promise<{
+	candidate: DeploymentCandidate;
+	ctx: AdapterContext;
+	cleanup: () => void;
+}> {
 	const deployment = await getDeploymentById(row.deploymentId ?? "");
 	if (!deployment) {
 		throw new GatewayError({
@@ -117,20 +122,43 @@ async function candidateFromJob(
 		meta,
 	};
 	const settings = await getEffectiveSettings();
+	const timeoutMs =
+		settings.executionPolicies["videos.generations"][mode].totalMs;
+	const controller = new AbortController();
+	const abortFromCaller = () =>
+		controller.abort({ owner: "client", type: "cancelled" });
+	if (signal?.aborted) abortFromCaller();
+	else signal?.addEventListener("abort", abortFromCaller, { once: true });
+	const timer = setTimeout(
+		() =>
+			controller.abort({
+				owner: "gateway",
+				type: "timeout",
+				phase: mode === "stream" ? "streaming" : "headers",
+			}),
+		timeoutMs,
+	);
+	timer.unref?.();
 	const ctx: AdapterContext = {
 		upstreamModel: deployment.upstreamModel,
 		credentials: decryptJson<Record<string, unknown>>(deployment.credentials),
 		meta,
 		transport: resolveTransport(candidate, "videos.generations"),
 		requestId: row.id,
-		signal: signal
-			? AbortSignal.any([
-					signal,
-					AbortSignal.timeout(settings.timeoutSeconds * 1000),
-				])
-			: AbortSignal.timeout(settings.timeoutSeconds * 1000),
+		executionPolicy: settings.executionPolicies["videos.generations"][mode],
+		diagnostics: {},
+		signal: controller.signal,
 	};
-	return { candidate, ctx };
+	return {
+		candidate,
+		ctx,
+		cleanup: () => {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", abortFromCaller);
+			if (!controller.signal.aborted)
+				controller.abort({ owner: "gateway", type: "settled" });
+		},
+	};
 }
 
 async function applyProviderJob(
@@ -180,21 +208,25 @@ export async function refreshVideoJob(
 			})) ?? row
 		);
 	}
-	const { candidate, ctx } = await candidateFromJob(row, signal);
-	const providerJob = await candidate.adapter.videoGeneration!.refresh(
-		{
-			upstreamJobId: row.upstreamJobId,
-			upstreamGenerationId: row.upstreamGenerationId,
-			upstreamPollingUrl: row.upstreamPollingUrl,
-			providerState: row.providerState,
-		},
-		ctx,
-	);
-	return applyProviderJob(
-		row,
-		providerJob,
-		candidate.meta.video?.pollIntervalSeconds,
-	);
+	const { candidate, ctx, cleanup } = await candidateFromJob(row, signal);
+	try {
+		const providerJob = await candidate.adapter.videoGeneration!.refresh(
+			{
+				upstreamJobId: row.upstreamJobId,
+				upstreamGenerationId: row.upstreamGenerationId,
+				upstreamPollingUrl: row.upstreamPollingUrl,
+				providerState: row.providerState,
+			},
+			ctx,
+		);
+		return applyProviderJob(
+			row,
+			providerJob,
+			candidate.meta.video?.pollIntervalSeconds,
+		);
+	} finally {
+		cleanup();
+	}
 }
 
 function variantExtension(
@@ -256,37 +288,45 @@ export async function ensureVideoAsset(
 		});
 	}
 
-	const { candidate, ctx } = await candidateFromJob(row, signal);
-	const content = await candidate.adapter.videoGeneration!.download(
-		{
-			upstreamJobId: row.upstreamJobId,
-			upstreamGenerationId: row.upstreamGenerationId,
-			upstreamPollingUrl: row.upstreamPollingUrl,
-			providerState: row.providerState,
-		},
-		variant,
-		ctx,
+	const { candidate, ctx, cleanup } = await candidateFromJob(
+		row,
+		signal,
+		"stream",
 	);
-	const store = getObjectStore();
-	const key = makeObjectKey(row, variant, content.contentType);
-	const stored = await store.put({
-		key,
-		body: content.body,
-		contentType: content.contentType,
-		...(content.contentLength !== undefined
-			? { contentLength: content.contentLength }
-			: {}),
-	});
-	return storeVideoAsset({
-		videoId: row.id,
-		variant,
-		objectKey: key,
-		storageBackend: store.backend,
-		contentType: content.contentType,
-		contentLength: content.contentLength ?? null,
-		etag: stored.etag ?? null,
-		expiresAt: row.expiresAt,
-	});
+	try {
+		const content = await candidate.adapter.videoGeneration!.download(
+			{
+				upstreamJobId: row.upstreamJobId,
+				upstreamGenerationId: row.upstreamGenerationId,
+				upstreamPollingUrl: row.upstreamPollingUrl,
+				providerState: row.providerState,
+			},
+			variant,
+			ctx,
+		);
+		const store = getObjectStore();
+		const key = makeObjectKey(row, variant, content.contentType);
+		const stored = await store.put({
+			key,
+			body: content.body,
+			contentType: content.contentType,
+			...(content.contentLength !== undefined
+				? { contentLength: content.contentLength }
+				: {}),
+		});
+		return storeVideoAsset({
+			videoId: row.id,
+			variant,
+			objectKey: key,
+			storageBackend: store.backend,
+			contentType: content.contentType,
+			contentLength: content.contentLength ?? null,
+			etag: stored.etag ?? null,
+			expiresAt: row.expiresAt,
+		});
+	} finally {
+		cleanup();
+	}
 }
 
 export async function readVideoAsset(
@@ -373,16 +413,20 @@ export async function loadAndRefreshVideo(
  */
 export async function removeUpstreamVideo(row: VideoJobRow): Promise<void> {
 	try {
-		const { candidate, ctx } = await candidateFromJob(row);
-		await candidate.adapter.videoGeneration?.remove?.(
-			{
-				upstreamJobId: row.upstreamJobId,
-				upstreamGenerationId: row.upstreamGenerationId,
-				upstreamPollingUrl: row.upstreamPollingUrl,
-				providerState: row.providerState,
-			},
-			ctx,
-		);
+		const { candidate, ctx, cleanup } = await candidateFromJob(row);
+		try {
+			await candidate.adapter.videoGeneration?.remove?.(
+				{
+					upstreamJobId: row.upstreamJobId,
+					upstreamGenerationId: row.upstreamGenerationId,
+					upstreamPollingUrl: row.upstreamPollingUrl,
+					providerState: row.providerState,
+				},
+				ctx,
+			);
+		} finally {
+			cleanup();
+		}
 	} catch (err) {
 		log.warn("videos", "best-effort upstream video delete failed", {
 			err,

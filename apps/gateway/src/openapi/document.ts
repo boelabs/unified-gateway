@@ -1050,7 +1050,8 @@ export function buildOpenApiDocument() {
 			"/admin/logs": {
 				get: {
 					tags: ["Admin"],
-					summary: "List request logs (master key, paginated, newest first)",
+					summary:
+						"List gateway operations (master key, paginated, newest first)",
 					parameters: [
 						{ $ref: "#/components/parameters/Limit" },
 						{ $ref: "#/components/parameters/Offset" },
@@ -1073,9 +1074,39 @@ export function buildOpenApiDocument() {
 							description: "chat | responses | messages",
 						},
 						{
-							name: "status",
+							name: "outcome",
 							in: "query",
-							schema: { type: "string", enum: ["success", "error"] },
+							schema: {
+								type: "string",
+								enum: [
+									"success",
+									"incomplete",
+									"blocked",
+									"error",
+									"cancelled",
+									"abandoned",
+									"unknown",
+								],
+							},
+						},
+						{ name: "degraded", in: "query", schema: { type: "boolean" } },
+						{ name: "active", in: "query", schema: { type: "boolean" } },
+						{
+							name: "terminalVerified",
+							in: "query",
+							schema: { type: "boolean" },
+						},
+						{ name: "failureKind", in: "query", schema: { type: "string" } },
+						{ name: "failurePhase", in: "query", schema: { type: "string" } },
+						{
+							name: "minDurationMs",
+							in: "query",
+							schema: { type: "number", minimum: 0 },
+						},
+						{
+							name: "maxDurationMs",
+							in: "query",
+							schema: { type: "number", minimum: 0 },
 						},
 						{ name: "requestId", in: "query", schema: { type: "string" } },
 						{ name: "cacheHit", in: "query", schema: { type: "boolean" } },
@@ -1100,13 +1131,67 @@ export function buildOpenApiDocument() {
 					},
 				},
 			},
+			"/admin/logs/{id}": {
+				get: {
+					tags: ["Admin"],
+					summary: "Get one gateway operation and all upstream attempts",
+					parameters: [
+						{
+							name: "id",
+							in: "path",
+							required: true,
+							schema: { type: "string", format: "uuid" },
+						},
+					],
+					responses: {
+						"200": { description: "Operation detail" },
+						"404": errorResponse,
+					},
+				},
+			},
+			"/admin/logs/{id}/payload": {
+				get: {
+					tags: ["Admin"],
+					summary: "Decrypt a retained forensic payload sample",
+					parameters: [
+						{
+							name: "id",
+							in: "path",
+							required: true,
+							schema: { type: "string", format: "uuid" },
+						},
+					],
+					responses: {
+						"200": { description: "Decrypted sample" },
+						"404": errorResponse,
+					},
+				},
+			},
+			"/admin/observability/summary": {
+				get: {
+					tags: ["Admin"],
+					summary: "Aggregate gateway lifecycle health",
+					parameters: [
+						{
+							name: "window",
+							in: "query",
+							schema: {
+								type: "string",
+								enum: ["5m", "1h", "24h"],
+								default: "1h",
+							},
+						},
+					],
+					responses: { "200": { description: "Lifecycle SLI summary" } },
+				},
+			},
 			"/admin/usage": {
 				get: {
 					tags: ["Admin"],
 					summary:
 						"Aggregate usage (requests, tokens, cost), optionally grouped (master key)",
 					description:
-						"Sums requests/tokens/cost over request_logs. Accepts the same filters as /admin/logs (virtualKeyId, publicModel, status, start, end, ...). groupBy=none returns a single total.",
+						"Sums consumer usage/cost and estimated upstream cost over gateway operations. Accepts the same filters as /admin/logs. groupBy=none returns a single total.",
 					parameters: [
 						{
 							name: "groupBy",
@@ -1114,13 +1199,7 @@ export function buildOpenApiDocument() {
 							required: false,
 							schema: {
 								type: "string",
-								enum: [
-									"public_model",
-									"virtual_key",
-									"adapter_key",
-									"day",
-									"none",
-								],
+								enum: ["public_model", "virtual_key", "day", "none"],
 								default: "none",
 							},
 						},
@@ -1133,9 +1212,9 @@ export function buildOpenApiDocument() {
 						{ name: "adapterKey", in: "query", schema: { type: "string" } },
 						{ name: "callType", in: "query", schema: { type: "string" } },
 						{
-							name: "status",
+							name: "outcome",
 							in: "query",
-							schema: { type: "string", enum: ["success", "error"] },
+							schema: { type: "string" },
 						},
 						{ name: "cacheHit", in: "query", schema: { type: "boolean" } },
 						{
@@ -1152,7 +1231,7 @@ export function buildOpenApiDocument() {
 					responses: {
 						"200": {
 							description:
-								"{ data: [{ key, requests, promptTokens, completionTokens, totalTokens, costCents }] }",
+								"{ data: [{ key, requests, promptTokens, completionTokens, reasoningTokens, totalTokens, consumerCostCents, upstreamCostCents }] }",
 						},
 						"400": errorResponse,
 					},
@@ -1167,25 +1246,7 @@ export function buildOpenApiDocument() {
 				put: {
 					tags: ["Admin"],
 					summary: "Update router config (master key)",
-					requestBody: jsonBody(c.RouterSettings, {
-						default: {
-							value: {
-								routingStrategy: "simple-shuffle",
-								unsupportedParameterStrategy: "drop",
-								allowedFails: 3,
-								cooldownSeconds: 5,
-								failureWindowSeconds: 60,
-								maxCooldownSeconds: 300,
-								halfOpenProbeSeconds: 30,
-								configurationCooldownSeconds: 300,
-								throttleCooldownSeconds: 5,
-								numRetries: 3,
-								maxAttemptsPerRequest: 6,
-								timeoutSeconds: 600,
-								retryAfterSeconds: 0,
-							},
-						},
-					}),
+					requestBody: jsonBody(c.RouterSettings),
 					responses: { "200": { description: "{ data: <settings> }" } },
 				},
 			},

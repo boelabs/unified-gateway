@@ -259,28 +259,36 @@ export function resolveBodyFieldReasoning(
 /** Request-log observability: what the client asked for vs what actually ran after snapping. */
 export interface ReasoningLogInfo {
 	/** Effort the client explicitly requested. */
-	requested: ReasoningEffort;
+	requested: ReasoningEffort | null;
 	/** Effort actually applied after snapping to the model's levels. */
 	effective: ReasoningEffort;
 	/** True when the request was adjusted (out of range, or "none" on a mandatory reasoner). */
 	clamped: boolean;
+	/** Why the effective value was selected. */
+	source: "client" | "model_floor" | "clamped";
 }
 
 /**
  * Builds the reasoning entry for the request log. Because the gateway clamps instead of rejecting, the
  * effective effort can differ from what the client asked for (e.g. "none" -> "minimal" on a Gemini
  * flash, or "max" -> "xhigh"); surfacing both makes that adjustment observable (no surprise costs).
- * Returns undefined when the client did not request an effort or the model does not reason, so the log
- * stays quiet unless there is something to report.
+ * An omitted effort is still reported for reasoning models because their model floor is an effective
+ * runtime decision with latency and cost implications. Returns undefined only for non-reasoning models.
  */
 export function reasoningLogInfo(
 	reasoning: CanonicalReasoning | undefined,
 	spec: ReasoningSpec | undefined,
 ): ReasoningLogInfo | undefined {
-	const requested = reasoning?.effort;
-	if (requested === undefined || !spec) return undefined;
-	const effective = snapEffort(requested, spec);
-	return { requested, effective, clamped: requested !== effective };
+	if (!spec) return undefined;
+	const requested = reasoning?.effort ?? null;
+	const effective = resolveReasoning(reasoning, spec).effort;
+	const clamped = requested !== null && requested !== effective;
+	return {
+		requested,
+		effective,
+		clamped,
+		source: requested === null ? "model_floor" : clamped ? "clamped" : "client",
+	};
 }
 
 /**

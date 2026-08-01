@@ -1,5 +1,6 @@
 import type { AdapterContext, TranscriptionHandler } from "#adapters/types.ts";
 import { type BaseCreds, requireApiKeyCreds } from "#adapters/creds.ts";
+import { adapterContextDiagnostics } from "#adapters/diagnostics.ts";
 import { mapUpstreamHttpError } from "#adapters/upstreamError.ts";
 import { azureRefineBadRequest } from "#adapters/azurev1.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -77,8 +78,12 @@ export function makeAzureTranscriptionHandler(
 		parseResponse(raw) {
 			return parseTranscriptionResponse(raw);
 		},
-		parseStream(stream) {
-			return parseTranscriptionStream(stream);
+		parseStream(stream, ctx) {
+			return parseTranscriptionStream(stream, {
+				onTransportTerminator: (terminator) => {
+					adapterContextDiagnostics(ctx).transportTerminator = terminator;
+				},
+			});
 		},
 		mapError,
 	};

@@ -29,7 +29,7 @@
 		"audit": "bun scripts/audit-dependencies.ts",
 		"lint": "biome lint .",
 		"format": "biome format --write . && bun scripts/sort-imports.ts",
-		"check": "biome check . --diagnostic-level=warn --error-on-warnings --max-diagnostics=100",
+		"check": "biome check . --diagnostic-level=warn --error-on-warnings --max-diagnostics=100 && bun apps/gateway/scripts/check-adapter-transports.ts",
 		"check:fix": "biome check --write ."
 	},
 	"devDependencies": {

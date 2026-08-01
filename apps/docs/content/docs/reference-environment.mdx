@@ -30,7 +30,12 @@ must be set; everything else ships with a production-ready value.
 
 | Variable | Default | Controls |
 |---|---|---|
-| `MAX_STRING_LENGTH_PROMPT_IN_DB` | `8000` | Truncates prompt/response text stored in `request_logs`. Doesn't affect what's sent upstream. |
+| `MAX_STRING_LENGTH_PROMPT_IN_DB` | `8000` | Legacy `request_logs` truncation during the rollback window. New operation rows never store bodies. |
+| `OBSERVABILITY_ENCRYPTION_KEY` | unset | Optional 64-hex-character root key for forensic payload encryption and HMAC fingerprints. Plaintext fallback is forbidden. |
+| `OBSERVABILITY_SUCCESS_SAMPLE_RATE` | `0.01` | Sampling rate for non-degraded successful operations. Non-success and degraded operations are always sampled when encryption is configured. |
+| `OBSERVABILITY_PAYLOAD_RETENTION_DAYS` | `7` | Encrypted forensic payload retention. |
+| `OBSERVABILITY_METADATA_RETENTION_DAYS` | `30` | Retention for completed operation and upstream-attempt metadata. |
+| `OBSERVABILITY_PAYLOAD_MAX_BYTES` | `32768` | Maximum size of each request, response, error, and attempt component in an encrypted sample after redaction. |
 | `IMAGES_MAX_MULTIPART_BYTES` | `805000000` (~805 MB) | Aggregate cap on an image multipart upload (images + mask + fields), streamed to temporary disk. |
 | `AUDIO_MAX_MULTIPART_BYTES` | `30000000` (30 MB) | Aggregate cap on an audio transcription multipart upload. |
 | `RESPONSES_STORE_DEFAULT` | `true` | Default for `store` when a `/v1/responses` request omits it. Set `false` for privacy-first deployments. |
@@ -64,7 +69,6 @@ must be set; everything else ships with a production-ready value.
 | `OTEL_ENABLED` | `false` | Master switch. Metrics/traces are otherwise not exported at all. |
 | `OTEL_SERVICE_NAME` | `unifiedgateway` | Service name attached to exported telemetry. |
 | `OTEL_METRIC_EXPORT_INTERVAL_MS` | `60000` | How often metrics are pushed to the collector. |
-| `OTEL_LOG_PAYLOADS` | `true` | Emits full request/response/error payloads as OTEL span events. Independent of `MAX_STRING_LENGTH_PROMPT_IN_DB`, which only truncates what's stored in Postgres — see [Security](/docs/security) before enabling this in a compliance-sensitive environment. |
 
 These are read by the gateway's own schema. Once `OTEL_ENABLED=true`, the exporters (`OTLPMetricExporter`,
 `OTLPTraceExporter`) also read the **standard** OpenTelemetry SDK environment variables directly —
@@ -72,12 +76,12 @@ notably `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_EXPORTER_OTLP_HEADERS` — which
 and so aren't validated by the schema above. See [Observability](/docs/observability) for a working
 example.
 
-Boolean variables (`RESPONSES_STORE_DEFAULT`, `OTEL_ENABLED`, `OTEL_LOG_PAYLOADS`) accept
+Boolean variables (`RESPONSES_STORE_DEFAULT`, `OTEL_ENABLED`) accept
 `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`, case-insensitively.
 
 ## What to read next
 
 - [Setup](/docs/setup) — the minimal set to get running.
-- [Security](/docs/security) — implications of `CREDENTIALS_ENCRYPTION_KEY` and `OTEL_LOG_PAYLOADS`.
+- [Security](/docs/security) — credential and observability encryption boundaries.
 - [Observability](/docs/observability) — OTEL setup end to end.
 - [Production checklist](/docs/production-checklist) — what to double-check before going live.

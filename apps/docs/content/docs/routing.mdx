@@ -76,14 +76,13 @@ deployment (set on the deployment, not the router settings):
 
 Configured globally via `PUT /admin/router-settings`:
 
-These five controls match the router's primary reliability contract:
+Circuit controls remain global. Execution deadlines and retry budgets are defined by the exhaustive
+`executionPolicies` matrix instead of one timeout shared by unrelated operations.
 
 | Field | Default | Meaning |
 |---|---|---|
 | `allowedFails` | `3` | Transient logical-request failures a deployment is allowed before the **next** one opens cooldown. A success resets the count; `0` opens on the first failure. |
 | `cooldownSeconds` | `5` | Time a deployment stays in cooldown after exceeding `allowedFails`. `0` disables automatic cooldown circuits. |
-| `numRetries` | `3` | Retries for a failed Public Model request, in addition to the initial attempt and shared across its deployment pool. |
-| `timeoutSeconds` | `600` | Per-attempt upstream timeout. |
 | `retryAfterSeconds` | `0` | Minimum wait before a transient retry; exponential full jitter is added above this floor. |
 
 The remaining fields are advanced safety controls:
@@ -95,12 +94,24 @@ The remaining fields are advanced safety controls:
 | `halfOpenProbeSeconds` | `30` | Ownership TTL for the single half-open recovery probe |
 | `configurationCooldownSeconds` | `300` | Immediate quarantine for invalid credentials/model access |
 | `throttleCooldownSeconds` | `5` | Minimum shared-capacity cooldown for provider `429` responses |
-| `maxAttemptsPerRequest` | `6` | Hard attempts across the primary and complete fallback chain; must be at least `numRetries + 1` and is raised automatically when only `numRetries` requires it. |
+Each `executionPolicies[operation].json|stream` entry defines `firstOutputMs`, nullable `idleMs`,
+nullable `reasoningOnlyMs`, `preCommitMs`, `totalMs`, and `maxAttempts`. The initial defaults are:
 
-One Public Model pool receives at most `numRetries + 1` attempts. The router makes a first pass across
-eligible deployments before repeating one, so adding deployments cannot silently multiply the retry
-budget. `maxAttemptsPerRequest` separately bounds amplification across the primary and its complete
-fallback chain.
+| Operation | First output | Idle | Reasoning only | Pre-commit | Total | Attempts |
+|---|---:|---:|---:|---:|---:|---:|
+| Text stream/WebSocket | 30s | 30s | 90s | 100s | 600s | 6 |
+| Text JSON | 30s | — | — | 100s | 100s | 6 |
+| Images | 60s | 60s stream | — | 180s | 600s | 3 |
+| Audio | 60s | 60s stream | — | 180s | 900s | 2 |
+| Embeddings | 30s | — | — | 60s | 60s | 3 |
+| Video submit/refresh/delete | 60s | — | — | 120s | 120s | 3 |
+| Video download | 30s | 30s | — | 60s | 900s | 2 |
+
+The router makes a first pass across eligible deployments before reusing one. `Retry-After` is honored
+only when the wait fits inside the pre-commit deadline. Text streams are validated and buffered until
+the first semantic reasoning/content/tool frame or terminal. A retry or fallback is possible before
+commitment, but forbidden after any semantic frame is exposed to the client. Metadata, keepalives,
+roles, and usage-only frames do not commit the response.
 
 Failures are classified by effect rather than by a broad "provider error" bucket:
 
@@ -109,7 +120,7 @@ Failures are classified by effect rather than by a broad "provider error" bucket
 - **Throttle** (`429`): do not lower deployment health. Open the shared `failureDomain` capacity
   circuit immediately and honor the provider's `Retry-After` value when present. These capacity
   signals do not increment `allowedFails`.
-- **Transient** (timeouts, network failures, provider `5xx`): retry with exponential full jitter and
+- **Transient** (timeouts, network failures, provider `5xx`, malformed protocol, missing terminal): retry with exponential full jitter and
   count at most one failure per logical request and deployment toward the circuit.
 - **Configuration** (invalid provider auth/access/model): quarantine that deployment immediately
   instead of repeatedly spending the request budget on it.
@@ -163,15 +174,14 @@ curl -X PUT "$GATEWAY/admin/router-settings" \
     "halfOpenProbeSeconds": 30,
     "configurationCooldownSeconds": 300,
     "throttleCooldownSeconds": 5,
-    "numRetries": 3,
-    "maxAttemptsPerRequest": 6,
-    "timeoutSeconds": 300,
     "retryAfterSeconds": 1
   }'
 ```
 
 `GET /admin/router-settings` returns the effective configuration (defaults if never set). All fields
-are optional in the `PUT` body — omitted fields keep their current value.
+are optional in the `PUT` body — omitted fields keep their current value. When changing
+`executionPolicies`, send the complete matrix returned by `GET`; it is intentionally exhaustive so a
+new operation cannot ship without an explicit policy.
 
 ## What to read next
 

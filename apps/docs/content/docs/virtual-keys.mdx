@@ -110,5 +110,5 @@ enough to identify a key in logs and dashboards.
 Virtual keys are independent of `MASTER_KEY`, so rotating the master key does **not** invalidate them.
 To rotate a client key, issue a new one, migrate the client, then `DELETE` the old. If a key leaks,
 `DELETE` it immediately (or `PATCH … {"enabled": false}` to cut access while you investigate) and
-audit `request_logs` for its `keyPrefix`. For master-key and provider-credential leaks, see
+audit `gateway_operations` and structured admin-access logs. For master-key and provider-credential leaks, see
 [Operations → Secrets](/docs/operations).

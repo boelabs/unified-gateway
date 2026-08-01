@@ -3,6 +3,7 @@ import { mergeExtraBody, mergeExtraBodyDeep } from "#core/extraBody.ts";
 import { type BaseCreds, requireApiKeyCreds } from "#adapters/creds.ts";
 import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
 import { mapUpstreamHttpError } from "#adapters/upstreamError.ts";
+import { upstreamFetch } from "#gateway/instrumentedTransport.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
 import { resolveAdapterReasoning } from "#adapters/reasoning.ts";
 import { toGeminiSchema, toGeminiJsonSchema } from "./schema.ts";
@@ -57,6 +58,11 @@ import {
 	type CanonicalImageRequest,
 	resolveImageSize,
 } from "#core/images.ts";
+
+import {
+	adapterContextDiagnostics,
+	attachAdapterDiagnostics,
+} from "#adapters/diagnostics.ts";
 
 /**
  * Adapter for Google AI Studio (Gemini, generateContent API). A protocol quite different from
@@ -440,7 +446,12 @@ function mapGeminiFinish(
 		case null:
 			return null;
 		default:
-			return "stop";
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: `Gemini returned an unknown finish reason: ${String(reason)}`,
+				provider: { body: { finishReason: reason } },
+			});
 	}
 }
 
@@ -467,6 +478,11 @@ interface GeminiUsage {
 }
 interface GeminiResponse {
 	candidates?: GeminiCandidate[];
+	promptFeedback?: {
+		blockReason?: string;
+		blockReasonMessage?: string;
+		safetyRatings?: unknown;
+	};
 	usageMetadata?: GeminiUsage;
 	responseId?: string;
 	modelVersion?: string;
@@ -811,13 +827,55 @@ function parseGeminiResponse(
 	ctx: AdapterContext,
 ): CanonicalChatResponse {
 	const r = (raw ?? {}) as GeminiResponse;
-	return {
+	if ((r.candidates?.length ?? 0) === 0) {
+		if (r.promptFeedback?.blockReason) {
+			return attachAdapterDiagnostics(
+				{
+					id: r.responseId ?? `gen-${randomUUID()}`,
+					created: Math.floor(Date.now() / 1000),
+					model: r.modelVersion ?? ctx.upstreamModel,
+					choices: [
+						{
+							index: 0,
+							finishReason: "content_filter",
+							message: { role: "assistant", content: null },
+						},
+					],
+					usage: mapGeminiUsage(r.usageMetadata),
+				},
+				{
+					...(r.responseId ? { providerRequestId: r.responseId } : {}),
+					...(r.modelVersion ? { modelVersion: r.modelVersion } : {}),
+					originalTerminalReason: r.promptFeedback.blockReason,
+					metadata: {
+						promptFeedback: { blockReason: r.promptFeedback.blockReason },
+					},
+				},
+			);
+		}
+		throw new GatewayError({
+			class: "server",
+			code: "upstream_protocol_error",
+			message:
+				"Gemini returned no candidates and no promptFeedback block reason",
+			provider: { body: r },
+		});
+	}
+	const response: CanonicalChatResponse = {
 		id: r.responseId ?? `gen-${randomUUID()}`,
 		created: Math.floor(Date.now() / 1000),
 		model: r.modelVersion ?? ctx.upstreamModel,
 		choices: (r.candidates ?? []).map(candidateToChoice),
 		usage: mapGeminiUsage(r.usageMetadata),
 	};
+	const originalTerminalReason = r.candidates?.find(
+		(candidate) => candidate.finishReason != null,
+	)?.finishReason;
+	return attachAdapterDiagnostics(response, {
+		...(r.responseId ? { providerRequestId: r.responseId } : {}),
+		...(r.modelVersion ? { modelVersion: r.modelVersion } : {}),
+		...(originalTerminalReason ? { originalTerminalReason } : {}),
+	});
 }
 
 const chat: ChatHandler = {
@@ -849,11 +907,68 @@ const chat: ChatHandler = {
 		const roleSent = new Set<number>();
 		const contentParts = new Map<number, Record<string, unknown>[]>();
 		for await (const event of parseSSE(stream)) {
-			if (event.data === "[DONE]") return;
+			if (event.data === "[DONE]") {
+				adapterContextDiagnostics(ctx).transportTerminator = "done_marker";
+				return;
+			}
 			let json: GeminiResponse;
 			try {
 				json = JSON.parse(event.data) as GeminiResponse;
-			} catch {
+			} catch (cause) {
+				throw new GatewayError({
+					class: "server",
+					code: "upstream_protocol_error",
+					message: "Gemini emitted malformed JSON in its stream",
+					provider: { body: event.data },
+					cause,
+				});
+			}
+			if (
+				(json.candidates?.length ?? 0) === 0 &&
+				json.promptFeedback?.blockReason
+			) {
+				yield attachAdapterDiagnostics(
+					{
+						id,
+						created,
+						model: json.modelVersion ?? ctx.upstreamModel,
+						choices: [
+							{
+								index: 0,
+								delta: {},
+								finishReason: "content_filter",
+							},
+						],
+						...(json.usageMetadata
+							? { usage: mapGeminiUsage(json.usageMetadata) }
+							: {}),
+					},
+					{
+						...(json.modelVersion ? { modelVersion: json.modelVersion } : {}),
+						metadata: {
+							promptFeedback: {
+								blockReason: json.promptFeedback.blockReason,
+							},
+						},
+					},
+				);
+				continue;
+			}
+			if ((json.candidates?.length ?? 0) === 0) {
+				const metadataChunk: CanonicalChatStreamChunk = {
+					id,
+					created,
+					model: json.modelVersion ?? ctx.upstreamModel,
+					choices: [],
+					...(json.usageMetadata
+						? { usage: mapGeminiUsage(json.usageMetadata) }
+						: {}),
+				};
+				yield attachAdapterDiagnostics(metadataChunk, {
+					...(json.modelVersion ? { modelVersion: json.modelVersion } : {}),
+					...(json.responseId ? { providerRequestId: json.responseId } : {}),
+					metadata: { candidatesAbsent: true },
+				});
 				continue;
 			}
 			const choices = (json.candidates ?? []).map(
@@ -920,7 +1035,14 @@ const chat: ChatHandler = {
 				choices,
 			};
 			if (json.usageMetadata) chunk.usage = mapGeminiUsage(json.usageMetadata);
-			yield chunk;
+			const originalTerminalReason = json.candidates?.find(
+				(candidate) => candidate.finishReason != null,
+			)?.finishReason;
+			yield attachAdapterDiagnostics(chunk, {
+				...(json.modelVersion ? { modelVersion: json.modelVersion } : {}),
+				...(originalTerminalReason ? { originalTerminalReason } : {}),
+				...(json.responseId ? { providerRequestId: json.responseId } : {}),
+			});
 		}
 	},
 
@@ -1142,10 +1264,11 @@ async function parseJsonResponse(res: Response): Promise<unknown> {
 async function googleFetchJson(
 	url: string,
 	init: RequestInit,
+	ctx: AdapterContext,
 ): Promise<unknown> {
 	let res: Response;
 	try {
-		res = await fetch(url, init);
+		res = await upstreamFetch(ctx, url, init);
 	} catch (err) {
 		throw mapGoogleError(err);
 	}
@@ -1259,6 +1382,7 @@ const videoGeneration: VideoHandler = {
 					body: JSON.stringify(googleVideoBody(req, ctx)),
 					...(ctx.signal ? { signal: ctx.signal } : {}),
 				},
+				ctx,
 			),
 		);
 	},
@@ -1266,14 +1390,18 @@ const videoGeneration: VideoHandler = {
 		const c = creds(ctx);
 		const base = (c.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, "");
 		return parseGoogleVideoJob(
-			await googleFetchJson(`${base}/${job.upstreamJobId}`, {
-				method: "GET",
-				headers: {
-					"x-goog-api-key": c.apiKey,
-					...(c.headers ?? {}),
+			await googleFetchJson(
+				`${base}/${job.upstreamJobId}`,
+				{
+					method: "GET",
+					headers: {
+						"x-goog-api-key": c.apiKey,
+						...(c.headers ?? {}),
+					},
+					...(ctx.signal ? { signal: ctx.signal } : {}),
 				},
-				...(ctx.signal ? { signal: ctx.signal } : {}),
-			}),
+				ctx,
+			),
 			job.upstreamJobId,
 		);
 	},
@@ -1298,7 +1426,7 @@ const videoGeneration: VideoHandler = {
 		const c = creds(ctx);
 		let res: Response;
 		try {
-			res = await fetch(uri, {
+			res = await upstreamFetch(ctx, uri, {
 				headers: { "x-goog-api-key": c.apiKey, ...(c.headers ?? {}) },
 				...(ctx.signal ? { signal: ctx.signal } : {}),
 			});

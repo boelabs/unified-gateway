@@ -19,7 +19,7 @@ resolved pricing and:
 
 - **Redis** is the hot-path counter: virtual-key TPM windows and the running budget total are checked
   and incremented here, on the request's critical path, because it needs to be fast and atomic.
-- **Postgres** (`spend_cents` on the virtual key, plus the per-request cost breakdown in `request_logs`)
+- **Postgres** (`spend_cents` on the virtual key, plus consumer and estimated upstream cost in `gateway_operations`)
   is the durable source of truth, updated on every billed request.
 
 Master-key traffic is never billed against any budget (the master key has no limits) — see
@@ -35,7 +35,7 @@ back off before being throttled.
 ## Querying usage
 
 `GET /admin/usage` aggregates cost and request counts, grouped by `public_model`, `virtual_key`,
-`adapter_key`, `day`, or ungrouped (`none`) — the same filters as `GET /admin/logs` apply (date range,
+`day`, or ungrouped (`none`) — the same filters as `GET /admin/logs` apply (date range,
 virtual key, public model, deployment, adapter, call type, status, cache hit). See
 [Admin API reference](/docs/reference-admin-api#logs-and-usage).
 
@@ -44,8 +44,8 @@ curl "$GATEWAY/admin/usage?groupBy=public_model&start=2026-06-01&end=2026-07-01"
   -H "Authorization: Bearer $MASTER_KEY"
 ```
 
-For per-request detail (not aggregated), `GET /admin/logs` returns the individual cost breakdown and
-the deployment that served each request. A cache hit is the one exception to "every request with usage
+For per-request detail, `GET /admin/logs` returns consumer cost and estimated upstream cost; the detail
+route includes every deployment attempt. A cache hit is the one exception to "every request with usage
 is billed": it returns before cost accounting runs at all, logs with `cost: null`, and never touches the
 virtual key's spend or TPM counters — see [Caching](/docs/caching).
 

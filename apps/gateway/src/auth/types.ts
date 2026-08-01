@@ -24,6 +24,7 @@ export interface AppEnv {
 	Variables: {
 		auth: Auth;
 		requestId: string;
+		operationId: string | undefined;
 		turnRequestId: string | undefined;
 		turnSignal: AbortSignal | undefined;
 	};

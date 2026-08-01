@@ -45,7 +45,7 @@ Unlike Chat Completions, a Response can be **stored** and referenced later:
 - **`DELETE /v1/responses/:id`** — delete stored state early, before its retention window
   (`RESPONSES_STATE_RETENTION_DAYS`) expires it automatically.
 
-Stored state lives in Postgres (`response_states`), separate from `request_logs` — it exists to
+Stored state lives in Postgres (`response_states`), separate from observability tables — it exists to
 reconstruct conversation state, not for observability. See
 [Environment variables](/docs/reference-environment#requests-logging-and-limits) for the retention
 variable and [Operations → `response_states` GC](/docs/operations#response_states-gc) for how expiry

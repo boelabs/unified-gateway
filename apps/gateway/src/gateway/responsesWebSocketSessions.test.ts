@@ -10,6 +10,15 @@ import type {
 	CanonicalChatRequest,
 } from "#core/canonical.ts";
 
+async function* completedTurn(): AsyncIterable<CanonicalChatStreamChunk> {
+	yield {
+		id: "response_1",
+		created: 1,
+		model: "gpt-5.6",
+		choices: [{ index: 0, delta: {}, finishReason: "stop" }],
+	};
+}
+
 test("responses websocket sessions: private upstream ids continue only on the bound deployment", async () => {
 	const seen: Array<{
 		request: CanonicalChatRequest;
@@ -38,7 +47,7 @@ test("responses websocket sessions: private upstream ids continue only on the bo
 								: {}),
 						});
 						return {
-							chunks: (async function* () {})(),
+							chunks: completedTurn(),
 							upstreamResponseId: Promise.resolve(`upstream_${seen.length}`),
 						};
 					},
@@ -150,7 +159,7 @@ test("responses websocket sessions: rehydrates full canonical input when upstrea
 												message: "evicted",
 											});
 										})()
-									: (async function* () {})(),
+									: completedTurn(),
 							upstreamResponseId: Promise.resolve(`upstream_${call}`),
 						};
 					},

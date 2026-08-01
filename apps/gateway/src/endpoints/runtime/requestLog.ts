@@ -7,6 +7,20 @@ import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import type { Context } from "hono";
 
+import {
+	completeOperation,
+	identifyOperation,
+	newOperationId,
+	beginOperation,
+	touchOperation,
+} from "#logging/operations.ts";
+
+import {
+	type RequestTelemetrySpan,
+	finishRequestTelemetry,
+	startRequestTelemetry,
+} from "#telemetry/index.ts";
+
 /** Fields the endpoint fills in when closing the request lifecycle (success or error). */
 export type LogOutcome = Pick<
 	RequestLogInput,
@@ -47,13 +61,31 @@ export class RequestLogDraft {
 	private readonly startTime = new Date(this.startedAt);
 	/** Request correlation id (header/UUID). Public for routing and persistence. */
 	readonly requestId: string;
+	readonly operationId = newOperationId();
+	private readonly clientAbortController = new AbortController();
+	readonly clientSignal = this.clientAbortController.signal;
+	private readonly operationStarted: Promise<void>;
 	private readonly virtualKeyId: string | null;
 	private readonly callType: string;
 	private readonly ip: string | null;
 	private readonly userAgent: string | null;
+	private readonly telemetrySpan: RequestTelemetrySpan;
 
 	/** Requested public model. Mutable: in text endpoints it is known after parsing the body. */
-	publicModel: string | null = null;
+	private _publicModel: string | null = null;
+	get publicModel(): string | null {
+		return this._publicModel;
+	}
+	set publicModel(value: string | null) {
+		this._publicModel = value;
+		if (this.operationStarted)
+			identifyOperation(
+				this.operationId,
+				this.operationStarted,
+				this.requestId,
+				value,
+			);
+	}
 	/** Request body as it is logged (raw JSON or a reduced multipart form). */
 	requestBody: unknown = undefined;
 	/** TTFT of the winning upstream (ms). null if there was no first token. */
@@ -64,6 +96,8 @@ export class RequestLogDraft {
 	private retries = 0;
 	private fallbackUsed = false;
 	private attemptLog: unknown[] | null = null;
+	private lastProgressWriteAt = 0;
+	private closed = false;
 
 	constructor(
 		c: Context<AppEnv>,
@@ -72,16 +106,53 @@ export class RequestLogDraft {
 	) {
 		const auth = getAuth(c);
 		this.requestId = opts?.requestId ?? getRequestId(c);
+		c.set("operationId", this.operationId);
 		this.virtualKeyId = auth.type === "virtual" ? auth.key.id : null;
 		this.callType = callType;
+		this.telemetrySpan = startRequestTelemetry({
+			requestId: this.requestId,
+			operationId: this.operationId,
+			callType,
+		});
 		this.ip = clientIp(c);
 		this.userAgent = c.req.header("user-agent") ?? null;
-		if (opts?.publicModel !== undefined) this.publicModel = opts.publicModel;
+		if (opts?.publicModel !== undefined) this._publicModel = opts.publicModel;
+		if (c.req.raw.signal.aborted)
+			this.clientAbortController.abort(c.req.raw.signal.reason);
+		else
+			c.req.raw.signal.addEventListener(
+				"abort",
+				() => this.clientAbortController.abort(c.req.raw.signal.reason),
+				{ once: true },
+			);
+		this.operationStarted = beginOperation({
+			id: this.operationId,
+			requestId: this.requestId,
+			virtualKeyId: this.virtualKeyId,
+			callType: this.callType,
+			publicModel: this._publicModel,
+			startedAt: this.startTime,
+		});
 	}
 
 	/** ms elapsed since entering the handler. */
 	elapsedMs(): number {
 		return Date.now() - this.startedAt;
+	}
+
+	/** Persists a throttled liveness heartbeat without writing once per stream chunk. */
+	progress(): void {
+		const now = Date.now();
+		if (now - this.lastProgressWriteAt < 10_000) return;
+		this.lastProgressWriteAt = now;
+		touchOperation(this.operationId, this.requestId);
+	}
+
+	abortClient(): void {
+		if (!this.clientAbortController.signal.aborted)
+			this.clientAbortController.abort(
+				new DOMException("Client closed the response stream", "AbortError"),
+			);
 	}
 
 	/** Fills the draft with the router's winning attempt. */
@@ -113,6 +184,7 @@ export class RequestLogDraft {
 	private base(): Omit<RequestLogInput, keyof LogOutcome | "cacheHit"> {
 		const now = Date.now();
 		return {
+			operationId: this.operationId,
 			requestId: this.requestId,
 			virtualKeyId: this.virtualKeyId,
 			publicModel: this.publicModel,
@@ -134,7 +206,25 @@ export class RequestLogDraft {
 
 	/** Emits the request's final log (not a cache hit). */
 	write(outcome: LogOutcome): void {
-		logRequest({ ...this.base(), cacheHit: false, ...outcome });
+		if (this.closed) return;
+		this.closed = true;
+		const effectiveOutcome: LogOutcome =
+			this.clientSignal.aborted && outcome.status === "success"
+				? {
+						...outcome,
+						status: "error",
+						httpStatus: 499,
+						error: {
+							class: "bad_request",
+							code: "client_closed_request",
+							failure_kind: "request",
+						},
+					}
+				: outcome;
+		const input = { ...this.base(), cacheHit: false, ...effectiveOutcome };
+		logRequest(input);
+		completeOperation(this.operationId, this.operationStarted, input);
+		finishRequestTelemetry(this.telemetrySpan, input);
 	}
 
 	/** Shortcut for the error log from an already-normalized GatewayError. */
@@ -157,7 +247,9 @@ export class RequestLogDraft {
 		usage: Usage,
 		responseBody: unknown = body,
 	): void {
-		logRequest({
+		if (this.closed) return;
+		this.closed = true;
+		const input: RequestLogInput = {
 			...this.base(),
 			cacheHit: true,
 			status: "success",
@@ -166,8 +258,14 @@ export class RequestLogDraft {
 			cost: null,
 			ttftMs: this.elapsedMs(),
 			responseBody,
-			metadata: { cached: true },
+			metadata: {
+				cached: true,
+				terminal: { outcome: "completed", reason: "stop", usage },
+			},
 			error: null,
-		});
+		};
+		logRequest(input);
+		completeOperation(this.operationId, this.operationStarted, input);
+		finishRequestTelemetry(this.telemetrySpan, input);
 	}
 }

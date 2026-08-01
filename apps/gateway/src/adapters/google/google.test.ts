@@ -2,6 +2,7 @@ import type { CanonicalEmbeddingsRequest } from "#core/embeddings.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { AdapterContext } from "#adapters/types.ts";
 import { isUsageConsistent } from "#core/usage.ts";
+import { GatewayError } from "#core/errors.ts";
 import { googleAdapter } from "./index.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -719,6 +720,27 @@ test("google.parseResponse: thought parts do NOT leak into content", () => {
 	const u = googleAdapter.chat!.parseResponse(raw, ctx);
 	assert.equal(u.choices[0]!.message.content, "final answer");
 	assert.equal(u.choices[0]!.message.reasoning, "thinking out loud...");
+});
+
+test("google.parseResponse: promptFeedback block is a content-filter terminal", () => {
+	const response = googleAdapter.chat!.parseResponse(
+		{
+			promptFeedback: { blockReason: "SAFETY" },
+			usageMetadata: { promptTokenCount: 3, totalTokenCount: 3 },
+		},
+		ctx,
+	);
+	assert.equal(response.choices.length, 1);
+	assert.equal(response.choices[0]!.finishReason, "content_filter");
+	assert.equal(response.choices[0]!.message.content, null);
+});
+
+test("google.parseResponse: empty 2xx without terminal evidence is invalid", () => {
+	assert.throws(
+		() => googleAdapter.chat!.parseResponse({ candidates: [] }, ctx),
+		(error: unknown) =>
+			GatewayError.is(error) && error.code === "upstream_protocol_error",
+	);
 });
 
 test("google.parseStream: thought parts emit reasoning, not content", async () => {

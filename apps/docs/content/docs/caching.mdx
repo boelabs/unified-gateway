@@ -27,7 +27,7 @@ curl -X POST $BASE/v1/chat/completions \
 ```
 
 The first call is a miss (served from the provider and stored); identical calls within the TTL are
-hits served from Redis. A cache hit is recorded in `request_logs` with `cache_hit = true` and bills as
+hits served from Redis. A cache hit is recorded in `gateway_operations` with `cache_hit = true` and bills as
 zero cost.
 
 ## How entries are scoped

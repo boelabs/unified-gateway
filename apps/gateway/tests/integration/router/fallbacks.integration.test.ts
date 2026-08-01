@@ -37,9 +37,17 @@ before(async () => {
 		routingStrategy: "least-busy",
 		allowedFails: 100,
 		cooldownSeconds: 1,
-		numRetries: 2,
-		maxAttemptsPerRequest: 10,
-		timeoutSeconds: 10,
+		executionPolicies: {
+			...originalSettings!.executionPolicies!,
+			chat: {
+				...originalSettings!.executionPolicies!.chat,
+				json: {
+					...originalSettings!.executionPolicies!.chat.json,
+					maxAttempts: 10,
+					totalMs: 10_000,
+				},
+			},
+		},
 		retryAfterSeconds: 0,
 	});
 });
@@ -56,9 +64,7 @@ after(async () => {
 			configurationCooldownSeconds:
 				originalSettings.configurationCooldownSeconds,
 			throttleCooldownSeconds: originalSettings.throttleCooldownSeconds,
-			numRetries: originalSettings.numRetries,
-			maxAttemptsPerRequest: originalSettings.maxAttemptsPerRequest,
-			timeoutSeconds: originalSettings.timeoutSeconds,
+			executionPolicies: originalSettings.executionPolicies,
 			retryAfterSeconds: originalSettings.retryAfterSeconds,
 		}).catch(() => {});
 	}
