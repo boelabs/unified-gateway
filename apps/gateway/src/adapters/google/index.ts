@@ -991,6 +991,9 @@ const chat: ChatHandler = {
 						.map((part) => part.text ?? "")
 						.join("");
 					const hasToolCall = parts.some((part) => part.functionCall);
+					const hasAccumulatedToolCall = accumulated.some(
+						(part) => (part as GeminiPart).functionCall,
+					);
 					const delta: CanonicalChatStreamChunk["choices"][number]["delta"] =
 						{};
 					if (!roleSent.has(index)) {
@@ -1024,7 +1027,10 @@ const chat: ChatHandler = {
 					return {
 						index,
 						delta,
-						finishReason: mapGeminiFinish(candidate.finishReason, hasToolCall),
+						finishReason: mapGeminiFinish(
+							candidate.finishReason,
+							hasAccumulatedToolCall,
+						),
 					};
 				},
 			);
