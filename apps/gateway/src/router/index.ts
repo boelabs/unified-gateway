@@ -303,6 +303,8 @@ export async function route<T>(
 		let shortestRetryAfterMs: number | undefined;
 		const attemptLog: AttemptRecord[] = [];
 		const countedTransientDeployments = new Set<string>();
+		const attemptsByDeployment = new Map<string, number>();
+		const requestExhaustedDeployments = new Set<string>();
 
 		type PublicModelAttempt =
 			| { ok: true; result: RouteResult<T> }
@@ -314,6 +316,7 @@ export async function route<T>(
 			candidatePublicModel: string,
 			fallbackUsed: boolean,
 			preloaded?: DeploymentCandidate[],
+			poolAttemptLimit = attemptLimit,
 		): Promise<PublicModelAttempt> {
 			const listed =
 				preloaded ??
@@ -346,12 +349,22 @@ export async function route<T>(
 				};
 			}
 
-			const attemptsByDeployment = new Map<string, number>();
 			const blockedDeployments = new Set<string>();
 			const blockedCapacity = new Set<string>();
 			const failureReasons = new Set<FallbackReason>();
-			const maxAttemptsPerPool = attemptLimit;
-			const maxAttemptsPerDeployment = maxAttemptsPerPool;
+			const maxAttemptsPerPool = Math.max(
+				0,
+				Math.min(poolAttemptLimit, attemptLimit - attempts),
+			);
+			const reusableCandidates = candidates.filter(
+				(candidate) => !requestExhaustedDeployments.has(candidate.row.id),
+			);
+			const maxAttemptsPerDeployment =
+				Math.min(
+					...reusableCandidates.map(
+						(candidate) => attemptsByDeployment.get(candidate.row.id) ?? 0,
+					),
+				) + 1;
 			const poolStartedAt = attempts;
 			let reason: FailReason = "exhausted";
 
@@ -391,26 +404,34 @@ export async function route<T>(
 			}
 
 			while (true) {
-				if (
-					attempts >= attemptLimit ||
-					Date.now() >= preOutputDeadlineAt ||
-					attempts - poolStartedAt >= maxAttemptsPerPool
-				) {
+				if (attempts >= attemptLimit || Date.now() >= preOutputDeadlineAt) {
 					reason = "attempt_budget";
 					break;
 				}
-				const withAttemptsLeft = candidates.filter((candidate) => {
+				if (attempts - poolStartedAt >= maxAttemptsPerPool) break;
+				const selectableCandidates = candidates.filter((candidate) => {
 					const capacity = capacitySubject(
 						candidate.row.id,
 						candidate.row.failureDomain,
 					);
 					return (
+						!requestExhaustedDeployments.has(candidate.row.id) &&
 						(attemptsByDeployment.get(candidate.row.id) ?? 0) <
 							maxAttemptsPerDeployment &&
 						!blockedDeployments.has(candidate.row.id) &&
 						!blockedCapacity.has(capacity.id)
 					);
 				});
+				const minRequestAttempts = Math.min(
+					...selectableCandidates.map(
+						(candidate) => attemptsByDeployment.get(candidate.row.id) ?? 0,
+					),
+				);
+				const withAttemptsLeft = selectableCandidates.filter(
+					(candidate) =>
+						(attemptsByDeployment.get(candidate.row.id) ?? 0) ===
+						minRequestAttempts,
+				);
 				if (withAttemptsLeft.length === 0) {
 					if (blockedDeployments.size > 0) reason = "cooldown";
 					else if (blockedCapacity.size > 0) reason = "rate_limited";
@@ -433,20 +454,10 @@ export async function route<T>(
 					break;
 				}
 
-				// First pass over all deployments before the second, and so on.
-				const minAttempts = Math.min(
-					...available.map(
-						(candidate) => attemptsByDeployment.get(candidate.row.id) ?? 0,
-					),
-				);
-				const pool = available.filter(
-					(candidate) =>
-						(attemptsByDeployment.get(candidate.row.id) ?? 0) === minAttempts,
-				);
 				const chosen =
-					pool.find(
+					available.find(
 						(candidate) => candidate.row.id === opts.preferredDeploymentId,
-					) ?? pickDeployment(settings.routingStrategy, pool, metrics);
+					) ?? pickDeployment(settings.routingStrategy, available, metrics);
 				const transport = resolveTransport(
 					chosen,
 					callType,
@@ -973,13 +984,13 @@ export async function route<T>(
 
 					// Deterministic/non-retryable errors exhaust THIS deployment for the request, but do not
 					// cut the pool: the other deployments of the same public model are still tried.
-					if (!ge.retryable)
-						attemptsByDeployment.set(chosen.row.id, maxAttemptsPerDeployment);
+					if (!ge.retryable) requestExhaustedDeployments.add(chosen.row.id);
 
 					const hasAttemptsLeft = candidates.some(
 						(candidate) =>
+							!requestExhaustedDeployments.has(candidate.row.id) &&
 							(attemptsByDeployment.get(candidate.row.id) ?? 0) <
-							maxAttemptsPerDeployment,
+								maxAttemptsPerDeployment,
 					);
 					if (
 						ge.failureKind === "transient" &&
@@ -1025,17 +1036,98 @@ export async function route<T>(
 			});
 		}
 
-		const primary = await tryPublicModel(publicModel, false, primaryCandidates);
+		const fallbackReasons: FallbackReason[] = [
+			"general",
+			"context_window",
+			"content_policy",
+		];
+		const fallbackPolicies = new Map(
+			(
+				await Promise.all(
+					fallbackReasons.map(
+						async (reason) =>
+							[reason, await getFallbackPolicy(publicModel, reason)] as const,
+					),
+				)
+			).filter((entry) => entry[1] !== undefined),
+		);
+		const longestFallbackChain = Math.max(
+			0,
+			...[...fallbackPolicies.values()].map(
+				(policy) => policy?.fallbackModels.length ?? 0,
+			),
+		);
+		const reservedFallbackAttempts = Math.min(
+			longestFallbackChain,
+			Math.max(0, attemptLimit - 1),
+		);
+		const primary = await tryPublicModel(
+			publicModel,
+			false,
+			primaryCandidates,
+			Math.max(1, attemptLimit - reservedFallbackAttempts),
+		);
 		if (primary.ok) return primary.result;
 
 		let lastReason: FailReason = primary.reason;
 		let triedFallback = false;
-		const fb = await getFallbackPolicy(publicModel, primary.fallbackReason);
-		for (const fallbackModel of fb?.fallbackModels ?? []) {
+		const fallbackModels =
+			fallbackPolicies.get(primary.fallbackReason)?.fallbackModels ?? [];
+		for (const [index, fallbackModel] of fallbackModels.entries()) {
 			triedFallback = true;
-			const attempt = await tryPublicModel(fallbackModel, true);
+			const laterFallbacks = fallbackModels.length - index - 1;
+			const attempt = await tryPublicModel(
+				fallbackModel,
+				true,
+				undefined,
+				Math.max(0, attemptLimit - attempts - laterFallbacks),
+			);
 			if (attempt.ok) return attempt.result;
 			lastReason = attempt.reason;
+		}
+
+		// Once every reachable deployment has had a fair first chance, reuse them in rounds until the
+		// request-wide policy is exhausted. This preserves retries for a one-deployment pool without
+		// allowing a large primary pool to starve configured fallbacks.
+		const retryModels = [publicModel, ...fallbackModels];
+		let retryRound = 0;
+		while (
+			attempts < attemptLimit &&
+			Date.now() < preOutputDeadlineAt &&
+			retryModels.length > 0
+		) {
+			if (lastError?.failureKind === "transient" && lastError.retryable) {
+				const minimum = Math.max(
+					settings.retryAfterSeconds * 1000,
+					lastError.retryAfterMs ?? 0,
+				);
+				const jitterCeiling = Math.min(
+					2000,
+					100 * 2 ** Math.min(5, retryRound),
+				);
+				const delay = minimum + Math.floor(Math.random() * jitterCeiling);
+				if (Date.now() + delay >= preOutputDeadlineAt) {
+					lastReason = "attempt_budget";
+					break;
+				}
+				await sleep(delay);
+			}
+
+			const roundStartedAt = attempts;
+			for (const retryModel of retryModels) {
+				if (attempts >= attemptLimit || Date.now() >= preOutputDeadlineAt)
+					break;
+				const attempt = await tryPublicModel(
+					retryModel,
+					retryModel !== publicModel,
+					undefined,
+					1,
+				);
+				if (attempt.ok) return attempt.result;
+				lastReason = attempt.reason;
+			}
+			if (attempts === roundStartedAt) break;
+			retryRound += 1;
 		}
 
 		if (attempts === 0 && eligibilityError) {

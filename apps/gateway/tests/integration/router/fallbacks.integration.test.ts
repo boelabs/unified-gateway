@@ -43,7 +43,7 @@ before(async () => {
 				...originalSettings!.executionPolicies!.chat,
 				json: {
 					...originalSettings!.executionPolicies!.chat.json,
-					maxAttempts: 10,
+					maxAttempts: 6,
 					totalMs: 10_000,
 				},
 			},
@@ -161,16 +161,11 @@ test("router: pool and request budgets bound retries across fallbacks", {
 				return fail("server");
 			},
 		);
-		assert.equal(
-			(counts.get(deployments[0]!.id) ?? 0) +
-				(counts.get(deployments[1]!.id) ?? 0),
-			3,
-		);
-		assert.ok((counts.get(deployments[0]!.id) ?? 0) >= 1);
-		assert.ok((counts.get(deployments[1]!.id) ?? 0) >= 1);
-		assert.equal(counts.get(deployments[2]!.id), 3);
+		assert.equal(counts.get(deployments[0]!.id), 1);
+		assert.equal(counts.get(deployments[1]!.id), 1);
+		assert.equal(counts.get(deployments[2]!.id), 1);
 		assert.equal(counts.get(deployments[3]!.id), 1);
-		assert.equal(result.attempts, 7);
+		assert.equal(result.attempts, 4);
 		assert.equal(result.fallbackUsed, true);
 		const logicalFailureCounts = await redis.mget(
 			...deployments
@@ -209,8 +204,8 @@ test("router: a large failing pool cannot amplify one request beyond its pool bu
 				},
 			),
 		);
-		assert.equal(calls, 3);
-		assert.equal(attempted.size, 3);
+		assert.equal(calls, 6);
+		assert.equal(attempted.size, 6);
 	} finally {
 		await cleanupDeployments(deployments);
 	}
@@ -443,10 +438,10 @@ test("router: mixed primary causes use the general chain", {
 			},
 		);
 		assert.equal(counts.get(contextDeployment!.id), 1);
-		assert.equal(counts.get(serverDeployment!.id), 2);
+		assert.equal(counts.get(serverDeployment!.id), 1);
 		assert.equal(counts.get(deployments[2]!.id), 1);
 		assert.equal(counts.get(deployments[3]!.id), undefined);
-		assert.equal(result.attempts, 4);
+		assert.equal(result.attempts, 3);
 		await result.finish(null);
 	} finally {
 		await cleanupDeployments(deployments);

@@ -3,7 +3,6 @@ import { redisAvailable, pgAvailable } from "#test-support/infra.ts";
 import { makeOpenAIContractTestApp } from "#test-support/app.ts";
 import { buildCacheKey, cachePayload } from "#cache/cacheKey.ts";
 import { invalidateVirtualKey } from "#auth/virtualKeyCache.ts";
-import { listRequestLogsPage } from "#db/repos/requestLogs.ts";
 import { embeddingsHandler } from "#endpoints/embeddings.ts";
 import { deleteDeployment } from "#db/repos/deployments.ts";
 import { createDeployment } from "#deployments/service.ts";
@@ -24,22 +23,28 @@ import {
 	deleteVirtualKey,
 } from "#db/repos/virtualKeys.ts";
 
+import {
+	listOperationsPage,
+	getOperationDetail,
+} from "#db/repos/operations.ts";
+
 import "#adapters/index.ts";
 
 const hasInfra = (await pgAvailable()) && (await redisAvailable());
 const skip = hasInfra ? false : "Postgres/Redis unavailables";
 
-async function waitForLog(requestId: string) {
+async function waitForOperation(requestId: string) {
 	return eventually(
 		async () => {
-			const page = await listRequestLogsPage({
+			const page = await listOperationsPage({
 				limit: 1,
 				offset: 0,
 				requestId,
 			});
-			return page.rows[0];
+			const operation = page.rows[0];
+			return operation ? getOperationDetail(operation.id) : null;
 		},
-		{ description: `request_log ${requestId}` },
+		{ description: `gateway_operation ${requestId}` },
 	);
 }
 
@@ -167,38 +172,49 @@ test("POST /v1/embeddings routes, caches, and logs without storing vectors", {
 				assert.deepEqual(await second.json(), firstBody);
 				assert.equal(fetchCalls, 1, "the second response must come from cache");
 
-				const firstLog = await waitForLog(firstRequestId);
+				const firstLog = await waitForOperation(firstRequestId);
 				assert.equal(firstLog.callType, "embeddings");
 				assert.equal(firstLog.publicModel, publicModel);
-				assert.equal(firstLog.deploymentId, deploymentId);
-				assert.equal(firstLog.adapterKey, "openai");
+				assert.equal(firstLog.outcome, "success");
+				assert.equal(firstLog.terminalVerified, true);
 				assert.equal(firstLog.cacheHit, false);
 				assert.equal(firstLog.promptTokens, 7);
 				assert.equal(firstLog.completionTokens, 0);
 				assert.equal(firstLog.totalTokens, 7);
-				assert.deepEqual(firstLog.responseBody, {
-					object: "list",
-					model: "text-embedding-3-small",
-					count: 1,
-					encoding: "float",
-					dimensions: [3],
-					usage: { prompt_tokens: 7, total_tokens: 7 },
-				});
-				assert.equal(
-					JSON.stringify(firstLog.responseBody).includes("0.1"),
-					false,
-				);
+				assert.equal(firstLog.attempts.length, 1);
+				assert.equal(firstLog.attempts[0]!.deploymentId, deploymentId);
+				assert.equal(firstLog.attempts[0]!.adapterKey, "openai");
+				assert.equal(firstLog.attempts[0]!.outcome, "success");
+				assert.equal(firstLog.attempts[0]!.terminalVerified, true);
+				const firstSummary = firstLog.responseSummary as Record<
+					string,
+					unknown
+				>;
+				assert.deepEqual(firstSummary.fields, [
+					"count",
+					"dimensions",
+					"encoding",
+					"model",
+					"object",
+					"usage",
+				]);
+				assert.equal(JSON.stringify(firstSummary).includes("0.1"), false);
 
-				const secondLog = await waitForLog(secondRequestId);
+				const secondLog = await waitForOperation(secondRequestId);
 				assert.equal(secondLog.callType, "embeddings");
 				assert.equal(secondLog.publicModel, publicModel);
-				assert.equal(secondLog.deploymentId, null);
-				assert.equal(secondLog.adapterKey, null);
+				assert.equal(secondLog.outcome, "success");
+				assert.equal(secondLog.terminalVerified, true);
 				assert.equal(secondLog.cacheHit, true);
 				assert.equal(secondLog.promptTokens, 7);
 				assert.equal(secondLog.completionTokens, 0);
 				assert.equal(secondLog.totalTokens, 7);
-				assert.deepEqual(secondLog.responseBody, firstLog.responseBody);
+				assert.equal(secondLog.attempts.length, 0);
+				const secondSummary = secondLog.responseSummary as Record<
+					string,
+					unknown
+				>;
+				assert.deepEqual(secondSummary.fields, firstSummary.fields);
 			},
 		);
 	} finally {
