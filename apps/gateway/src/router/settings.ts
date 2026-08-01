@@ -1,6 +1,11 @@
 import type { UnsupportedParameterStrategy } from "#catalog/parameters.ts";
 import { getRouterSettings } from "#db/repos/router.ts";
 
+import {
+	DEFAULT_EXECUTION_POLICIES,
+	type ExecutionPolicies,
+} from "#core/executionPolicy.ts";
+
 export type RoutingStrategy =
 	| "simple-shuffle"
 	| "least-busy"
@@ -21,10 +26,7 @@ export interface EffectiveSettings {
 	halfOpenProbeSeconds: number;
 	configurationCooldownSeconds: number;
 	throttleCooldownSeconds: number;
-	/** Retries for one Public Model pool, on top of the initial attempt. */
-	numRetries: number;
-	maxAttemptsPerRequest: number;
-	timeoutSeconds: number;
+	executionPolicies: ExecutionPolicies;
 	retryAfterSeconds: number;
 }
 
@@ -38,9 +40,7 @@ const DEFAULTS: EffectiveSettings = {
 	halfOpenProbeSeconds: 30,
 	configurationCooldownSeconds: 300,
 	throttleCooldownSeconds: 5,
-	numRetries: 3,
-	maxAttemptsPerRequest: 6,
-	timeoutSeconds: 600,
+	executionPolicies: DEFAULT_EXECUTION_POLICIES,
 	retryAfterSeconds: 0,
 };
 
@@ -63,9 +63,7 @@ async function loadGlobal(): Promise<EffectiveSettings> {
 				halfOpenProbeSeconds: row.halfOpenProbeSeconds,
 				configurationCooldownSeconds: row.configurationCooldownSeconds,
 				throttleCooldownSeconds: row.throttleCooldownSeconds,
-				numRetries: row.numRetries,
-				maxAttemptsPerRequest: row.maxAttemptsPerRequest,
-				timeoutSeconds: row.timeoutSeconds,
+				executionPolicies: row.executionPolicies ?? DEFAULT_EXECUTION_POLICIES,
 				retryAfterSeconds: row.retryAfterSeconds,
 			}
 		: DEFAULTS;

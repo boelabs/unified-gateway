@@ -202,14 +202,27 @@ export function parseDirectImagesResponse(
 export async function* parseDirectImageStream(
 	stream: ReadableStream<Uint8Array>,
 	operation: CanonicalImageRequest["operation"],
+	options?: {
+		onUnknownEvent?: (type: string) => void;
+		onTransportTerminator?: (terminator: "done_marker") => void;
+	},
 ): AsyncIterable<CanonicalImageStreamEvent> {
 	for await (const sse of parseSSE(stream)) {
-		if (sse.data === "[DONE]") return;
+		if (sse.data === "[DONE]") {
+			options?.onTransportTerminator?.("done_marker");
+			return;
+		}
 		let raw: Record<string, unknown>;
 		try {
 			raw = JSON.parse(sse.data) as Record<string, unknown>;
-		} catch {
-			continue;
+		} catch (cause) {
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: "Image upstream emitted malformed JSON",
+				provider: { body: sse.data },
+				cause,
+			});
 		}
 		if (raw.error)
 			throw new GatewayError({
@@ -218,8 +231,10 @@ export async function* parseDirectImageStream(
 				provider: { body: raw },
 			});
 		const type = typeof raw.type === "string" ? raw.type : "";
-		if (!type.endsWith(".partial_image") && !type.endsWith(".completed"))
+		if (!type.endsWith(".partial_image") && !type.endsWith(".completed")) {
+			options?.onUnknownEvent?.(type || "missing_type");
 			continue;
+		}
 		const common = {
 			operation,
 			image: imageData(raw),

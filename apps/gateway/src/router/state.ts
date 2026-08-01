@@ -15,7 +15,9 @@ import { redis } from "#cache/redis.ts";
  * Circuit state uses its own atomic implementation in circuit.ts.
  */
 
-const INFLIGHT_TTL = 300; // s - prevents leaks if a process dies midway
+// Longer than the largest execution policy (15 minutes) so a valid long-running audio/video stream
+// is never silently removed from least-busy accounting. Crashes still self-heal.
+const INFLIGHT_TTL = 1_200;
 const WINDOW_TTL = 120; // s - RPM/TPM expire on their own
 const HEALTH_TTL = 600; // s - rolling success/failure and performance memory
 const EWMA_ALPHA = 0.2;

@@ -87,21 +87,28 @@ test("reasoningLogInfo: reports requested vs effective and flags clamping", () =
 		requested: "none",
 		effective: "minimal",
 		clamped: true,
+		source: "clamped",
 	});
 	// Honored as-is when the model has an off switch.
 	assert.deepEqual(reasoningLogInfo({ effort: "none" }, withOff), {
 		requested: "none",
 		effective: "none",
 		clamped: false,
+		source: "client",
 	});
 	// Out-of-range request clamps down.
 	assert.deepEqual(reasoningLogInfo({ effort: "xhigh" }, flashLite), {
 		requested: "xhigh",
 		effective: "high",
 		clamped: true,
+		source: "clamped",
 	});
-	// Quiet when nothing to report.
-	assert.equal(reasoningLogInfo(undefined, flashLite), undefined);
+	assert.deepEqual(reasoningLogInfo(undefined, flashLite), {
+		requested: null,
+		effective: "minimal",
+		clamped: false,
+		source: "model_floor",
+	});
 	assert.equal(reasoningLogInfo({ effort: "high" }, undefined), undefined);
 });
 

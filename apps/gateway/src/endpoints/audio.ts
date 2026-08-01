@@ -26,6 +26,14 @@ import {
 } from "#core/audio.ts";
 
 import {
+	type DownstreamWriteObservation,
+	newDownstreamWriteObservation,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
+
+import {
 	toOpenAITranscriptionResponse,
 	toOpenAITranscriptionEvent,
 	transcriptionToCanonical,
@@ -65,10 +73,12 @@ async function handleTranscription(
 
 	const finish = async (
 		usage: ReturnType<typeof transcriptionUsageToCore>,
+		error?: GatewayError | null,
+		downstream?: DownstreamWriteObservation,
 	): Promise<void> => {
 		if (!routing || finished) return;
 		finished = true;
-		await routing.finish(usage);
+		await routing.finish(usage, undefined, error, undefined, downstream);
 	};
 
 	try {
@@ -80,8 +90,10 @@ async function handleTranscription(
 			req.model,
 			"audio.transcriptions",
 			{
-				clientSignal: c.req.raw.signal,
+				clientSignal: log.clientSignal,
 				requestId: log.requestId,
+				operationId: log.operationId,
+				executionMode: req.stream ? "stream" : "json",
 				candidateEligibility: (candidate) =>
 					assertTranscriptionRequestSupported(req, candidate.meta),
 			},
@@ -89,7 +101,12 @@ async function handleTranscription(
 		);
 		log.applyRouting(routing);
 		const meta = routing.candidate.meta;
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = {
+			...candidateMetadata(routing.candidate),
+			...(routing.value.kind === "stream"
+				? { streamLifecycle: routing.value.observation }
+				: { terminal: routing.value.terminal }),
+		};
 
 		if (routing.value.kind === "json") {
 			log.upstreamTtftMs = Date.now() - routing.upstreamStartedAt;
@@ -124,11 +141,16 @@ async function handleTranscription(
 		const events = routing.value.events;
 		cleanupDeferred = true;
 		return streamSSE(c, async (stream) => {
+			stream.onAbort(() => log.abortClient());
+			const downstream = newDownstreamWriteObservation(log.operationId);
 			let usage: TranscriptionUsage | undefined;
 			let firstAt: number | null = null;
 			let streamError: GatewayError | null = null;
 			try {
-				for await (const event of events) {
+				for await (const event of withSSEHeartbeats(events, () =>
+					writeSSEHeartbeat(stream, downstream),
+				)) {
+					log.progress();
 					const transformed = await applyStreamEventExtensions(
 						c,
 						"audio.transcriptions",
@@ -141,9 +163,13 @@ async function handleTranscription(
 					}
 					if (transformed.kind === "done" && transformed.usage)
 						usage = transformed.usage;
-					await stream.writeSSE({
-						data: JSON.stringify(toOpenAITranscriptionEvent(transformed)),
-					});
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(toOpenAITranscriptionEvent(transformed)),
+						},
+						downstream,
+					);
 				}
 			} catch (error) {
 				streamError = GatewayError.is(error)
@@ -159,11 +185,18 @@ async function handleTranscription(
 					req.model,
 					streamError,
 				);
-				await stream.writeSSE({ data: JSON.stringify(streamError.toOpenAI()) });
+				if (streamError.code !== "downstream_backpressure")
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(streamError.toOpenAI()),
+						},
+						downstream,
+					);
 			} finally {
 				const core = transcriptionUsageToCore(usage);
 				const cost = accountUsage(c, streamRouting.candidate.meta, core);
-				await finish(core);
+				await finish(core, streamError, downstream);
 				await cleanup();
 				log.write({
 					status: streamError ? "error" : "success",
@@ -180,7 +213,7 @@ async function handleTranscription(
 	} catch (error) {
 		const ge = toGatewayError(error);
 		log.applyFailedAttempts(ge.attempts);
-		await finish(null);
+		await finish(null, ge);
 		await notifyExtensionError(c, "audio.transcriptions", log.publicModel, ge);
 		if (!cleanupDeferred) await cleanup();
 		log.writeError(ge);

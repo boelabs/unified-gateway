@@ -10,6 +10,7 @@
 
 import "zod-openapi"; // ambient types for `.meta({ id, ... })`
 
+import { EXECUTION_POLICY_MAX_TOTAL_MS } from "#core/executionPolicy.ts";
 import { EFFORT_ORDER } from "#core/reasoning.ts";
 import * as z from "zod/v4";
 
@@ -822,8 +823,38 @@ export const UpdateKey = z
 
 /* ------------------------------------------------------------ router/fallbacks */
 
+const ExecutionPolicy = z.object({
+	firstOutputMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+	idleMs: z.union([
+		z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+		z.null(),
+	]),
+	reasoningOnlyMs: z.union([
+		z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+		z.null(),
+	]),
+	preCommitMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+	totalMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+	maxAttempts: z.int().min(1).max(20),
+});
+
+const OperationExecutionPolicy = z.object({
+	json: ExecutionPolicy,
+	stream: ExecutionPolicy,
+});
+
 export const RouterSettings = z
 	.object({
+		executionPolicies: z
+			.object({
+				chat: OperationExecutionPolicy,
+				"images.generations": OperationExecutionPolicy,
+				"images.edits": OperationExecutionPolicy,
+				"videos.generations": OperationExecutionPolicy,
+				"audio.transcriptions": OperationExecutionPolicy,
+				embeddings: OperationExecutionPolicy,
+			})
+			.optional(),
 		routingStrategy: z
 			.enum([
 				"simple-shuffle",
@@ -856,19 +887,6 @@ export const RouterSettings = z
 		halfOpenProbeSeconds: z.int().min(1).optional(),
 		configurationCooldownSeconds: z.int().min(1).optional(),
 		throttleCooldownSeconds: z.int().min(1).optional(),
-		numRetries: z.int().min(0).optional().meta({
-			description:
-				"Retries for one failed Public Model request, on top of its initial attempt and shared across the deployments in that pool.",
-		}),
-		maxAttemptsPerRequest: z.int().min(1).optional().meta({
-			description:
-				"Safety ceiling across the primary pool and complete fallback chain. Must be at least numRetries + 1; it is raised automatically when numRetries alone requires more attempts.",
-		}),
-		timeoutSeconds: z
-			.int()
-			.min(1)
-			.optional()
-			.meta({ description: "Timeout per upstream attempt." }),
 		retryAfterSeconds: z.int().min(0).optional().meta({
 			description:
 				"Minimum wait before a transient retry. Exponential full jitter is added above this floor.",

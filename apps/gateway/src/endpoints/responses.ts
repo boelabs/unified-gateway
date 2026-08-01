@@ -60,6 +60,14 @@ import {
 } from "#db/repos/responseStates.ts";
 
 import {
+	type DownstreamWriteObservation,
+	newDownstreamWriteObservation,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
+
+import {
 	contentInputResolutionLogMetadata,
 	parameterPolicyLogMetadata,
 	routeChat,
@@ -200,7 +208,10 @@ export async function compactResponseHandler(
 		await preflight(c, canonical.model);
 		const settings = await getEffectiveSettings();
 		const { routing, parameterPolicy, contentInputResolution } =
-			await routeChat(c, canonical, log.requestId, settings);
+			await routeChat(c, canonical, log.requestId, settings, {
+				signal: log.clientSignal,
+				operationId: log.operationId,
+			});
 		log.applyRouting(routing);
 		if (routing.value.kind !== "json")
 			throw new GatewayError({
@@ -222,7 +233,10 @@ export async function compactResponseHandler(
 		await routing.finish(response.usage);
 		const meta = routing.candidate.meta;
 		const cost = accountUsage(c, meta, response.usage);
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = candidateMetadata(
+			routing.candidate,
+		);
+		metadata.terminal = routing.value.terminal;
 		const parameterMetadata = parameterPolicyLogMetadata(
 			parameterPolicy,
 			settings.unsupportedParameterStrategy,
@@ -340,7 +354,10 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 
 		const settings = await getEffectiveSettings();
 		const { routing, parameterPolicy, contentInputResolution } =
-			await routeChat(c, canonical, log.requestId, settings);
+			await routeChat(c, canonical, log.requestId, settings, {
+				signal: log.clientSignal,
+				operationId: log.operationId,
+			});
 		log.applyRouting(routing);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
@@ -348,7 +365,12 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			req: pipelineReq,
 			upstreamModel: routing.candidate.upstreamModel,
 		};
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = {
+			...candidateMetadata(routing.candidate),
+			...(routing.value.kind === "stream"
+				? { streamLifecycle: routing.value.observation }
+				: { terminal: routing.value.terminal }),
+		};
 		const reasoning = reasoningLogInfo(
 			canonical.reasoning,
 			meta.capabilities.reasoning ? meta.reasoning : undefined,
@@ -412,6 +434,11 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 
 		let firstTokenAt: number | null = null;
 		let lastChunkAt: number | null = null;
+		let responseIdentity: {
+			id: string;
+			createdAt: number;
+			model: string;
+		} | null = null;
 		const tapped = tapFirstToken(
 			routing.value.chunks,
 			(at) => {
@@ -423,6 +450,7 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 		);
 		async function* transformedChunks() {
 			for await (const chunk of tapped) {
+				log.progress();
 				yield await applyStreamEventExtensions(
 					c,
 					"chat",
@@ -436,13 +464,38 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			renderOpts,
 		);
 		return streamSSE(c, async (stream) => {
+			stream.onAbort(() => log.abortClient());
+			const downstream = newDownstreamWriteObservation(log.operationId);
 			let usage: Usage | null = null;
 			let streamError: GatewayError | null = null;
 			let statePersisted = false;
 			try {
-				for await (const ev of events) {
+				for await (const ev of withSSEHeartbeats(events, () =>
+					writeSSEHeartbeat(stream, downstream),
+				)) {
 					const clientEvent = responseEventForClient(ev, pipelineReq.include);
 					let eventData = clientEvent.data;
+					if (ev.event === "response.created") {
+						try {
+							const created = JSON.parse(ev.data) as {
+								response?: {
+									id?: string;
+									created_at?: number;
+									model?: string;
+								};
+							};
+							if (created.response?.id)
+								responseIdentity = {
+									id: created.response.id,
+									createdAt:
+										created.response.created_at ??
+										Math.floor(Date.now() / 1000),
+									model: created.response.model ?? canonical.model,
+								};
+						} catch {
+							// The regular renderer validation below remains authoritative.
+						}
+					}
 					if (
 						ev.event === "response.completed" ||
 						ev.event === "response.incomplete"
@@ -506,9 +559,16 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 							statePersisted = true;
 						}
 					}
-					await stream.writeSSE({ event: clientEvent.event!, data: eventData });
+					await writeSSE(
+						stream,
+						{
+							event: clientEvent.event!,
+							data: eventData,
+						},
+						downstream,
+					);
 				}
-				await stream.writeSSE({ data: "[DONE]" });
+				await writeSSE(stream, { data: "[DONE]" }, downstream);
 			} catch (err) {
 				streamError = GatewayError.is(err)
 					? err
@@ -518,15 +578,43 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 							cause: err,
 						});
 				await notifyExtensionError(c, "chat", canonical.model, streamError);
-				await stream.writeSSE({
-					event: "error",
-					data: JSON.stringify(streamError.toOpenAI()),
-				});
-				await stream.writeSSE({ data: "[DONE]" });
+				if (streamError.code !== "downstream_backpressure") {
+					const publicError = streamError.toOpenAI().error;
+					await writeSSE(
+						stream,
+						{
+							event: "response.failed",
+							data: JSON.stringify({
+								type: "response.failed",
+								response: {
+									id: responseIdentity?.id ?? `resp_${randomUUID()}`,
+									object: "response",
+									created_at:
+										responseIdentity?.createdAt ??
+										Math.floor(Date.now() / 1000),
+									status: "failed",
+									model: responseIdentity?.model ?? canonical.model,
+									output: [],
+									error: publicError,
+									incomplete_details: null,
+									usage: null,
+								},
+							}),
+						},
+						downstream,
+					);
+					await writeSSE(stream, { data: "[DONE]" }, downstream);
+				}
 			} finally {
 				if (firstTokenAt !== null)
 					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(usage, lastChunkAt ?? undefined);
+				await routing.finish(
+					usage,
+					lastChunkAt ?? undefined,
+					streamError,
+					undefined,
+					downstream,
+				);
 				const cost = accountUsage(c, meta, usage);
 				log.write({
 					status: streamError ? "error" : "success",
@@ -654,9 +742,34 @@ function websocketError(error: GatewayErrorType): Record<string, unknown> {
 	};
 }
 
-function sendWebSocketJson(ws: WSContext, value: unknown): void {
+async function sendWebSocketJson(
+	ws: WSContext,
+	value: unknown,
+	observation?: DownstreamWriteObservation,
+): Promise<void> {
 	if (ws.readyState !== 1) return;
-	ws.send(JSON.stringify(value));
+	const startedAt = Date.now();
+	const serialized = JSON.stringify(value);
+	ws.send(serialized);
+	const raw = ws.raw as { bufferedAmount?: number } | undefined;
+	while ((raw?.bufferedAmount ?? 0) > 1_048_576) {
+		if (Date.now() - startedAt >= 30_000)
+			throw new GatewayError({
+				class: "server",
+				code: "downstream_backpressure",
+				message: "WebSocket client did not drain its receive buffer",
+				failureKind: "gateway",
+				deploymentHealth: "neutral",
+				retryable: false,
+			});
+		await new Promise<void>((resolve) => setTimeout(resolve, 10));
+	}
+	if (observation) {
+		observation.bytes += Buffer.byteLength(serialized);
+		const blockedMs = Date.now() - startedAt;
+		observation.totalBlockedMs += blockedMs;
+		observation.maxBlockedMs = Math.max(observation.maxBlockedMs, blockedMs);
+	}
 }
 
 function websocketMessageText(value: unknown): string {
@@ -755,6 +868,7 @@ async function executeResponsesWebSocketTurn(
 		const { routing, parameterPolicy, contentInputResolution } =
 			await routeChat(c, canonical, requestId, settings, {
 				signal: turnAbort.signal,
+				operationId: log.operationId,
 				...(session.preferredDeploymentId
 					? {
 							preferredDeploymentId: session.preferredDeploymentId,
@@ -774,7 +888,12 @@ async function executeResponsesWebSocketTurn(
 			req: pipelineReq,
 			upstreamModel: routing.candidate.upstreamModel,
 		};
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = {
+			...candidateMetadata(routing.candidate),
+			...(routing.value.kind === "stream"
+				? { streamLifecycle: routing.value.observation }
+				: { terminal: routing.value.terminal }),
+		};
 		const reasoning = reasoningLogInfo(
 			canonical.reasoning,
 			meta.capabilities.reasoning ? meta.reasoning : undefined,
@@ -800,6 +919,7 @@ async function executeResponsesWebSocketTurn(
 		let lastChunkAt: number | null = null;
 		let usage: Usage | null = null;
 		let streamError: GatewayErrorType | null = null;
+		const downstream = newDownstreamWriteObservation(log.operationId);
 		let completedResponse: Record<string, unknown> | null = null;
 		let internalResponse: Record<string, unknown> | null = null;
 		const tapped = tapFirstToken(
@@ -813,6 +933,7 @@ async function executeResponsesWebSocketTurn(
 		);
 		async function* transformedChunks() {
 			for await (const chunk of tapped) {
+				log.progress();
 				yield await applyStreamEventExtensions(
 					c,
 					"chat",
@@ -898,7 +1019,7 @@ async function executeResponsesWebSocketTurn(
 						);
 					}
 				}
-				sendWebSocketJson(ws, data);
+				await sendWebSocketJson(ws, data, downstream);
 			}
 		} catch (error) {
 			streamError = toGatewayError(error, "Error during WebSocket streaming");
@@ -906,7 +1027,13 @@ async function executeResponsesWebSocketTurn(
 		} finally {
 			if (firstTokenAt !== null)
 				log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-			await routing.finish(usage, lastChunkAt ?? undefined);
+			await routing.finish(
+				usage,
+				lastChunkAt ?? undefined,
+				streamError,
+				undefined,
+				downstream,
+			);
 			const cost = accountUsage(c, meta, usage);
 			log.write({
 				status: streamError ? "error" : "success",
@@ -933,7 +1060,8 @@ async function executeResponsesWebSocketTurn(
 			if (session.state?.id === referencedPreviousId) session.state = null;
 			session.upstreams.invalidate(referencedPreviousId);
 		}
-		sendWebSocketJson(ws, websocketError(gatewayError));
+		if (gatewayError.code !== "downstream_backpressure")
+			await sendWebSocketJson(ws, websocketError(gatewayError));
 	} finally {
 		if (session.activeAbort === turnAbort) session.activeAbort = null;
 		c.set("turnRequestId", undefined);
@@ -979,7 +1107,7 @@ export const responsesWebSocketHandler = upgradeWebSocket(
 		session.timer = setTimeout(() => {
 			const ws = session.socket;
 			if (!ws) return;
-			sendWebSocketJson(
+			void sendWebSocketJson(
 				ws,
 				websocketError(
 					new GatewayError({
@@ -1001,7 +1129,7 @@ export const responsesWebSocketHandler = upgradeWebSocket(
 			onMessage(event) {
 				if (session.queuedTurns >= env.RESPONSES_WEBSOCKET_MAX_QUEUED_TURNS) {
 					if (session.socket)
-						sendWebSocketJson(
+						void sendWebSocketJson(
 							session.socket,
 							websocketError(
 								new GatewayError({
@@ -1020,7 +1148,10 @@ export const responsesWebSocketHandler = upgradeWebSocket(
 					.catch((error) => {
 						const gatewayError = toGatewayError(error);
 						if (session.socket)
-							sendWebSocketJson(session.socket, websocketError(gatewayError));
+							void sendWebSocketJson(
+								session.socket,
+								websocketError(gatewayError),
+							);
 					})
 					.finally(() => {
 						session.queuedTurns -= 1;

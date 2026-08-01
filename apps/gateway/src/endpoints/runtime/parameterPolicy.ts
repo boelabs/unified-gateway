@@ -1,6 +1,7 @@
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
 import type { RouteOptions, RouteResult } from "#router/index.ts";
 import { nativeTransportForPublicWire } from "#core/transport.ts";
+import { chatChunkSemantic } from "#gateway/streamLifecycle.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { EffectiveSettings } from "#router/settings.ts";
 import type { ChatExecResult } from "#gateway/executor.ts";
@@ -65,6 +66,7 @@ export async function routeChat(
 		signal?: AbortSignal;
 		execute?: ChatCandidateExecutor;
 		preferredDeploymentId?: string;
+		operationId?: string;
 	},
 ): Promise<{
 	routing: RouteResult<ChatExecResult>;
@@ -110,37 +112,132 @@ export async function routeChat(
 					);
 				}
 			: undefined;
-	const routing = await route<ChatExecResult>(
-		canonical.model,
-		"chat",
-		{
-			clientSignal: options?.signal ?? c.req.raw.signal,
-			requestId,
-			preferredTransport,
-			...(options?.preferredDeploymentId
-				? { preferredDeploymentId: options.preferredDeploymentId }
-				: {}),
-			...(candidateEligibility ? { candidateEligibility } : {}),
-		},
-		async (cand, ctx) => {
-			const resolved = await contentInputResolver.resolveForCandidate(
-				cand,
-				ctx.transport,
-			);
-			contentInputResolution = resolved.metadata ?? null;
-			const candidateRequest = requestForCandidate(
-				resolved.request,
-				cand,
-				settings.unsupportedParameterStrategy,
-				(result) => {
-					parameterPolicy = result;
-				},
-			);
-			return options?.execute
-				? options.execute(cand, ctx, candidateRequest)
-				: executeChat(cand.adapter, candidateRequest, ctx);
-		},
-	);
+	const policy =
+		settings.executionPolicies.chat[canonical.stream ? "stream" : "json"];
+	const preOutputDeadlineAt = Date.now() + policy.preCommitMs;
+	const totalDeadlineAt = Date.now() + policy.totalMs;
+	const previouslyFailed = new Set<string>();
+	let remainingAttempts = policy.maxAttempts;
+	const failedAttemptLog: RouteResult<ChatExecResult>["attemptLog"] = [];
+	let failedAttempts = 0;
+	let usedFallback = false;
+	const runRoute = () =>
+		route<ChatExecResult>(
+			canonical.model,
+			"chat",
+			{
+				clientSignal: options?.signal ?? c.req.raw.signal,
+				requestId,
+				executionMode: canonical.stream ? "stream" : "json",
+				preferredTransport,
+				maxAttempts: remainingAttempts,
+				preOutputDeadlineAt,
+				totalDeadlineAt,
+				previousDeploymentIds: previouslyFailed,
+				attemptOrdinalOffset: failedAttempts,
+				...(options?.operationId ? { operationId: options.operationId } : {}),
+				...(options?.preferredDeploymentId
+					? { preferredDeploymentId: options.preferredDeploymentId }
+					: {}),
+				...(candidateEligibility ? { candidateEligibility } : {}),
+			},
+			async (cand, ctx) => {
+				const resolved = await contentInputResolver.resolveForCandidate(
+					cand,
+					ctx.transport,
+				);
+				contentInputResolution = resolved.metadata ?? null;
+				const candidateRequest = requestForCandidate(
+					resolved.request,
+					cand,
+					settings.unsupportedParameterStrategy,
+					(result) => {
+						parameterPolicy = result;
+					},
+				);
+				return options?.execute
+					? options.execute(cand, ctx, candidateRequest)
+					: executeChat(cand.adapter, candidateRequest, ctx);
+			},
+		);
+	let routing = await runRoute();
+	while (routing.value.kind === "stream") {
+		const iterator = routing.value.chunks[Symbol.asyncIterator]();
+		const buffered = [];
+		try {
+			while (true) {
+				const next = await iterator.next();
+				if (next.done) break;
+				buffered.push(next.value);
+				const semantic = chatChunkSemantic(next.value);
+				const terminal = next.value.choices.some(
+					(choice) => choice.finishReason !== null,
+				);
+				if (
+					semantic === "reasoning" ||
+					semantic === "content" ||
+					semantic === "tool" ||
+					terminal
+				) {
+					const remaining = iterator;
+					const prefetched = buffered;
+					routing.value = {
+						...routing.value,
+						chunks: (async function* () {
+							yield* prefetched;
+							while (true) {
+								const item = await remaining.next();
+								if (item.done) return;
+								yield item.value;
+							}
+						})(),
+					};
+					routing.attempts += failedAttempts;
+					routing.fallbackUsed ||= usedFallback;
+					routing.attemptLog.unshift(...failedAttemptLog);
+					return { routing, parameterPolicy, contentInputResolution };
+				}
+			}
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: "Upstream stream ended before a semantic terminal",
+				failureKind: "transient",
+				deploymentHealth: "penalize",
+			});
+		} catch (error) {
+			const streamError = GatewayError.is(error)
+				? error
+				: new GatewayError({
+						class: "server",
+						message: "Unexpected error while awaiting upstream output",
+						failureKind: "gateway",
+						deploymentHealth: "neutral",
+						retryable: false,
+						cause: error,
+					});
+			await Promise.allSettled([
+				routing.finish(null, Date.now(), streamError),
+				iterator.return?.(),
+			]);
+			failedAttemptLog.push(...routing.attemptLog);
+			failedAttempts += routing.attempts;
+			usedFallback ||= routing.fallbackUsed;
+			remainingAttempts = policy.maxAttempts - failedAttempts;
+			previouslyFailed.add(routing.candidate.row.id);
+			if (
+				!streamError.retryable ||
+				streamError.routingScope === "request" ||
+				(options?.signal ?? c.req.raw.signal).aborted ||
+				remainingAttempts <= 0 ||
+				Date.now() >= preOutputDeadlineAt
+			) {
+				streamError.attempts = failedAttemptLog;
+				throw streamError;
+			}
+			routing = await runRoute();
+		}
+	}
 	return { routing, parameterPolicy, contentInputResolution };
 }
 

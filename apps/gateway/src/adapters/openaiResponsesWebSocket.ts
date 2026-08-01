@@ -1,6 +1,8 @@
+import { upstreamWebSocket } from "#gateway/instrumentedTransport.ts";
+import { abortGatewayError } from "#gateway/abortReason.ts";
 import { GatewayError } from "#core/errors.ts";
-import WebSocket, { type RawData } from "ws";
 import type { SSEEvent } from "#core/sse.ts";
+import type { RawData } from "ws";
 
 import type {
 	ResponsesWebSocketSession,
@@ -117,7 +119,7 @@ export function makeOpenAIResponsesWebSocketHandler(
 	return {
 		async connect(ctx): Promise<ResponsesWebSocketSession> {
 			const connection = options.resolveConnection(ctx);
-			const socket = new WebSocket(websocketUrl(connection.url), {
+			const socket = upstreamWebSocket(ctx, websocketUrl(connection.url), {
 				headers: connection.headers,
 			});
 			let activeQueue: AsyncEventQueue | null = null;
@@ -135,13 +137,7 @@ export function makeOpenAIResponsesWebSocketHandler(
 				const onAbort = () => {
 					cleanup();
 					socket.terminate();
-					reject(
-						new GatewayError({
-							class: "timeout",
-							code: "upstream_websocket_connect_timeout",
-							message: `${options.label}: Responses WebSocket connection was aborted`,
-						}),
-					);
+					reject(abortGatewayError(ctx.signal!, "connect"));
 				};
 				const cleanup = () => {
 					socket.off("open", onOpen);
@@ -236,15 +232,7 @@ export function makeOpenAIResponsesWebSocketHandler(
 					const message = buildResponsesWebSocketMessage(req, ctx, turnOptions);
 
 					const onAbort = () => {
-						queue.fail(
-							new GatewayError({
-								class: "bad_request",
-								status: 499,
-								code: "client_closed_request",
-								message: "Client closed the request before completion",
-								routingScope: "request",
-							}),
-						);
+						queue.fail(abortGatewayError(turnOptions.signal));
 						socket.close(1000, "turn aborted");
 					};
 					turnOptions.signal.addEventListener("abort", onAbort, { once: true });

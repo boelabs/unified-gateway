@@ -43,6 +43,13 @@ import {
 	attachRoutingMetadata,
 } from "./runtime/routingMetadata.ts";
 
+import {
+	newDownstreamWriteObservation,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
+
 /**
  * POST /v1/messages - Anthropic Messages API, provider-agnostic. Translates the request to canonical,
  * routes to an adapter with a `chat` handler, and renders the result to the Anthropic format. Errors
@@ -76,14 +83,22 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 
 		const settings = await getEffectiveSettings();
 		const { routing, parameterPolicy, contentInputResolution } =
-			await routeChat(c, canonical, log.requestId, settings);
+			await routeChat(c, canonical, log.requestId, settings, {
+				signal: log.clientSignal,
+				operationId: log.operationId,
+			});
 		log.applyRouting(routing);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
 		const renderOpts: MessagesRenderOptions = {
 			upstreamModel: routing.candidate.upstreamModel,
 		};
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = {
+			...candidateMetadata(routing.candidate),
+			...(routing.value.kind === "stream"
+				? { streamLifecycle: routing.value.observation }
+				: { terminal: routing.value.terminal }),
+		};
 		const reasoning = reasoningLogInfo(
 			canonical.reasoning,
 			meta.capabilities.reasoning ? meta.reasoning : undefined,
@@ -146,6 +161,7 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 		);
 		async function* transformedChunks() {
 			for await (const chunk of tapped) {
+				log.progress();
 				yield await applyStreamEventExtensions(
 					c,
 					"chat",
@@ -159,10 +175,14 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 			renderOpts,
 		);
 		return streamSSE(c, async (stream) => {
+			stream.onAbort(() => log.abortClient());
+			const downstream = newDownstreamWriteObservation(log.operationId);
 			let usage: Usage | null = null;
 			let streamError: GatewayError | null = null;
 			try {
-				for await (const ev of events) {
+				for await (const ev of withSSEHeartbeats(events, () =>
+					writeSSEHeartbeat(stream, downstream),
+				)) {
 					if (ev.event === "message_delta") {
 						try {
 							const u = (
@@ -181,16 +201,24 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 							/* ignore */
 						}
 					}
-					await stream.writeSSE({ event: ev.event!, data: ev.data });
+					await writeSSE(
+						stream,
+						{ event: ev.event!, data: ev.data },
+						downstream,
+					);
 				}
 				if (routingMetadata) {
-					await stream.writeSSE({
-						event: "routing_metadata",
-						data: JSON.stringify({
-							type: "routing_metadata",
-							unified_routing: routingMetadata,
-						}),
-					});
+					await writeSSE(
+						stream,
+						{
+							event: "routing_metadata",
+							data: JSON.stringify({
+								type: "routing_metadata",
+								unified_routing: routingMetadata,
+							}),
+						},
+						downstream,
+					);
 				}
 			} catch (err) {
 				streamError = GatewayError.is(err)
@@ -201,14 +229,25 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 							cause: err,
 						});
 				await notifyExtensionError(c, "chat", canonical.model, streamError);
-				await stream.writeSSE({
-					event: "error",
-					data: JSON.stringify(streamError.toAnthropic()),
-				});
+				if (streamError.code !== "downstream_backpressure")
+					await writeSSE(
+						stream,
+						{
+							event: "error",
+							data: JSON.stringify(streamError.toAnthropic()),
+						},
+						downstream,
+					);
 			} finally {
 				if (firstTokenAt !== null)
 					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(usage, lastChunkAt ?? undefined);
+				await routing.finish(
+					usage,
+					lastChunkAt ?? undefined,
+					streamError,
+					undefined,
+					downstream,
+				);
 				const cost = accountUsage(c, meta, usage);
 				log.write({
 					status: streamError ? "error" : "success",

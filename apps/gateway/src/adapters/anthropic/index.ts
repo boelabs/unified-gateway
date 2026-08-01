@@ -26,6 +26,12 @@ import {
 	mergeProviderFields,
 } from "#core/providerSpecificFields.ts";
 
+import {
+	recordUnknownAdapterEvent,
+	adapterContextDiagnostics,
+	attachAdapterDiagnostics,
+} from "#adapters/diagnostics.ts";
+
 import type {
 	AdapterContext,
 	ProviderModule,
@@ -467,7 +473,12 @@ function mapFinishReason(
 		case undefined:
 			return null;
 		default:
-			return "stop";
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: `Anthropic returned unknown stop reason "${reason}"`,
+				provider: { body: { stop_reason: reason } },
+			});
 	}
 }
 
@@ -518,7 +529,7 @@ function parseResponse(
 			outMessage.providerFields = providerFields;
 	}
 	if (toolCalls.length > 0) outMessage.toolCalls = toolCalls;
-	return {
+	const response: CanonicalChatResponse = {
 		id: message.id ?? `msg_${randomUUID()}`,
 		created: Math.floor(Date.now() / 1000),
 		model: message.model ?? ctx.upstreamModel,
@@ -534,6 +545,13 @@ function parseResponse(
 		],
 		usage: mapUsage(message.usage),
 	};
+	return attachAdapterDiagnostics(response, {
+		...(message.id ? { providerRequestId: message.id } : {}),
+		...(message.model ? { modelVersion: message.model } : {}),
+		...(message.stop_reason
+			? { originalTerminalReason: message.stop_reason }
+			: {}),
+	});
 }
 
 function mapStreamError(event: AnthropicStreamEvent): GatewayError {
@@ -562,14 +580,28 @@ async function* parseStream(
 	let cacheReadTokens = 0;
 	let cacheWriteTokens = 0;
 	let completionTokens = 0;
+	let pendingTerminal:
+		| {
+				finishReason: CanonicalFinishReason;
+				originalTerminalReason: string;
+				usage: Usage;
+		  }
+		| undefined;
+	let messageStopped = false;
 	const thinkingBlocks = new Map<number, AnthropicThinkingBlock>();
 
 	for await (const sse of parseSSE(stream)) {
 		let event: AnthropicStreamEvent;
 		try {
 			event = JSON.parse(sse.data) as AnthropicStreamEvent;
-		} catch {
-			continue;
+		} catch (cause) {
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: "Anthropic emitted malformed JSON in its stream",
+				provider: { body: sse.data },
+				cause,
+			});
 		}
 		if (event.type === "error") throw mapStreamError(event);
 		if (event.type === "message_start") {
@@ -582,14 +614,26 @@ async function* parseStream(
 				event.message?.usage?.cache_creation_input_tokens ?? cacheWriteTokens;
 			completionTokens =
 				event.message?.usage?.output_tokens ?? completionTokens;
-			yield {
-				id,
-				created,
-				model,
-				choices: [
-					{ index: 0, delta: { role: "assistant" }, finishReason: null },
-				],
-			};
+			yield attachAdapterDiagnostics(
+				{
+					id,
+					created,
+					model,
+					choices: [
+						{
+							index: 0,
+							delta: { role: "assistant" },
+							finishReason: null,
+						},
+					],
+				},
+				{
+					...(event.message?.id ? { providerRequestId: event.message.id } : {}),
+					...(event.message?.model
+						? { modelVersion: event.message.model }
+						: {}),
+				},
+			);
 			continue;
 		}
 		if (
@@ -768,11 +812,23 @@ async function* parseStream(
 			continue;
 		}
 		if (event.type === "message_delta") {
+			if (pendingTerminal)
+				throw new GatewayError({
+					class: "server",
+					code: "upstream_protocol_error",
+					message: "Anthropic emitted more than one terminal message_delta",
+				});
 			completionTokens = event.usage?.output_tokens ?? completionTokens;
 			const finishReason = mapFinishReason(
 				event.delta?.stop_reason,
 				event.delta?.stop_reason === "tool_use",
 			);
+			if (finishReason === null)
+				throw new GatewayError({
+					class: "server",
+					code: "upstream_protocol_error",
+					message: "Anthropic terminal message_delta omitted stop_reason",
+				});
 			const promptTokens = inputTokens + cacheReadTokens + cacheWriteTokens;
 			const usage: Usage = {
 				promptTokens,
@@ -781,14 +837,58 @@ async function* parseStream(
 			};
 			if (cacheReadTokens > 0) usage.cacheReadTokens = cacheReadTokens;
 			if (cacheWriteTokens > 0) usage.cacheWriteTokens = cacheWriteTokens;
-			yield {
-				id,
-				created,
-				model,
-				choices: [{ index: 0, delta: {}, finishReason }],
+			pendingTerminal = {
+				finishReason,
+				originalTerminalReason: event.delta?.stop_reason ?? "unknown",
 				usage,
 			};
+			continue;
 		}
+		if (event.type === "message_stop") {
+			if (messageStopped || !pendingTerminal)
+				throw new GatewayError({
+					class: "server",
+					code: "upstream_protocol_error",
+					message: "Anthropic emitted an invalid message_stop sequence",
+				});
+			messageStopped = true;
+			yield attachAdapterDiagnostics(
+				{
+					id,
+					created,
+					model,
+					choices: [
+						{
+							index: 0,
+							delta: {},
+							finishReason: pendingTerminal.finishReason,
+						},
+					],
+					usage: pendingTerminal.usage,
+				},
+				{
+					originalTerminalReason: pendingTerminal.originalTerminalReason,
+				},
+			);
+			continue;
+		}
+		const metadataChunk: CanonicalChatStreamChunk = {
+			id,
+			created,
+			model,
+			choices: [],
+		};
+		if (event.type !== "ping")
+			recordUnknownAdapterEvent(
+				adapterContextDiagnostics(ctx),
+				event.type ?? "missing_type",
+			);
+		yield attachAdapterDiagnostics(metadataChunk, {
+			metadata:
+				event.type === "ping"
+					? { heartbeat: true }
+					: { unknownEvents: [event.type ?? "missing_type"] },
+		});
 	}
 }
 

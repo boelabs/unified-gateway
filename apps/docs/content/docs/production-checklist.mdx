@@ -46,8 +46,8 @@ A condensed checklist. Each item links to the page with the full explanation.
 
 - [ ] `OTEL_ENABLED=true` with a real `OTEL_EXPORTER_OTLP_ENDPOINT` if you want traces/metrics —
   disabled by default.
-- [ ] `OTEL_LOG_PAYLOADS` is deliberately set (not left at its permissive default) if your OTEL backend
-  is less trusted than your database. See [Security](/docs/security#observability-payloads).
+- [ ] `OBSERVABILITY_ENCRYPTION_KEY` is configured if encrypted forensic samples are required; the
+  gateway never emits payload bodies to OTel. See [Security](/docs/security#observability-payloads).
 - [ ] Logs (structured JSON on stdout) are shipped to a collector.
 
 ## Routing and resilience

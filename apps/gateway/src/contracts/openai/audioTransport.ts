@@ -129,14 +129,27 @@ export function parseTranscriptionResponse(
 /** gpt-4o-transcribe SSE: transcript.text.delta / transcript.text.done -> canonical events. */
 export async function* parseTranscriptionStream(
 	stream: ReadableStream<Uint8Array>,
+	options?: {
+		onUnknownEvent?: (type: string) => void;
+		onTransportTerminator?: (terminator: "done_marker") => void;
+	},
 ): AsyncIterable<CanonicalTranscriptionStreamEvent> {
 	for await (const sse of parseSSE(stream)) {
-		if (sse.data === "[DONE]") return;
+		if (sse.data === "[DONE]") {
+			options?.onTransportTerminator?.("done_marker");
+			return;
+		}
 		let raw: Record<string, unknown>;
 		try {
 			raw = JSON.parse(sse.data) as Record<string, unknown>;
-		} catch {
-			continue;
+		} catch (cause) {
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: "Transcription upstream emitted malformed JSON",
+				provider: { body: sse.data },
+				cause,
+			});
 		}
 		if (raw.error) {
 			throw new GatewayError({
@@ -160,6 +173,6 @@ export async function* parseTranscriptionStream(
 				...(usage ? { usage } : {}),
 				...(raw.logprobs !== undefined ? { logprobs: raw.logprobs } : {}),
 			};
-		}
+		} else options?.onUnknownEvent?.(type || "missing_type");
 	}
 }

@@ -3,9 +3,15 @@ import type { AdapterContext, ProviderModule } from "#adapters/types.ts";
 import { mergeProviderFields } from "#core/providerSpecificFields.ts";
 import { makeOpenAIStyleAdapter } from "#adapters/openaiStyle.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
+import { GatewayError, type ErrorClass } from "#core/errors.ts";
 import type { ReasoningControlKind } from "#core/reasoning.ts";
-import type { ErrorClass } from "#core/errors.ts";
 import { parseSSE } from "#core/sse.ts";
+
+import {
+	recordUnknownAdapterEvent,
+	adapterContextDiagnostics,
+	attachAdapterDiagnostics,
+} from "#adapters/diagnostics.ts";
 
 import type {
 	CanonicalChatStreamChunk,
@@ -207,17 +213,45 @@ export const vercelAdapter = {
 				return;
 			}
 			for await (const event of parseSSE(stream)) {
-				if (event.data === "[DONE]") return;
+				if (event.data === "[DONE]") {
+					adapterContextDiagnostics(ctx).transportTerminator = "done_marker";
+					return;
+				}
 				let raw: unknown;
 				try {
 					raw = JSON.parse(event.data);
-				} catch {
-					continue;
+				} catch (cause) {
+					throw new GatewayError({
+						class: "server",
+						code: "upstream_protocol_error",
+						message: "Vercel AI Gateway stream contained malformed JSON",
+						provider: { body: event.data },
+						cause,
+					});
 				}
 				if (recordValue(raw)?.error !== undefined) {
 					throw openAIStyleChat.mapError({ status: 502, body: raw }, ctx);
 				}
-				yield addChunkReasoningDetails(parseOpenAIChatChunk(raw), raw);
+				const record = recordValue(raw);
+				if (
+					record === undefined ||
+					(!("choices" in record) && !("usage" in record))
+				)
+					recordUnknownAdapterEvent(
+						adapterContextDiagnostics(ctx),
+						"chat_completions.unknown_json_shape",
+					);
+				const parsed = addChunkReasoningDetails(parseOpenAIChatChunk(raw), raw);
+				const originalTerminalReason = (
+					record as { choices?: Array<{ finish_reason?: unknown }> } | undefined
+				)?.choices?.find(
+					(choice) => choice.finish_reason != null,
+				)?.finish_reason;
+				yield originalTerminalReason == null
+					? parsed
+					: attachAdapterDiagnostics(parsed, {
+							originalTerminalReason: String(originalTerminalReason),
+						});
 			}
 		},
 	},

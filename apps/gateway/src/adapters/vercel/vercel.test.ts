@@ -75,6 +75,7 @@ test("vercel owns creator/model metadata from its public catalog", () => {
 		requested: "max",
 		effective: "max",
 		clamped: false,
+		source: "client",
 	});
 
 	const anthropic = resolveModelMetadata("vercel", "anthropic/claude-opus-5");
@@ -98,6 +99,7 @@ test("vercel owns creator/model metadata from its public catalog", () => {
 		requested: "max",
 		effective: "xhigh",
 		clamped: true,
+		source: "clamped",
 	});
 });
 

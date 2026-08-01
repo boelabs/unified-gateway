@@ -408,6 +408,7 @@ interface RWResponse {
 	incomplete_details?: { reason?: string };
 	output?: RWOutputItem[];
 	usage?: RWUsage;
+	error?: Record<string, unknown>;
 }
 
 function finishFrom(
@@ -425,6 +426,20 @@ function finishFrom(
 
 export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 	const r = (raw ?? {}) as RWResponse;
+	if (r.status === "failed")
+		throw new GatewayError({
+			class: "server",
+			code: "upstream_response_failed",
+			message: "Responses upstream returned a failed response",
+			provider: { body: r.error ?? raw },
+		});
+	if (r.status !== "completed" && r.status !== "incomplete")
+		throw new GatewayError({
+			class: "server",
+			code: "upstream_protocol_error",
+			message: "Responses upstream omitted a recognized terminal status",
+			provider: { body: { status: r.status ?? null } },
+		});
 	let content = "";
 	const reasoning: string[] = [];
 	const reasoningState: OpenAIReasoningStateItem[] = [];
@@ -490,6 +505,15 @@ export function parseResponsesResponse(raw: unknown): CanonicalChatResponse {
 
 export async function* responsesEventsToCanonicalChunks(
 	events: AsyncIterable<SSEEvent>,
+	options?: {
+		onUnknownEvent?: (type: string) => void;
+		onTransportTerminator?: (terminator: "done_marker") => void;
+		onTerminalEvent?: (
+			type: "response.completed" | "response.incomplete",
+			originalReason: string,
+			normalizedReason: CanonicalFinishReason,
+		) => void;
+	},
 ): AsyncGenerator<CanonicalChatStreamChunk> {
 	const created = Math.floor(Date.now() / 1000);
 	let id = "";
@@ -501,15 +525,32 @@ export async function* responsesEventsToCanonicalChunks(
 
 	const base = () => ({ id, created, model });
 
+	let terminalSeen = false;
 	for await (const ev of events) {
-		if (ev.data === "[DONE]") return;
+		if (ev.data === "[DONE]") {
+			options?.onTransportTerminator?.("done_marker");
+			return;
+		}
 		let d: Record<string, unknown>;
 		try {
 			d = JSON.parse(ev.data) as Record<string, unknown>;
-		} catch {
-			continue;
+		} catch (cause) {
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: "Responses upstream emitted malformed JSON",
+				provider: { body: ev.data },
+				cause,
+			});
 		}
 		const type = (ev.event ?? d.type) as string | undefined;
+		if (terminalSeen)
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_protocol_error",
+				message: "Responses upstream emitted an event after its terminal event",
+				provider: { body: { type: type ?? null } },
+			});
 		if (type === "error" || type === "response.failed") {
 			const response = d.response as Record<string, unknown> | undefined;
 			const error = (d.error ?? response?.error ?? d) as
@@ -664,6 +705,7 @@ export async function* responsesEventsToCanonicalChunks(
 		}
 
 		if (type === "response.completed" || type === "response.incomplete") {
+			terminalSeen = true;
 			const r = (d.response ?? {}) as RWResponse;
 			// Belt and braces: forward any encrypted reasoning state that did not stream as its own
 			// output_item.done event.
@@ -693,14 +735,21 @@ export async function* responsesEventsToCanonicalChunks(
 			const hasTool = (r.output ?? []).some(
 				(it) => it.type === "function_call",
 			);
+			const finishReason = finishFrom(r, hasTool);
+			options?.onTerminalEvent?.(
+				type,
+				r.incomplete_details?.reason ?? type,
+				finishReason,
+			);
 			yield {
 				...base(),
-				choices: [
-					{ index: 0, delta: {}, finishReason: finishFrom(r, hasTool) },
-				],
+				choices: [{ index: 0, delta: {}, finishReason }],
 				usage: mapUsage(r.usage),
 			};
-			return;
+			continue;
 		}
+
+		options?.onUnknownEvent?.(type ?? "missing_type");
+		yield { ...base(), choices: [] };
 	}
 }

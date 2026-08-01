@@ -68,8 +68,9 @@ export async function embeddingsHandler(c: Context<AppEnv>): Promise<Response> {
 			canonical.model,
 			"embeddings",
 			{
-				clientSignal: c.req.raw.signal,
+				clientSignal: log.clientSignal,
 				requestId: log.requestId,
+				operationId: log.operationId,
 				candidateEligibility: (candidate) =>
 					assertEmbeddingsRequestSupported(canonical, candidate.meta),
 			},
@@ -96,7 +97,10 @@ export async function embeddingsHandler(c: Context<AppEnv>): Promise<Response> {
 			cost,
 			ttftMs: log.elapsedMs(),
 			responseBody: embeddingsResponseLog(rendered),
-			metadata: candidateMetadata(routing.candidate),
+			metadata: {
+				...candidateMetadata(routing.candidate),
+				terminal: routing.value.terminal,
+			},
 			error: null,
 		});
 		return c.json(rendered);

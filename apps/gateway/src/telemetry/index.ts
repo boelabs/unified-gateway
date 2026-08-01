@@ -11,6 +11,9 @@ import { env } from "#config/env.ts";
 import {
 	type Attributes,
 	SpanStatusCode,
+	type Context,
+	type Span,
+	context,
 	metrics,
 	trace,
 } from "@opentelemetry/api";
@@ -18,6 +21,7 @@ import {
 let sdk: NodeSDK | null = null;
 
 const tracer = trace.getTracer("unifiedgateway");
+const operationContexts = new Map<string, Context>();
 
 /**
  * The metric instruments are created AFTER sdk.start() so they use the real MeterProvider (instruments
@@ -41,6 +45,39 @@ interface Instruments {
 		ReturnType<typeof metrics.getMeter>["createCounter"]
 	>;
 	costCounter: ReturnType<ReturnType<typeof metrics.getMeter>["createCounter"]>;
+	outcomeCounter: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createCounter"]
+	>;
+	retryCounter: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createCounter"]
+	>;
+	fallbackCounter: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createCounter"]
+	>;
+	persistenceQueueDepth: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createUpDownCounter"]
+	>;
+	persistenceLosses: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createCounter"]
+	>;
+	activeOperations: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createUpDownCounter"]
+	>;
+	activeAttempts: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createUpDownCounter"]
+	>;
+	firstEvent: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createHistogram"]
+	>;
+	firstReasoning: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createHistogram"]
+	>;
+	firstOutput: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createHistogram"]
+	>;
+	maxEventGap: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createHistogram"]
+	>;
 }
 let inst: Instruments | null = null;
 
@@ -48,10 +85,10 @@ function createInstruments(): Instruments {
 	const meter = metrics.getMeter("unifiedgateway");
 	return {
 		requestCounter: meter.createCounter("unifiedgateway_requests_total", {
-			description: "Total gateway inference requests recorded by request_logs.",
+			description: "Total completed gateway operations.",
 		}),
 		errorCounter: meter.createCounter("unifiedgateway_errors_total", {
-			description: "Total gateway inference errors recorded by request_logs.",
+			description: "Total failed gateway operations.",
 		}),
 		requestDuration: meter.createHistogram(
 			"unifiedgateway_request_duration_ms",
@@ -70,6 +107,49 @@ function createInstruments(): Instruments {
 		}),
 		costCounter: meter.createCounter("unifiedgateway_cost_cents_total", {
 			description: "Total estimated request cost in USD cents.",
+		}),
+		outcomeCounter: meter.createCounter("unifiedgateway_outcomes_total", {
+			description: "Completed gateway operations by semantic outcome.",
+		}),
+		retryCounter: meter.createCounter("unifiedgateway_retries_total", {
+			description: "Upstream retries beyond the first attempt.",
+		}),
+		fallbackCounter: meter.createCounter("unifiedgateway_fallbacks_total", {
+			description: "Operations that selected a configured fallback model.",
+		}),
+		persistenceQueueDepth: meter.createUpDownCounter(
+			"unifiedgateway_persistence_queue_depth",
+			{ description: "Pending operation finalizations in this process." },
+		),
+		persistenceLosses: meter.createCounter(
+			"unifiedgateway_persistence_losses_total",
+			{
+				description: "Operation finalizations dropped or failed after retries.",
+			},
+		),
+		activeOperations: meter.createUpDownCounter(
+			"unifiedgateway_active_operations",
+			{ description: "Operations active in this gateway process." },
+		),
+		activeAttempts: meter.createUpDownCounter(
+			"unifiedgateway_active_upstream_attempts",
+			{ description: "Upstream attempts active in this gateway process." },
+		),
+		firstEvent: meter.createHistogram("unifiedgateway_first_event_ms", {
+			description: "Time from ingress to first upstream event.",
+			unit: "ms",
+		}),
+		firstReasoning: meter.createHistogram("unifiedgateway_first_reasoning_ms", {
+			description: "Time from ingress to first reasoning output.",
+			unit: "ms",
+		}),
+		firstOutput: meter.createHistogram("unifiedgateway_first_output_ms", {
+			description: "Time from ingress to first useful output.",
+			unit: "ms",
+		}),
+		maxEventGap: meter.createHistogram("unifiedgateway_max_event_gap_ms", {
+			description: "Largest observed gap between upstream stream events.",
+			unit: "ms",
 		}),
 	};
 }
@@ -103,17 +183,48 @@ export async function shutdownTelemetry(): Promise<void> {
 	sdk = null;
 }
 
-function jsonAttr(value: unknown): string {
-	try {
-		return JSON.stringify(value) ?? "null";
-	} catch {
-		return "[unserializable]";
+export function recordPersistenceQueueDelta(delta: number): void {
+	inst?.persistenceQueueDepth.add(delta);
+}
+
+export function recordPersistenceLoss(kind: "dropped" | "failed"): void {
+	inst?.persistenceLosses.add(1, { kind });
+}
+
+export interface OperationChildTelemetrySpan {
+	span: Span;
+	ended: boolean;
+}
+
+export function startOperationChildTelemetry(
+	operationId: string,
+	name: "routing" | "stream" | "render" | "persistence",
+): OperationChildTelemetrySpan {
+	return {
+		span: tracer.startSpan(
+			`unifiedgateway.${name}`,
+			undefined,
+			operationContexts.get(operationId) ?? context.active(),
+		),
+		ended: false,
+	};
+}
+
+export function finishOperationChildTelemetry(
+	handle: OperationChildTelemetrySpan,
+	errorCode?: string | null,
+): void {
+	if (handle.ended) return;
+	handle.ended = true;
+	if (errorCode) {
+		handle.span.setAttribute("error.code", errorCode);
+		handle.span.setStatus({ code: SpanStatusCode.ERROR, message: errorCode });
 	}
+	handle.span.end();
 }
 
 function baseAttributes(input: RequestLogInput): Attributes {
 	return {
-		"request.id": input.requestId,
 		"model.public_name": input.publicModel ?? "unknown",
 		"deployment.id": input.deploymentId ?? "unknown",
 		"adapter.key": input.adapterKey ?? "unknown",
@@ -126,15 +237,135 @@ function baseAttributes(input: RequestLogInput): Attributes {
 	};
 }
 
-function payloadAttributes(input: RequestLogInput): Attributes {
-	if (!env.OTEL_LOG_PAYLOADS) return {};
+export interface RequestTelemetrySpan {
+	span: Span;
+	ended: boolean;
+	operationId: string;
+}
+
+export function startRequestTelemetry(input: {
+	requestId: string;
+	operationId: string;
+	callType: string;
+}): RequestTelemetrySpan {
+	const parent = context.active();
+	const span = tracer.startSpan(
+		"unifiedgateway.operation",
+		{
+			attributes: {
+				"request.id": input.requestId,
+				"operation.id": input.operationId,
+				"call.type": input.callType,
+			},
+		},
+		parent,
+	);
+	operationContexts.set(input.operationId, trace.setSpan(parent, span));
+	inst?.activeOperations.add(1, { "call.type": input.callType });
 	return {
-		"request.body_json": jsonAttr(input.requestBody),
-		"response.body_json": jsonAttr(input.responseBody),
-		metadata_json: jsonAttr(input.metadata),
-		error_json: jsonAttr(input.error),
-		attempts_json: jsonAttr(input.attempts ?? null),
+		span,
+		ended: false,
+		operationId: input.operationId,
 	};
+}
+
+export function finishRequestTelemetry(
+	handle: RequestTelemetrySpan,
+	input: RequestLogInput,
+): void {
+	if (handle.ended) return;
+	handle.ended = true;
+	handle.span.setAttributes(baseAttributes(input));
+	if (input.status === "error")
+		handle.span.setStatus({
+			code: SpanStatusCode.ERROR,
+			message: String(input.error?.code ?? "gateway_error"),
+		});
+	handle.span.addEvent("unifiedgateway.operation.finished", {
+		"error.code": String(input.error?.code ?? ""),
+		"terminal.verified": Boolean(
+			(input.metadata.terminal as unknown) ??
+				(input.metadata.streamLifecycle as { terminal?: unknown } | undefined)
+					?.terminal,
+		),
+	});
+	handle.span.end(input.endTime.getTime());
+	operationContexts.delete(handle.operationId);
+	inst?.activeOperations.add(-1, { "call.type": input.callType });
+}
+
+export interface UpstreamAttemptTelemetrySpan {
+	span: Span;
+	ended: boolean;
+	adapterKey: string;
+	transport: string;
+}
+
+export function startUpstreamAttemptTelemetry(input: {
+	requestId: string;
+	operationId?: string;
+	ordinal: number;
+	deploymentId: string;
+	adapterKey: string;
+	transport: string;
+	upstreamModel: string;
+	startedAt: number;
+}): UpstreamAttemptTelemetrySpan {
+	inst?.activeAttempts.add(1, {
+		"adapter.key": input.adapterKey,
+		"upstream.transport": input.transport,
+	});
+	return {
+		span: tracer.startSpan(
+			"unifiedgateway.upstream_attempt",
+			{
+				startTime: input.startedAt,
+				attributes: {
+					"request.id": input.requestId,
+					...(input.operationId ? { "operation.id": input.operationId } : {}),
+					"attempt.ordinal": input.ordinal,
+					"deployment.id": input.deploymentId,
+					"adapter.key": input.adapterKey,
+					"upstream.transport": input.transport,
+					"model.upstream": input.upstreamModel,
+				},
+			},
+			input.operationId
+				? operationContexts.get(input.operationId)
+				: context.active(),
+		),
+		ended: false,
+		adapterKey: input.adapterKey,
+		transport: input.transport,
+	};
+}
+
+export function finishUpstreamAttemptTelemetry(
+	handle: UpstreamAttemptTelemetrySpan,
+	input: {
+		endedAt: number;
+		outcome: string;
+		terminalVerified: boolean;
+		errorCode?: string | null;
+	},
+): void {
+	if (handle.ended) return;
+	handle.ended = true;
+	handle.span.setAttributes({
+		"attempt.outcome": input.outcome,
+		"terminal.verified": input.terminalVerified,
+		...(input.errorCode ? { "error.code": input.errorCode } : {}),
+	});
+	if (input.errorCode)
+		handle.span.setStatus({
+			code: SpanStatusCode.ERROR,
+			message: input.errorCode,
+		});
+	handle.span.end(input.endedAt);
+	inst?.activeAttempts.add(-1, {
+		"adapter.key": handle.adapterKey,
+		"upstream.transport": handle.transport,
+	});
 }
 
 export function recordRequestTelemetry(input: RequestLogInput): void {
@@ -150,22 +381,47 @@ export function recordRequestTelemetry(input: RequestLogInput): void {
 		inst.tokenCounter.add(input.usage.totalTokens, attrs);
 	if (input.cost?.totalCents)
 		inst.costCounter.add(input.cost.totalCents, attrs);
-
-	tracer.startActiveSpan(
-		"unifiedgateway.request_log",
-		{ attributes: attrs },
-		(span) => {
-			if (input.status === "error") {
-				span.setStatus({
-					code: SpanStatusCode.ERROR,
-					message: String(input.error?.message ?? "gateway error"),
-				});
-			}
-			span.addEvent(
-				"unifiedgateway.request_log.payload",
-				payloadAttributes(input),
-			);
-			span.end();
-		},
-	);
+	const lifecycle = input.metadata.streamLifecycle as
+		| {
+				firstEventAt?: number | null;
+				firstReasoningAt?: number | null;
+				firstOutputAt?: number | null;
+				maxInterEventGapMs?: number;
+				terminal?: { outcome?: string } | null;
+		  }
+		| undefined;
+	const terminal =
+		lifecycle?.terminal ??
+		(input.metadata.terminal as { outcome?: string } | undefined);
+	const outcome =
+		input.status === "error" ? "error" : (terminal?.outcome ?? "unknown");
+	inst.outcomeCounter.add(1, {
+		...attrs,
+		"gateway.outcome": outcome,
+		"gateway.degraded":
+			input.retries > 0 ||
+			input.fallbackUsed ||
+			outcome === "incomplete" ||
+			outcome === "blocked",
+	});
+	if (input.retries > 0) inst.retryCounter.add(input.retries, attrs);
+	if (input.fallbackUsed) inst.fallbackCounter.add(1, attrs);
+	if (lifecycle?.firstEventAt != null)
+		inst.firstEvent.record(
+			lifecycle.firstEventAt - input.startTime.getTime(),
+			attrs,
+		);
+	if (lifecycle?.firstReasoningAt != null)
+		inst.firstReasoning.record(
+			lifecycle.firstReasoningAt - input.startTime.getTime(),
+			attrs,
+		);
+	if (lifecycle?.firstOutputAt != null)
+		inst.firstOutput.record(
+			lifecycle.firstOutputAt - input.startTime.getTime(),
+			attrs,
+		);
+	else if (input.ttftMs != null) inst.firstOutput.record(input.ttftMs, attrs);
+	if (lifecycle?.maxInterEventGapMs != null)
+		inst.maxEventGap.record(lifecycle.maxInterEventGapMs, attrs);
 }

@@ -27,6 +27,15 @@ import {
 } from "./runtime/pipeline.ts";
 
 import {
+	finishDownstreamWriteObservation,
+	type DownstreamWriteObservation,
+	newDownstreamWriteObservation,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
+
+import {
 	imageGenerationRequestSchema,
 	toOpenAIImagesResponse,
 	generationToCanonical,
@@ -66,10 +75,12 @@ async function handleImageRequest(
 
 	const finish = async (
 		usage: ReturnType<typeof imageUsageToCore>,
+		error?: GatewayError | null,
+		downstream?: DownstreamWriteObservation,
 	): Promise<void> => {
 		if (!routing || finished) return;
 		finished = true;
-		await routing.finish(usage);
+		await routing.finish(usage, undefined, error, undefined, downstream);
 	};
 
 	try {
@@ -81,15 +92,22 @@ async function handleImageRequest(
 			req.model,
 			callType,
 			{
-				clientSignal: c.req.raw.signal,
+				clientSignal: log.clientSignal,
 				requestId: log.requestId,
+				operationId: log.operationId,
+				executionMode: req.stream ? "stream" : "json",
 				candidateEligibility: (candidate) =>
 					assertImageRequestSupported(req, candidate.meta),
 			},
 			(candidate, ctx) => executeImage(candidate.adapter, req, ctx),
 		);
 		log.applyRouting(routing);
-		const metadata = candidateMetadata(routing.candidate);
+		const metadata: Record<string, unknown> = {
+			...candidateMetadata(routing.candidate),
+			...(routing.value.kind === "stream"
+				? { streamLifecycle: routing.value.observation }
+				: { terminal: routing.value.terminal }),
+		};
 		const imageScope = extensionScope(c, callType, req.model);
 		const imageHooks = {
 			applyImageOutput: (
@@ -145,6 +163,9 @@ async function handleImageRequest(
 			}
 			cleanupDeferred = true;
 			return streamSSE(c, async (stream) => {
+				stream.onAbort(() => log.abortClient());
+				const downstream = newDownstreamWriteObservation(log.operationId);
+				metadata.downstream = downstream;
 				let streamError: GatewayError | null = null;
 				try {
 					const event: CanonicalImageStreamEvent = {
@@ -166,9 +187,13 @@ async function handleImageRequest(
 						req.model,
 						event,
 					);
-					await stream.writeSSE({
-						data: JSON.stringify(toOpenAIImageEvent(transformed)),
-					});
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(toOpenAIImageEvent(transformed)),
+						},
+						downstream,
+					);
 				} catch (error) {
 					streamError = GatewayError.is(error)
 						? error
@@ -178,10 +203,16 @@ async function handleImageRequest(
 								cause: error,
 							});
 					await notifyExtensionError(c, callType, req.model, streamError);
-					await stream.writeSSE({
-						data: JSON.stringify(streamError.toOpenAI()),
-					});
+					if (streamError.code !== "downstream_backpressure")
+						await writeSSE(
+							stream,
+							{
+								data: JSON.stringify(streamError.toOpenAI()),
+							},
+							downstream,
+						);
 				} finally {
+					finishDownstreamWriteObservation(downstream, streamError?.code);
 					await cleanup?.();
 					log.write({
 						status: streamError ? "error" : "success",
@@ -208,12 +239,17 @@ async function handleImageRequest(
 		const nativeEvents = nativeValue.events;
 		cleanupDeferred = true;
 		return streamSSE(c, async (stream) => {
+			stream.onAbort(() => log.abortClient());
+			const downstream = newDownstreamWriteObservation(log.operationId);
 			let usage: ReturnType<typeof imageUsageToCore> = null;
 			let count = 0;
 			let firstAt: number | null = null;
 			let streamError: GatewayError | null = null;
 			try {
-				for await (const rawEvent of nativeEvents) {
+				for await (const rawEvent of withSSEHeartbeats(nativeEvents, () =>
+					writeSSEHeartbeat(stream, downstream),
+				)) {
+					log.progress();
 					const canonicalEvent = await applyStreamEventExtensions(
 						c,
 						callType,
@@ -233,9 +269,13 @@ async function handleImageRequest(
 					if (event.kind === "completed" && event.usage)
 						usage = imageUsageToCore(event.usage);
 					count += 1;
-					await stream.writeSSE({
-						data: JSON.stringify(toOpenAIImageEvent(event)),
-					});
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(toOpenAIImageEvent(event)),
+						},
+						downstream,
+					);
 				}
 			} catch (error) {
 				streamError = GatewayError.is(error)
@@ -246,9 +286,16 @@ async function handleImageRequest(
 							cause: error,
 						});
 				await notifyExtensionError(c, callType, req.model, streamError);
-				await stream.writeSSE({ data: JSON.stringify(streamError.toOpenAI()) });
+				if (streamError.code !== "downstream_backpressure")
+					await writeSSE(
+						stream,
+						{
+							data: JSON.stringify(streamError.toOpenAI()),
+						},
+						downstream,
+					);
 			} finally {
-				await finish(usage);
+				await finish(usage, streamError, downstream);
 				const cost = accountUsage(c, streamRouting.candidate.meta, usage);
 				await cleanup?.();
 				log.write({
@@ -266,7 +313,7 @@ async function handleImageRequest(
 	} catch (error) {
 		const ge = toGatewayError(error);
 		log.applyFailedAttempts(ge.attempts);
-		await finish(null);
+		await finish(null, ge);
 		await notifyExtensionError(c, callType, log.publicModel, ge);
 		if (!cleanupDeferred) await cleanup?.();
 		log.writeError(ge);

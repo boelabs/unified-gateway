@@ -154,10 +154,15 @@ async function handleVideoCreate(
 	log.requestBody = storedRequest;
 	let routing: RouteResult<CanonicalVideoProviderJob> | null = null;
 	let finished = false;
-	const finish = async (): Promise<void> => {
+	const finish = async (error?: GatewayError | null): Promise<void> => {
 		if (!routing || finished) return;
 		finished = true;
-		await routing.finish(null);
+		await routing.finish(
+			null,
+			undefined,
+			error,
+			error ? null : { outcome: "completed", reason: "stop", usage: null },
+		);
 	};
 
 	try {
@@ -166,8 +171,9 @@ async function handleVideoCreate(
 			req.model,
 			"videos.generations",
 			{
-				clientSignal: c.req.raw.signal,
+				clientSignal: log.clientSignal,
 				requestId: log.requestId,
+				operationId: log.operationId,
 				candidateEligibility: (candidate) =>
 					assertVideoRequestSupported(req, candidate.meta),
 			},
@@ -212,14 +218,17 @@ async function handleVideoCreate(
 			cost: null,
 			ttftMs: log.elapsedMs(),
 			responseBody: body,
-			metadata: candidateMetadata(routing.candidate),
+			metadata: {
+				...candidateMetadata(routing.candidate),
+				terminal: { outcome: "completed", reason: "stop", usage: null },
+			},
 			error: null,
 		});
 		return c.json(body);
 	} catch (error) {
 		const ge = toGatewayError(error);
 		log.applyFailedAttempts(ge.attempts);
-		await finish();
+		await finish(ge);
 		await notifyExtensionError(c, "videos.generations", log.publicModel, ge);
 		log.writeError(ge);
 		throw ge;

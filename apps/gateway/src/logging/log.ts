@@ -6,7 +6,7 @@ import { env } from "#config/env.ts";
  * Emits one JSON object per line to stdout (info/debug) or stderr (warn/error), which is the
  * format log collectors (Loki, CloudWatch, Datadog, etc.) expect from a container. This is the
  * logger for *operational* events (startup, shutdown, background jobs, unexpected failures).
- * Per-request accounting lives in `logRequest` (request_logs table) and OpenTelemetry.
+ * Per-operation accounting lives in `gateway_operations`, correlated JSON logs, and OpenTelemetry.
  *
  * Levels are gated by `LOG_LEVEL`. `component` namespaces a message to a subsystem so logs can be
  * filtered downstream (e.g. `log.error("redis", "connection error", { err })`).

@@ -50,8 +50,11 @@ or the interactive spec (see [API guide](/docs/api-overview)).
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/logs` | Paginated request logs. Query: `limit`, `offset`, `virtualKeyId`, `publicModel`, `deploymentId`, `adapterKey`, `callType`, `status`, `requestId`, `cacheHit`, `start`, `end`. |
-| `GET /admin/usage` | Aggregated usage. Query: `groupBy` (`public_model` \| `virtual_key` \| `adapter_key` \| `day` \| `none`), plus the same filters as `/admin/logs`. See [Cost accounting](/docs/cost-accounting). |
+| `GET /admin/logs` | Paginated operation summaries. Filters include `outcome`, `degraded`, `active`, `terminalVerified`, `failureKind`, `failurePhase`, duration, model, key, request id, cache, and time range. |
+| `GET /admin/logs/:operationId` | Full operation record and ordered upstream-attempt timeline. |
+| `GET /admin/logs/:operationId/payload` | Decrypt a retained forensic sample. Master-only and audit logged; returns 404 when no sample exists. |
+| `GET /admin/observability/summary` | Outcomes, degraded/stalled/active/abandoned counts, retries, and latency percentiles for `window=5m|1h|24h`. |
+| `GET /admin/usage` | Consumer usage/cost and estimated upstream cost across every attempt; group by public model, virtual key, day, or none. See [Cost accounting](/docs/cost-accounting). |
 
 ## Extensions
 

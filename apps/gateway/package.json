@@ -48,7 +48,8 @@
 		"openapi:generate": "bun scripts/openapi-generate.ts",
 		"db:generate": "drizzle-kit generate",
 		"db:studio": "drizzle-kit studio",
-		"db:migrate": "bun src/db/migrate.ts"
+		"db:migrate": "bun src/db/migrate.ts",
+		"db:backfill-observability": "bun scripts/backfill-operation-logs.ts"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "3.1080.0",

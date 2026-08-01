@@ -1,58 +1,74 @@
 ---
 title: "Observability"
-description: "Structured logs, request logs, and OpenTelemetry."
+description: "Durable operation lifecycles, upstream attempts, structured logs, and OpenTelemetry."
 ---
 
-## Application logs
+Every public execution has two correlation keys: `x-request-id`, which may come from the client, and
+an internal `operationId`. Neither is used as a metric label. Application logs are structured JSON on
+stdout/stderr and include the request id, method, path, status, and duration.
 
-Structured JSON, one object per line, on stdout/stderr (`src/logging/log.ts`). Ship them to whatever
-log collector your platform already uses — no special integration needed. Every request carries
-`x-request-id` (accepts an inbound one, generates one otherwise) — **always include it** when
-investigating an issue; it's the join key between the application log line, the request log row, and
-any OTEL span.
+## Durable lifecycle
 
-## Request logs (`request_logs`)
+The current observability model uses four tables:
 
-Every request writes one row, queryable via `GET /admin/logs` (paginated) or aggregated via
-`GET /admin/usage`. Relevant columns:
+| Table | Purpose | Retention |
+|---|---|---|
+| `gateway_operations` | One row from request start through a verified terminal outcome. | 30 days operational target. |
+| `upstream_attempts` | One row per deployment interaction, inserted before the upstream call. | 30 days operational target. |
+| `payload_samples` | Redacted, AEAD-encrypted forensic samples. | 7 days by default. |
+| `payload_access_audit` | One immutable audit row for every forensic payload lookup, including misses. | Operator audit policy. |
 
-| Column | What it captures |
-|---|---|
-| `requestId`, `virtualKeyId`, `publicModel`, `deploymentId`, `adapterKey`, `callType` | Identity of the request and what served it. |
-| `status`, `httpStatus`, `error` | Outcome. `error` holds the gateway's classified error (class, code, provider detail) on failure. |
-| `promptTokens`, `completionTokens`, `totalTokens`, `costCents` | Usage and its computed cost — see [Cost accounting](/docs/cost-accounting). |
-| `durationMs`, `ttftMs`, `upstreamTtftMs` | End-to-end duration, time-to-first-token, and the **upstream-only** TTFT (isolated from the gateway's own overhead) — the same timing [Routing](/docs/routing)'s latency-based strategy uses. |
-| `cacheHit`, `retries`, `fallbackUsed` | Whether this was a cache hit (logged with `cost: null` — see [Cost accounting](/docs/cost-accounting)), how many router retries it took, and whether a fallback chain was used. |
-| `metadata` | Free-form: deployment `label`, `parameterPolicy`, reasoning `requested`/`effective`/`clamped`, and `contentInputs` native/parsed/materialized counts. |
-| `attempts` | The same per-attempt log exposed via `x-unified-routing-metadata` (see [Headers](/docs/headers)) — every deployment tried, not just the winner. |
-| `requestBody`, `responseBody` | Truncated at `MAX_STRING_LENGTH_PROMPT_IN_DB` (default 8000 chars) — storage only, never affects what's sent upstream. |
+An operation is either `in_progress` or `finished`. Its outcome is `success`, `incomplete`, `blocked`,
+`error`, `cancelled`, `abandoned`, or `unknown`. `degraded` is orthogonal: a recovered retry or fallback
+is still successful but remains visible. A database constraint rejects new `success`, `incomplete`, or
+`blocked` rows unless `terminalVerified=true`.
 
-Query with the same filter set on both `/admin/logs` and `/admin/usage`: `virtualKeyId`, `publicModel`,
-`deploymentId`, `adapterKey`, `callType`, `status`, `requestId`, `cacheHit`, `start`, `end`. Full route
-list: [Admin API reference](/docs/reference-admin-api#logs-and-usage).
+The stream supervisor records headers/first-event/first-reasoning/first-output timing, last progress,
+maximum inter-event gap, upstream/downstream bytes, frame classes, the physical transport terminator,
+and the normalized semantic terminal. EOF without a terminal, malformed JSON/SSE, duplicate
+terminals, and empty invalid responses are protocol errors. Only a verified terminal rewards
+deployment health.
+
+`GET /admin/logs` lists operation summaries. `GET /admin/logs/{operationId}` returns the operation and
+its complete attempt timeline. `GET /admin/observability/summary?window=5m|1h|24h` returns outcome,
+stall, retry, active/abandoned, and latency aggregates.
+
+## Payload privacy
+
+Ordinary rows contain summaries and HMAC fingerprints, never request or response bodies. IP addresses
+and user agents are fingerprinted rather than stored verbatim. If `OBSERVABILITY_ENCRYPTION_KEY` is
+configured, the gateway captures 1% of healthy successes by default and every degraded, incomplete,
+blocked, failed, or cancelled operation. Encryption and fingerprinting use separate HKDF-derived
+subkeys; request, response, error, and attempt components are each capped at 32 KiB after recursive
+secret-field redaction.
+
+`GET /admin/logs/{operationId}/payload` is master-only. Every lookup writes a durable audit row and
+emits a structured audit log, including missing samples and failed decryptions; successful retrievals
+also update the sample access timestamp. If the key is absent, metadata remains available and the
+gateway never falls back to plaintext.
 
 ## OpenTelemetry
 
-Off by default. Turn it on with:
+OpenTelemetry is off by default. Enable it only after an OTLP collector is available:
 
 ```bash
 OTEL_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 ```
 
-- **Metrics** — exported every `OTEL_METRIC_EXPORT_INTERVAL_MS` (default 60s).
-- **Traces** — one per request, through the same pipeline described in [Architecture](/docs/architecture).
-- **Span events** — `OTEL_LOG_PAYLOADS` (default `true`) attaches the **full, untruncated**
-  request/response/error body to span events, independent of the Postgres truncation above. See
-  [Security](/docs/security#observability-payloads) before enabling this in a compliance-sensitive
-  environment — your OTEL backend now holds data your database deliberately doesn't.
-- **Service identity** — `OTEL_SERVICE_NAME` (default `unifiedgateway`), plus the standard OTEL SDK
-  variables (`OTEL_EXPORTER_OTLP_HEADERS`, etc.) for anything beyond the endpoint. See
-  [Environment variables](/docs/reference-environment#observability-opentelemetry).
+The gateway exports the ingress-to-close operation span with routing, upstream-attempt, stream,
+render, and persistence children, plus low-cardinality counters, histograms, active gauges, queue
+depth, and persistence-loss metrics. Payload bodies are never emitted to OpenTelemetry. PostgreSQL,
+`/health`, the observability summary, and structured JSON logs remain sufficient for the initial
+operating model.
 
-## What to read next
+## Initial alerts
 
-- [Cost accounting](/docs/cost-accounting) — pricing and spend in depth.
-- [Routing](/docs/routing) — what `attempts`/`upstream_ttft_ms` actually drive.
-- [Security](/docs/security) — what payload logging exposes and how to limit it.
-- [Troubleshooting](/docs/troubleshooting) — using `x-request-id` to trace an incident.
+- Any successful/incomplete/blocked operation without a verified terminal, abandoned operation, or
+  persistence loss is critical.
+- Stalls above 2% over five minutes (minimum 20 requests), protocol errors above 1%, or p95 first
+  output above 25 seconds require investigation.
+- Degraded/retry above 5% and client cancellations above 5% are warnings.
+
+Use the request id supplied by the client to find the operation, then inspect its attempts and terminal
+timeline. See [Admin API](/docs/reference-admin-api) and [Routing](/docs/routing).

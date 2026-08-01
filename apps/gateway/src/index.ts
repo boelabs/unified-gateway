@@ -7,7 +7,6 @@ import { pingDb } from "./db/client.ts";
 import { log } from "./logging/log.ts";
 import { env } from "./config/env.ts";
 import { WebSocketServer } from "ws";
-import { logger } from "hono/logger";
 
 import {
 	DEPENDENCY_RETRY_AFTER_SECONDS,
@@ -25,6 +24,7 @@ import { embeddingsHandler } from "./endpoints/embeddings.ts";
 import { chatCompletionsHandler } from "./endpoints/chat.ts";
 import { transcriptionsHandler } from "./endpoints/audio.ts";
 import { messagesHandler } from "./endpoints/messages.ts";
+import { getRequestId } from "./http/requestContext.ts";
 import { authMiddleware } from "./auth/middleware.ts";
 import { startTelemetry } from "./telemetry/index.ts";
 import { startVideoJobs } from "./videos/jobs.ts";
@@ -56,6 +56,11 @@ import {
 } from "./extensions/runtime.ts";
 
 import {
+	operationPersistenceStatus,
+	startOperationMaintenance,
+} from "./logging/operations.ts";
+
+import {
 	imageGenerationsHandler,
 	imageEditsHandler,
 } from "./endpoints/images.ts";
@@ -82,12 +87,27 @@ try {
 
 const app = new Hono<AppEnv>();
 const stopPartitions = startRequestLogPartitionJob();
+const stopOperationMaintenance = startOperationMaintenance();
 const stopResponseStateGc = startResponseStateGcJob();
 const stopExtensionReload = startExtensionReloadJob();
 const stopVideoJobs = startVideoJobs();
 
 app.use("*", requestContextMiddleware());
-app.use("*", logger());
+app.use("*", async (c, next) => {
+	const startedAt = Date.now();
+	try {
+		await next();
+	} finally {
+		log.info("http", "request completed", {
+			requestId: getRequestId(c),
+			operationId: c.get("operationId"),
+			method: c.req.method,
+			path: c.req.path,
+			status: c.res.status,
+			durationMs: Date.now() - startedAt,
+		});
+	}
+});
 
 // Global error handler: translates GatewayError to the shape of each public contract.
 // /v1/messages -> Anthropic shape; everything else -> OpenAI shape.
@@ -158,13 +178,20 @@ app.get("/health/live", (c) =>
 async function readiness(c: Context) {
 	const [database, cache] = await Promise.all([pingDb(), pingRedis()]);
 	const extensions = extensionStatus();
-	const ok = database && cache && extensions.healthy;
+	const observability = operationPersistenceStatus();
+	const ok =
+		database &&
+		cache &&
+		extensions.healthy &&
+		observability.persistenceFailures === 0 &&
+		observability.persistenceDrops === 0;
 	if (!ok) c.header("retry-after", String(DEPENDENCY_RETRY_AFTER_SECONDS));
 	return c.json(
 		{
 			status: ok ? "ok" : "degraded",
 			service: "Unified Gateway",
 			dependencies: { database, cache },
+			observability,
 			extensions: {
 				status: extensions.status,
 				healthy: extensions.healthy,
@@ -236,6 +263,7 @@ installGracefulShutdown({
 	stopJobs: [
 		closeResponsesWebSockets,
 		stopPartitions,
+		stopOperationMaintenance,
 		stopResponseStateGc,
 		stopExtensionReload,
 		stopVideoJobs,

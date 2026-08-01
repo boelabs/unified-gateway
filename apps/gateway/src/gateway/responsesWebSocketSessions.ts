@@ -1,7 +1,16 @@
 import type { DeploymentCandidate } from "./deploymentCandidates.ts";
-import { executeChat, type ChatExecResult } from "./executor.ts";
+import { adapterContextDiagnostics } from "#adapters/diagnostics.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
+import { observeChatStream } from "./streamLifecycle.ts";
 import { GatewayError } from "#core/errors.ts";
+
+import {
+	remainingExecutionPolicy,
+	traceUpstreamStream,
+	type ChatExecResult,
+	beforeFirstOutput,
+	executeChat,
+} from "./executor.ts";
 
 import type {
 	ResponsesWebSocketSession,
@@ -51,7 +60,16 @@ export class ResponsesWebSocketUpstreams {
 					},
 				};
 			}
-			return { kind: "stream", chunks: warmup() };
+			const observed = observeChatStream(
+				warmup(),
+				remainingExecutionPolicy(ctx),
+			);
+			observed.observation.diagnostics = adapterContextDiagnostics(ctx);
+			return {
+				kind: "stream",
+				chunks: traceUpstreamStream(observed.items, ctx),
+				observation: observed.observation,
+			};
 		};
 		if (!handler) {
 			if (!options.generate) {
@@ -64,7 +82,7 @@ export class ResponsesWebSocketUpstreams {
 		if (!binding || binding.session.closed) {
 			try {
 				binding = {
-					session: await handler.connect(ctx),
+					session: await beforeFirstOutput(handler.connect(ctx), ctx),
 					latestPublicResponseId: null,
 					latestUpstreamResponseId: null,
 				};
@@ -93,13 +111,16 @@ export class ResponsesWebSocketUpstreams {
 					},
 				}
 			: request;
-		let turn = await activeBinding.session.create(upstreamRequest, {
-			...(canContinue
-				? { previousResponseId: activeBinding.latestUpstreamResponseId! }
-				: {}),
-			generate: options.generate,
-			signal: ctx.signal ?? AbortSignal.timeout(10 * 60 * 1000),
-		});
+		let turn = await beforeFirstOutput(
+			activeBinding.session.create(upstreamRequest, {
+				...(canContinue
+					? { previousResponseId: activeBinding.latestUpstreamResponseId! }
+					: {}),
+				generate: options.generate,
+				signal: ctx.signal ?? AbortSignal.timeout(10 * 60 * 1000),
+			}),
+			ctx,
+		);
 		let resolveFinalId!: (id: string | null) => void;
 		const finalUpstreamResponseId = new Promise<string | null>((resolve) => {
 			resolveFinalId = resolve;
@@ -121,21 +142,28 @@ export class ResponsesWebSocketUpstreams {
 					// connection-local id, retry once on the same socket with the full input.
 					activeBinding.latestPublicResponseId = null;
 					activeBinding.latestUpstreamResponseId = null;
-					turn = await session.create(request, {
-						generate: options.generate,
-						signal,
-					});
+					turn = await beforeFirstOutput(
+						session.create(request, {
+							generate: options.generate,
+							signal,
+						}),
+						ctx,
+					);
 					for await (const chunk of turn.chunks) yield chunk;
 				}
 				resolveFinalId(await turn.upstreamResponseId);
+				adapterContextDiagnostics(ctx).transportTerminator = "websocket_turn";
 			} catch (error) {
 				resolveFinalId(null);
 				throw error;
 			}
 		}
+		const observed = observeChatStream(chunks(), remainingExecutionPolicy(ctx));
+		observed.observation.diagnostics = adapterContextDiagnostics(ctx);
 		return {
 			kind: "stream",
-			chunks: chunks(),
+			chunks: traceUpstreamStream(observed.items, ctx),
+			observation: observed.observation,
 			upstreamResponseId: finalUpstreamResponseId,
 		};
 	}

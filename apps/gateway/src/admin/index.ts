@@ -1,9 +1,11 @@
 import { authMiddleware, requireMaster, getAuth } from "#auth/middleware.ts";
+import { EXECUTION_POLICY_MAX_TOTAL_MS } from "#core/executionPolicy.ts";
 import { invalidateRouterSettingsCache } from "#router/settings.ts";
 import { invalidateResponseCache } from "#cache/responseCache.ts";
 import { invalidateVirtualKey } from "#auth/virtualKeyCache.ts";
 import { clearVirtualKeyBudget } from "#ratelimit/index.ts";
 import { configureFallback } from "#fallbacks/service.ts";
+import { getRequestId } from "#http/requestContext.ts";
 import { probeArtifact } from "#extensions/source.ts";
 import { ok, paginated } from "#http/respond.ts";
 import { platformAdminApp } from "./platform.ts";
@@ -38,6 +40,14 @@ import {
 } from "#db/repos/virtualKeys.ts";
 
 import {
+	aggregateOperationUsage,
+	type OperationFilter,
+	getOperationDetail,
+	listOperationsPage,
+	operationSummary,
+} from "#db/repos/operations.ts";
+
+import {
 	deleteFallbackPolicy,
 	listFallbackPolicies,
 	updateRouterSettings,
@@ -45,17 +55,15 @@ import {
 } from "#db/repos/router.ts";
 
 import {
-	type RequestLogFilter,
-	listRequestLogsPage,
-	type UsageGroupBy,
-	aggregateUsage,
-} from "#db/repos/requestLogs.ts";
-
-import {
 	resetExtensionInstance,
 	reloadExtensions,
 	extensionStatus,
 } from "#extensions/runtime.ts";
+
+import {
+	operationPersistenceStatus,
+	getPayloadSample,
+} from "#logging/operations.ts";
 
 /** Strips the hash before returning a virtual key. */
 function publicKey(row: VirtualKeyRow) {
@@ -77,6 +85,17 @@ function parseBoolQuery(value: string | undefined): boolean | undefined {
 	});
 }
 
+function parseNonNegativeNumber(value: string | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed < 0)
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Invalid non-negative number query value "${value}"`,
+		});
+	return parsed;
+}
+
 function parseDateQuery(
 	c: import("hono").Context,
 	name: string,
@@ -94,11 +113,35 @@ function parseDateQuery(
 	return d;
 }
 
-/** Builds the common request_logs filter from the query string. */
-function parseLogFilter(c: import("hono").Context): RequestLogFilter {
+/** Builds the common gateway operation filter from the query string. */
+function parseLogFilter(c: import("hono").Context): OperationFilter {
 	const cacheHit = parseBoolQuery(c.req.query("cacheHit"));
+	const degraded = parseBoolQuery(c.req.query("degraded"));
+	const active = parseBoolQuery(c.req.query("active"));
+	const terminalVerified = parseBoolQuery(c.req.query("terminalVerified"));
+	const minDurationMs = parseNonNegativeNumber(c.req.query("minDurationMs"));
+	const maxDurationMs = parseNonNegativeNumber(c.req.query("maxDurationMs"));
 	const start = parseDateQuery(c, "start");
 	const end = parseDateQuery(c, "end");
+	const outcome = c.req.query("outcome");
+	const validOutcomes = [
+		"success",
+		"incomplete",
+		"blocked",
+		"error",
+		"cancelled",
+		"abandoned",
+		"unknown",
+	] as const;
+	if (
+		outcome !== undefined &&
+		!validOutcomes.includes(outcome as (typeof validOutcomes)[number])
+	)
+		throw new GatewayError({
+			class: "bad_request",
+			message: `Invalid outcome "${outcome}"`,
+			code: "invalid_log_outcome",
+		});
 	return {
 		...(c.req.query("virtualKeyId")
 			? { virtualKeyId: c.req.query("virtualKeyId")! }
@@ -113,11 +156,26 @@ function parseLogFilter(c: import("hono").Context): RequestLogFilter {
 			? { adapterKey: c.req.query("adapterKey")! }
 			: {}),
 		...(c.req.query("callType") ? { callType: c.req.query("callType")! } : {}),
-		...(c.req.query("status") ? { status: c.req.query("status")! } : {}),
+		...(outcome
+			? {
+					outcome: outcome as NonNullable<OperationFilter["outcome"]>,
+				}
+			: {}),
 		...(c.req.query("requestId")
 			? { requestId: c.req.query("requestId")! }
 			: {}),
 		...(cacheHit !== undefined ? { cacheHit } : {}),
+		...(degraded !== undefined ? { degraded } : {}),
+		...(active !== undefined ? { active } : {}),
+		...(terminalVerified !== undefined ? { terminalVerified } : {}),
+		...(c.req.query("failureKind")
+			? { failureKind: c.req.query("failureKind")! }
+			: {}),
+		...(c.req.query("failurePhase")
+			? { failurePhase: c.req.query("failurePhase")! }
+			: {}),
+		...(minDurationMs !== undefined ? { minDurationMs } : {}),
+		...(maxDurationMs !== undefined ? { maxDurationMs } : {}),
 		...(start ? { start } : {}),
 		...(end ? { end } : {}),
 	};
@@ -483,18 +541,13 @@ adminApp.post("/extensions/:id/reset", (c) => {
 
 /* --------------------------------------------------------- logs / usage */
 
-const USAGE_GROUP_BY: UsageGroupBy[] = [
-	"public_model",
-	"virtual_key",
-	"adapter_key",
-	"day",
-	"none",
-];
+const USAGE_GROUP_BY = ["public_model", "virtual_key", "day", "none"] as const;
+type OperationUsageGroupBy = (typeof USAGE_GROUP_BY)[number];
 
 adminApp.get("/logs", async (c) => {
 	const { limit, offset } = parsePage(c);
 	const filter = parseLogFilter(c);
-	const { rows, total } = await listRequestLogsPage({
+	const { rows, total } = await listOperationsPage({
 		limit,
 		offset,
 		...filter,
@@ -507,17 +560,79 @@ adminApp.get("/logs", async (c) => {
 	});
 });
 
+adminApp.get("/logs/:id/payload", async (c) => {
+	const payload = await getPayloadSample(c.req.param("id"), {
+		requestId: getRequestId(c),
+	});
+	if (payload === null)
+		throw new GatewayError({
+			class: "not_found",
+			message: "No retained payload sample exists for this operation",
+			code: "payload_sample_not_found",
+		});
+	return ok(c, payload);
+});
+
+adminApp.get("/logs/:id", async (c) => {
+	const detail = await getOperationDetail(c.req.param("id"));
+	if (detail === null)
+		throw new GatewayError({
+			class: "not_found",
+			message: "Gateway operation not found",
+			code: "operation_not_found",
+		});
+	return ok(c, detail);
+});
+
+adminApp.get("/observability/summary", async (c) => {
+	const raw = c.req.query("window") ?? "1h";
+	const windows: Record<string, number> = {
+		"5m": 5 * 60_000,
+		"1h": 60 * 60_000,
+		"24h": 24 * 60 * 60_000,
+	};
+	const duration = windows[raw];
+	if (duration === undefined)
+		throw new GatewayError({
+			class: "bad_request",
+			message: 'window must be one of "5m", "1h", or "24h"',
+			code: "invalid_observability_window",
+		});
+	const summary = await operationSummary(new Date(Date.now() - duration));
+	const persistence = operationPersistenceStatus();
+	const requests = Number(summary.totals.requests);
+	const rate = (value: number) => (requests > 0 ? value / requests : 0);
+	return ok(c, {
+		...summary,
+		persistence,
+		alerts: {
+			unverifiedTerminal: Number(summary.totals.unverifiedTerminalOutcomes) > 0,
+			abandonedOrPersistenceLoss:
+				Number(summary.totals.abandoned) > 0 ||
+				persistence.persistenceFailures > 0 ||
+				persistence.persistenceDrops > 0,
+			stalls: requests >= 20 && rate(Number(summary.totals.stalls)) > 0.02,
+			degraded: requests > 0 && rate(Number(summary.totals.degraded)) > 0.05,
+			firstOutputP95: Number(summary.totals.p95FirstOutputMs ?? 0) > 25_000,
+			protocolErrors:
+				requests > 0 && rate(Number(summary.totals.protocolErrors)) > 0.01,
+			clientCancellation:
+				requests > 0 && rate(Number(summary.totals.cancelled)) > 0.05,
+		},
+	});
+});
+
 adminApp.get("/usage", async (c) => {
 	const groupByRaw = c.req.query("groupBy") ?? "none";
-	if (!USAGE_GROUP_BY.includes(groupByRaw as UsageGroupBy)) {
+	if (!USAGE_GROUP_BY.includes(groupByRaw as OperationUsageGroupBy)) {
 		throw new GatewayError({
 			class: "bad_request",
 			message: `Invalid groupBy "${groupByRaw}". Allowed: ${USAGE_GROUP_BY.join(", ")}`,
 			param: "groupBy",
 		});
 	}
-	const rows = await aggregateUsage({
-		groupBy: groupByRaw as UsageGroupBy,
+	const rows = await aggregateOperationUsage({
+		groupBy: groupByRaw as OperationUsageGroupBy,
 		...parseLogFilter(c),
 	});
 	return ok(c, rows);
@@ -525,8 +640,48 @@ adminApp.get("/usage", async (c) => {
 
 /* --------------------------------------------------------- router settings */
 
+const executionPolicySchema = z
+	.object({
+		firstOutputMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+		idleMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS).nullable(),
+		reasoningOnlyMs: z
+			.int()
+			.positive()
+			.max(EXECUTION_POLICY_MAX_TOTAL_MS)
+			.nullable(),
+		preCommitMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+		totalMs: z.int().positive().max(EXECUTION_POLICY_MAX_TOTAL_MS),
+		maxAttempts: z.int().min(1).max(20),
+	})
+	.refine(
+		(policy) =>
+			policy.firstOutputMs <= policy.preCommitMs &&
+			policy.preCommitMs <= policy.totalMs &&
+			(policy.idleMs === null || policy.idleMs <= policy.totalMs) &&
+			(policy.reasoningOnlyMs === null ||
+				policy.reasoningOnlyMs <= policy.totalMs),
+		{
+			message:
+				"Execution policy deadlines must be ordered and bounded by totalMs",
+		},
+	);
+
 const routerSettingsSchema = z
 	.object({
+		executionPolicies: z.record(
+			z.enum([
+				"chat",
+				"images.generations",
+				"images.edits",
+				"videos.generations",
+				"audio.transcriptions",
+				"embeddings",
+			]),
+			z.object({
+				json: executionPolicySchema,
+				stream: executionPolicySchema,
+			}),
+		),
 		routingStrategy: z.enum([
 			"simple-shuffle",
 			"least-busy",
@@ -545,43 +700,34 @@ const routerSettingsSchema = z
 		halfOpenProbeSeconds: z.int().min(1),
 		configurationCooldownSeconds: z.int().min(1),
 		throttleCooldownSeconds: z.int().min(1),
-		numRetries: z.int().min(0),
-		maxAttemptsPerRequest: z.int().min(1),
-		timeoutSeconds: z.int().min(1),
 		retryAfterSeconds: z.int().min(0),
 	})
-	.partial();
+	.partial()
+	.strict();
 
 adminApp.get("/router-settings", async (c) => {
-	return ok(c, (await getRouterSettings()) ?? null);
+	const settings = await getRouterSettings();
+	if (!settings) return ok(c, null);
+	const {
+		numRetries: _numRetries,
+		maxAttemptsPerRequest: _maxAttemptsPerRequest,
+		timeoutSeconds: _timeoutSeconds,
+		...publicSettings
+	} = settings;
+	return ok(c, publicSettings);
 });
 
 adminApp.put("/router-settings", async (c) => {
 	const patch = await parseJson(c, routerSettingsSchema);
-	const current = await getRouterSettings();
-	const numRetries = patch.numRetries ?? current?.numRetries ?? 3;
-	const maxAttemptsPerRequest =
-		patch.maxAttemptsPerRequest ?? current?.maxAttemptsPerRequest ?? 6;
-	const minimumRequestAttempts = numRetries + 1;
-	if (
-		patch.maxAttemptsPerRequest !== undefined &&
-		maxAttemptsPerRequest < minimumRequestAttempts
-	) {
-		throw new GatewayError({
-			class: "bad_request",
-			message:
-				"maxAttemptsPerRequest must be at least numRetries + 1 so the configured retry count can be honored",
-			code: "invalid_router_settings",
-		});
-	}
-	const updated = await updateRouterSettings({
-		...patch,
-		...(maxAttemptsPerRequest < minimumRequestAttempts
-			? { maxAttemptsPerRequest: minimumRequestAttempts }
-			: {}),
-	});
+	const updated = await updateRouterSettings(patch);
 	invalidateRouterSettingsCache();
-	return ok(c, updated);
+	const {
+		numRetries: _numRetries,
+		maxAttemptsPerRequest: _maxAttemptsPerRequest,
+		timeoutSeconds: _timeoutSeconds,
+		...publicSettings
+	} = updated;
+	return ok(c, publicSettings);
 });
 
 /* --------------------------------------------------------------- fallbacks */

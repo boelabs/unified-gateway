@@ -34,9 +34,7 @@ function settingsPatch(row: RouterSettingsRow): RouterSettingsPatch {
 		halfOpenProbeSeconds: row.halfOpenProbeSeconds,
 		configurationCooldownSeconds: row.configurationCooldownSeconds,
 		throttleCooldownSeconds: row.throttleCooldownSeconds,
-		numRetries: row.numRetries,
-		maxAttemptsPerRequest: row.maxAttemptsPerRequest,
-		timeoutSeconds: row.timeoutSeconds,
+		executionPolicies: row.executionPolicies,
 		retryAfterSeconds: row.retryAfterSeconds,
 	};
 }
@@ -52,7 +50,7 @@ after(async () => {
 	invalidateRouterSettingsCache();
 });
 
-test("router settings: the five reliability controls are independently configurable", {
+test("router settings: execution policies are configurable by operation and mode", {
 	skip,
 }, async () => {
 	const response = await app.request("/admin/router-settings", {
@@ -61,8 +59,17 @@ test("router settings: the five reliability controls are independently configura
 		body: JSON.stringify({
 			allowedFails: 0,
 			cooldownSeconds: 7,
-			numRetries: 7,
-			timeoutSeconds: 42,
+			executionPolicies: {
+				...originalSettings!.executionPolicies,
+				chat: {
+					...originalSettings!.executionPolicies!.chat,
+					stream: {
+						...originalSettings!.executionPolicies!.chat.stream,
+						firstOutputMs: 42_000,
+						maxAttempts: 7,
+					},
+				},
+			},
 			retryAfterSeconds: 2,
 		}),
 	});
@@ -72,13 +79,13 @@ test("router settings: the five reliability controls are independently configura
 	};
 	assert.equal(body.data.allowedFails, 0);
 	assert.equal(body.data.cooldownSeconds, 7);
-	assert.equal(body.data.numRetries, 7);
-	assert.equal(body.data.timeoutSeconds, 42);
+	assert.equal(body.data.executionPolicies?.chat.stream.maxAttempts, 7);
+	assert.equal(body.data.executionPolicies?.chat.stream.firstOutputMs, 42_000);
 	assert.equal(body.data.retryAfterSeconds, 2);
-	assert.equal(body.data.maxAttemptsPerRequest, 8);
+	assert.equal("numRetries" in body.data, false);
 });
 
-test("router settings: an explicit request ceiling cannot truncate retries", {
+test("router settings: removed global retry fields are rejected", {
 	skip,
 }, async () => {
 	const response = await app.request("/admin/router-settings", {
@@ -86,12 +93,7 @@ test("router settings: an explicit request ceiling cannot truncate retries", {
 		headers: auth,
 		body: JSON.stringify({
 			numRetries: 3,
-			maxAttemptsPerRequest: 3,
 		}),
 	});
 	assert.equal(response.status, 400);
-	const body = (await response.json()) as {
-		error: { code: string };
-	};
-	assert.equal(body.error.code, "invalid_router_settings");
 });
