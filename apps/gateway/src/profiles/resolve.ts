@@ -69,6 +69,7 @@ export function profileToRuntimeMetadata(profile: {
 	const imageEdit = operations["image.edit"];
 	const videoGeneration = operations["video.generate"];
 	const embedding = operations["embedding.create"];
+	const rerank = operations.rerank;
 	const capabilities: Partial<TextCapabilities> | undefined =
 		text?.capabilities ??
 		(imageGeneration || imageEdit
@@ -94,7 +95,9 @@ export function profileToRuntimeMetadata(profile: {
 		...(capabilities ? { capabilities } : {}),
 		...(text?.maxInputTokens !== undefined
 			? { maxInputTokens: text.maxInputTokens }
-			: {}),
+			: rerank?.maxTokensPerDocument !== undefined
+				? { maxInputTokens: rerank.maxTokensPerDocument }
+				: {}),
 		...(text?.maxOutputTokens !== undefined
 			? { maxOutputTokens: text.maxOutputTokens }
 			: {}),
@@ -102,6 +105,7 @@ export function profileToRuntimeMetadata(profile: {
 		...(image ? { image } : {}),
 		...(video ? { video } : {}),
 		...(embedding ? { embedding: embedding as EmbeddingProfile } : {}),
+		...(rerank ? { rerank } : {}),
 		...(profile.pricing !== undefined ? { pricing: profile.pricing } : {}),
 	};
 }

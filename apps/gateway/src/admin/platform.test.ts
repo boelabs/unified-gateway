@@ -59,6 +59,23 @@ test("admin operations exposes embeddings by operation, endpoint, and transport 
 	);
 	assert.equal(embeddingOperation?.callType, "embeddings");
 	assert.deepEqual(embeddingOperation?.publicEndpoints, ["/v1/embeddings"]);
+	const rerankOperation = body.data.operations.find(
+		(operation) => operation.id === "rerank",
+	);
+	assert.equal(rerankOperation?.callType, "rerank");
+	assert.deepEqual(rerankOperation?.publicEndpoints, ["/v1/rerank"]);
+	for (const [adapterId, transport] of [
+		["openrouter", "openrouter_rerank"],
+		["vercel", "cohere_rerank"],
+	] as const) {
+		const adapter = body.data.adapters.find((item) => item.id === adapterId);
+		if (!adapter) throw new Error(`adapter ${adapterId} is not registered`);
+		assert.ok(adapter.supportedCallTypes.includes("rerank"));
+		const operation = adapter.operations.find((item) => item.id === "rerank");
+		assert.equal(operation?.family, "reranking");
+		assert.equal(operation?.defaultTransport, transport);
+		assert.deepEqual(operation?.transports, [transport]);
+	}
 
 	const expectedAdapters = [
 		["openai", "embeddings"],

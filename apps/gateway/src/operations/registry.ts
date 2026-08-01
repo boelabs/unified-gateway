@@ -8,13 +8,14 @@ export const OPERATION_IDS = [
 	"video.generate",
 	"audio.transcribe",
 	"embedding.create",
+	"rerank",
 ] as const;
 
 export type OperationId = (typeof OPERATION_IDS)[number];
 
 export interface OperationDefinition {
 	id: OperationId;
-	family: "text" | "image" | "video" | "audio" | "embedding";
+	family: "text" | "image" | "video" | "audio" | "embedding" | "reranking";
 	label: string;
 	callType: CallType;
 	publicEndpoints: string[];
@@ -66,6 +67,13 @@ export const OPERATIONS: readonly OperationDefinition[] = [
 		label: "Embeddings",
 		callType: "embeddings",
 		publicEndpoints: ["/v1/embeddings"],
+	},
+	{
+		id: "rerank",
+		family: "reranking",
+		label: "Reranking",
+		callType: "rerank",
+		publicEndpoints: ["/v1/rerank"],
 	},
 ] as const;
 

@@ -44,6 +44,10 @@ const catalogs = [
 		adapterKey: "vercel",
 		url: new URL("../adapters/vercel/catalog.json", import.meta.url),
 	},
+	{
+		adapterKey: "openrouter",
+		url: new URL("../adapters/openrouter/catalog.json", import.meta.url),
+	},
 ] as const;
 
 test("JSON provider catalogs load and match the runtime registry", () => {

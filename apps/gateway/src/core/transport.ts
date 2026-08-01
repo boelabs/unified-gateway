@@ -9,6 +9,8 @@
  *   - audio_transcriptions: OpenAI Audio API (/audio/transcriptions, multipart)
  *   - embeddings:       OpenAI-compatible Embeddings API (/embeddings)
  *   - embed_content:    Google Gemini Embeddings API (:embedContent/:batchEmbedContents)
+ *   - openrouter_rerank: OpenRouter Rerank API (/rerank)
+ *   - cohere_rerank:     Cohere-compatible Rerank API (/rerank)
  *   - videos:           OpenAI-compatible Videos API (/videos)
  *   - videos_async:     Async job Videos API (POST /videos -> 202 + polling_url, GET /videos/{job},
  *                       GET /videos/{job}/content?index=N)
@@ -23,6 +25,8 @@ export type UpstreamTransport =
 	| "audio_transcriptions"
 	| "embeddings"
 	| "embed_content"
+	| "openrouter_rerank"
+	| "cohere_rerank"
 	| "videos"
 	| "videos_async"
 	| "generate_videos";
@@ -36,6 +40,8 @@ const UPSTREAM_TRANSPORTS: readonly UpstreamTransport[] = [
 	"audio_transcriptions",
 	"embeddings",
 	"embed_content",
+	"openrouter_rerank",
+	"cohere_rerank",
 	"videos",
 	"videos_async",
 	"generate_videos",

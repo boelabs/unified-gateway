@@ -10,6 +10,7 @@ const CALL_TYPES = [
 	"videos.generations",
 	"audio.transcriptions",
 	"embeddings",
+	"rerank",
 ] as const;
 
 export type CallType = (typeof CALL_TYPES)[number];

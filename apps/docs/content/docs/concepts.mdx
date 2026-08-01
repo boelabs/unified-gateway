@@ -23,7 +23,7 @@ Everything below is just the pieces of that line.
 
 **Public Endpoint** — the route a client calls, with that API's exact contract:
 `/v1/chat/completions`, `/v1/responses`, `/v1/messages`, `/v1/embeddings`, `/v1/images/*`,
-`/v1/audio/transcriptions`. The endpoint decides the *client-facing* shape, not the provider protocol.
+`/v1/audio/transcriptions`, `/v1/rerank`. The endpoint decides the *client-facing* shape, not the provider protocol.
 
 **Public Model** — the name a client puts in `model` (`general`, `image-default`). It is yours to
 choose, not a provider's model id. There is no separate "model group" entity: every deployment that
@@ -38,7 +38,7 @@ upstream protocols and maps provider errors back into the gateway's error classe
 
 **Transport** — the actual protocol the adapter speaks to the provider: `chat_completions`,
 `responses`, `generate_content`, `messages`, `images`, `audio_transcriptions`, `embeddings`, or
-`embed_content`. It is **inferred per operation** from the adapter; `transportOverrides` is the rare
+`embed_content`, `openrouter_rerank`, or `cohere_rerank`. It is **inferred per operation** from the adapter; `transportOverrides` is the rare
 manual override.
 
 **Canonical** — the single provider-agnostic representation in the core. Every public wire format is

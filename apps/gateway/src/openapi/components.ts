@@ -1,7 +1,7 @@
 /**
  * OpenAPI component schemas, defined as Zod so the spec is generated — never hand-maintained.
  *
- * These mirror the public HTTP contracts. The inference bodies (chat/responses/messages/embeddings/
+ * These mirror the public HTTP contracts. Most inference bodies (chat/responses/messages/embeddings/
  * images) are intentionally loose (`additionalProperties: true`) because the gateway forwards
  * provider-specific extras; the admin bodies are strict and kept in lock-step with the runtime Zod
  * validators by a conformance test (see openapi.test.ts). `.meta({ id })` registers a schema as a
@@ -11,6 +11,8 @@
 import "zod-openapi"; // ambient types for `.meta({ id, ... })`
 
 import { EXECUTION_POLICY_MAX_TOTAL_MS } from "#core/executionPolicy.ts";
+import { rerankRequestSchema } from "#contracts/openrouter/rerank.ts";
+import { OPERATION_IDS } from "#operations/registry.ts";
 import { EFFORT_ORDER } from "#core/reasoning.ts";
 import * as z from "zod/v4";
 
@@ -375,6 +377,53 @@ export const EmbeddingsResponse = z
 	})
 	.meta({ id: "EmbeddingsResponse" });
 
+/* ------------------------------------------------------------------- rerank */
+
+export const RerankRequest = rerankRequestSchema.meta({
+	id: "RerankRequest",
+	description:
+		"Strict OpenRouter-shaped text reranking request. Image documents are reserved for a future contract version.",
+});
+
+export const RerankResult = z
+	.object({
+		index: z.int().nonnegative(),
+		relevance_score: z.number(),
+		document: z.object({ text: z.string() }).strict(),
+	})
+	.strict()
+	.meta({ id: "RerankResult" });
+
+export const RerankResponse = z
+	.object({
+		id: z.string().optional(),
+		model: z.string(),
+		provider: z.string().optional(),
+		results: z.array(RerankResult),
+		usage: z
+			.object({
+				total_tokens: z.int().nonnegative().optional(),
+				search_units: z.int().nonnegative().optional(),
+				cost: z.number().nonnegative().optional(),
+			})
+			.strict()
+			.optional(),
+	})
+	.strict()
+	.meta({ id: "RerankResponse" });
+
+export const OpenRouterError = z
+	.object({
+		error: z
+			.object({
+				code: z.int(),
+				message: z.string(),
+			})
+			.strict(),
+	})
+	.strict()
+	.meta({ id: "OpenRouterError" });
+
 /* -------------------------------------------------------------------- images */
 
 const nullableEnum = (values: [string, ...string[]]) =>
@@ -638,14 +687,7 @@ export const VideoDeleted = z
 
 /* --------------------------------------------------------- deployments/config */
 
-const operationNames = [
-	"text.generate",
-	"image.generate",
-	"image.edit",
-	"video.generate",
-	"audio.transcribe",
-	"embedding.create",
-] as const;
+const operationNames = OPERATION_IDS;
 
 export const TransportOverrides = z
 	.record(z.enum(operationNames), z.string())
@@ -853,6 +895,7 @@ export const RouterSettings = z
 				"videos.generations": OperationExecutionPolicy,
 				"audio.transcriptions": OperationExecutionPolicy,
 				embeddings: OperationExecutionPolicy,
+				rerank: OperationExecutionPolicy,
 			})
 			.optional(),
 		routingStrategy: z

@@ -55,8 +55,40 @@ function zodToGatewayError(error: z.ZodError): GatewayError {
 }
 
 /** Reads the JSON body; throws `bad_request` if missing or not valid JSON. */
-export async function readJsonBody(c: Context<AppEnv>): Promise<unknown> {
-	const json = await c.req.json().catch(() => undefined);
+export async function readJsonBody(
+	c: Context<AppEnv>,
+	maxBytes?: number,
+): Promise<unknown> {
+	let json: unknown;
+	if (maxBytes === undefined) {
+		json = await c.req.json().catch(() => undefined);
+	} else {
+		const declaredLength = Number(c.req.header("content-length"));
+		if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+			throw new GatewayError({
+				class: "bad_request",
+				status: 413,
+				code: "request_body_too_large",
+				message: `Request body exceeds ${maxBytes} bytes`,
+				publicMessage: `Request body exceeds the ${maxBytes} byte limit.`,
+			});
+		}
+		const body = new Uint8Array(await c.req.raw.arrayBuffer());
+		if (body.byteLength > maxBytes) {
+			throw new GatewayError({
+				class: "bad_request",
+				status: 413,
+				code: "request_body_too_large",
+				message: `Request body exceeds ${maxBytes} bytes`,
+				publicMessage: `Request body exceeds the ${maxBytes} byte limit.`,
+			});
+		}
+		try {
+			json = JSON.parse(new TextDecoder().decode(body)) as unknown;
+		} catch {
+			json = undefined;
+		}
+	}
 	if (json === undefined) {
 		throw new GatewayError({
 			class: "bad_request",

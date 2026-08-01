@@ -4,6 +4,7 @@ import type { EmbeddingProfile } from "#core/embeddings.ts";
 import type { ImageModelProfile } from "#core/images.ts";
 import type { VideoModelProfile } from "#core/videos.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
+import type { RerankProfile } from "#core/rerank.ts";
 import type { CallType } from "#core/callType.ts";
 import type { EncEnvelope } from "./crypto.ts";
 import { sql } from "drizzle-orm";
@@ -119,6 +120,8 @@ export interface RuntimeModelMetadata {
 		cacheReadCentsPerMTokens?: number;
 		/** Cost in USD cents per 1M tokens written to cache (cache creation). */
 		cacheWriteCentsPerMTokens?: number;
+		/** Cost in USD cents per reranking search unit. */
+		searchUnitCents?: number;
 		/**
 		 * TIERED rate by context size. When the input tokens (promptTokens, which include cache
 		 * read/write) exceed `aboveInputTokens`, the WHOLE request is charged at the tier's rates
@@ -144,6 +147,8 @@ export interface RuntimeModelMetadata {
 	video?: VideoModelProfile;
 	/** Embeddings profile flattened for runtime compatibility. */
 	embedding?: EmbeddingProfile;
+	/** Reranking profile flattened for runtime compatibility. */
+	rerank?: RerankProfile;
 	/** Per-operation profiles of the new admin model. */
 	operations?: OperationProfiles;
 	/** Override of the catalog capabilities (partial: only what you want to force). */
@@ -391,6 +396,7 @@ export const requestLogs = pgTable(
 		promptTokens: integer("prompt_tokens"),
 		completionTokens: integer("completion_tokens"),
 		totalTokens: integer("total_tokens"),
+		searchUnits: integer("search_units"),
 		costCents: numeric("cost_cents", { precision: 20, scale: 10 }),
 		durationMs: integer("duration_ms"),
 		ttftMs: integer("ttft_ms"),
@@ -455,6 +461,7 @@ export const gatewayOperations = pgTable(
 		cacheReadTokens: integer("cache_read_tokens"),
 		cacheWriteTokens: integer("cache_write_tokens"),
 		totalTokens: integer("total_tokens"),
+		searchUnits: integer("search_units"),
 		consumerCostCents: numeric("consumer_cost_cents", {
 			precision: 20,
 			scale: 10,
@@ -540,6 +547,7 @@ export const upstreamAttempts = pgTable(
 		cacheReadTokens: integer("cache_read_tokens"),
 		cacheWriteTokens: integer("cache_write_tokens"),
 		totalTokens: integer("total_tokens"),
+		searchUnits: integer("search_units"),
 		lastProgressAt: timestamp("last_progress_at", { withTimezone: true }),
 		startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
 		endedAt: timestamp("ended_at", { withTimezone: true }),

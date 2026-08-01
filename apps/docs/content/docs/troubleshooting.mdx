@@ -5,7 +5,8 @@ description: "Error shape, status codes, and known issues with their exact sympt
 
 Unified Gateway returns errors in the **exact shape of the endpoint you called**. OpenAI-style endpoints
 (`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`,
-`/v1/audio/transcriptions`) return the OpenAI error body; `/v1/messages` returns the Anthropic one. Your
+`/v1/audio/transcriptions`) return the OpenAI error body; `/v1/messages` returns the Anthropic one and
+`/v1/rerank` returns the OpenRouter one. Your
 existing client's error handling works unchanged.
 
 OpenAI shape:
@@ -25,6 +26,12 @@ Anthropic shape (`/v1/messages`):
 
 ```json
 { "type": "error", "error": { "type": "invalid_request_error", "message": "The request is invalid." } }
+```
+
+OpenRouter shape (`/v1/rerank`):
+
+```json
+{ "error": { "code": 400, "message": "The request is invalid." } }
 ```
 
 > Because the gateway is a router, the **public message is intentionally generic** — the same public
@@ -59,7 +66,7 @@ separately when a **dependency** (Postgres/Redis) is down, not a provider failur
 |---|---|---|---|
 | `model_not_found` | 404 | The public model has no enabled deployment for the requested operation. | Create a deployment for that `publicModel`, enable it, or check the operation (e.g. an image model can't serve chat). |
 | `model_not_allowed` | 403 | The virtual key's `allowedModels` does not include this model. | Add the model to the key's scope, or use a key that already has it. See [Virtual keys](/docs/virtual-keys). |
-| `unsupported_parameter` | 400 | Either an image/audio/embeddings parameter is outside the model's operation profile, **or** (chat-shaped only) every deployment in the pool lacks a parameter you sent under the `error` parameter-policy strategy. | Remove or adjust the parameter, or check `unsupportedParameterStrategy` — see [Parameter policy](/docs/parameter-policy). |
+| `unsupported_parameter` | 400 | Either an image/audio/embeddings/rerank parameter is outside the model's operation profile, **or** (chat-shaped only) every deployment in the pool lacks a parameter you sent under the `error` parameter-policy strategy. | Remove or adjust the parameter, or check `unsupportedParameterStrategy` — see [Parameter policy](/docs/parameter-policy). |
 | `unsupported_model_capability` | 400 | The request used a capability the model doesn't declare (tools, vision, reasoning, structured outputs). | Use a model whose catalog entry declares the capability, or drop the feature. |
 | `context_length_exceeded` | 400 | Input exceeds the model's context window. | Shorten the prompt or route to a larger-context model. Configure a `context_window` [fallback](/docs/fallbacks) to do this automatically. |
 | `content_policy_violation` | 400 | The provider blocked the request on content policy. | Adjust the content, or set a `content_policy` [fallback](/docs/fallbacks) to another model. |

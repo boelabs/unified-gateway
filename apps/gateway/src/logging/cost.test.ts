@@ -141,3 +141,40 @@ test("without pricing cost is 0", () => {
 	);
 	assert.equal(c.totalCents, 0);
 });
+
+test("search-unit pricing is additive with token pricing", () => {
+	const cost = computeCost(
+		{
+			pricing: {
+				inputCentsPerMTokens: 100,
+				outputCentsPerMTokens: 200,
+				searchUnitCents: 0.25,
+			},
+		},
+		{
+			promptTokens: 1_000,
+			completionTokens: 500,
+			totalTokens: 1_500,
+			searchUnits: 2,
+			providerCostCents: 0.4,
+		},
+	);
+	assert.equal(cost.searchUnitCents, 0.5);
+	assert.equal(cost.providerReportedCents, 0.4);
+	assert.ok(Math.abs(cost.totalCents - 0.7) < 1e-9);
+});
+
+test("provider-reported cost is the fallback only when pricing is absent", () => {
+	const usage = {
+		promptTokens: 0,
+		completionTokens: 0,
+		totalTokens: 0,
+		searchUnits: 1,
+		providerCostCents: 0.35,
+	};
+	assert.equal(computeCost({}, usage).totalCents, 0.35);
+	assert.equal(
+		computeCost({ pricing: { searchUnitCents: 0.2 } }, usage).totalCents,
+		0.2,
+	);
+});

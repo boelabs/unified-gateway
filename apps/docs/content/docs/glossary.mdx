@@ -54,12 +54,17 @@ catalog lives next to the adapter; if it is missing, that provider is not regist
 ## Transport
 
 The protocol an adapter uses against the provider: `chat_completions`, `responses`,
-`generate_content`, `messages`, `images`, `audio_transcriptions`, `embeddings`, or `embed_content`.
+`generate_content`, `messages`, `images`, `audio_transcriptions`, `embeddings`, `embed_content`,
+`openrouter_rerank`, or `cohere_rerank`.
 The type is `UpstreamTransport`, in `src/core/transport.ts`, and the execution context uses
 `ctx.transport`.
 
 `embeddings` is the OpenAI-compatible `/embeddings` transport; `embed_content` is Google Gemini's
 native transport for `:embedContent` and `:batchEmbedContents`.
+
+`openrouter_rerank` is OpenRouter's native `/rerank` contract; `cohere_rerank` is the internal
+Cohere-compatible `/rerank` transport used by Vercel AI Gateway. Both normalize into one canonical
+rerank operation.
 
 `transportOverrides` lets you replace the adapter's default transport per operation. Do not use the
 former names **wire** or **bindings**.
@@ -88,7 +93,8 @@ request parameter a target deployment's catalog entry declares unsupported. Glob
 ## Operation Profile
 
 The configuration of a specific operation within `catalogEntry.operations`. For example, an image
-profile declares formats and sizes; a transcription profile declares response formats.
+profile declares formats and sizes; a transcription profile declares response formats; a rerank
+profile declares document modalities and request limits.
 
 ## Capabilities
 
@@ -104,7 +110,7 @@ derive its `CallType` via `operations/registry.ts`.
 ## Canonical
 
 The provider-agnostic internal representation in `src/core/canonical.ts`, `images.ts`, `audio.ts`, and
-`embeddings.ts`. Public contracts are converted to canonical types; adapters convert between those
+`embeddings.ts`, and `rerank.ts`. Public contracts are converted to canonical types; adapters convert between those
 types and their Transport. Do not use **Unified**.
 
 ## Fallback Policy

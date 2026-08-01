@@ -91,13 +91,34 @@ function pickMaxScore(
 		: weightedRandom(candidates);
 }
 
-function priceScore(candidate: DeploymentCandidate): number | null {
+function priceScore(
+	candidate: DeploymentCandidate,
+): { basis: "tokens" | "search_units"; value: number } | null {
 	const pricing = candidate.meta.pricing;
 	if (!pricing) return null;
 	const input = pricing.inputCentsPerMTokens ?? 0;
 	const output = pricing.outputCentsPerMTokens ?? 0;
-	if (input === 0 && output === 0) return null;
-	return input + output;
+	const hasTokenPricing =
+		pricing.inputCentsPerMTokens !== undefined ||
+		pricing.outputCentsPerMTokens !== undefined;
+	const hasSearchUnitPricing = pricing.searchUnitCents !== undefined;
+	if (hasTokenPricing === hasSearchUnitPricing) return null;
+	return hasSearchUnitPricing
+		? { basis: "search_units", value: pricing.searchUnitCents! }
+		: { basis: "tokens", value: input + output };
+}
+
+function pickByComparablePrice(
+	candidates: DeploymentCandidate[],
+): DeploymentCandidate {
+	const scores = candidates.map((candidate) => priceScore(candidate));
+	const basis = scores[0]?.basis;
+	if (!basis || scores.some((score) => !score || score.basis !== basis))
+		return weightedRandom(candidates);
+	return pickMinScore(
+		candidates,
+		(candidate) => priceScore(candidate)?.value ?? null,
+	);
 }
 
 /**
@@ -128,7 +149,7 @@ export function pickDeployment(
 				(candidate) => metrics.get(candidate.row.id)?.throughputTps ?? null,
 			);
 		case "price-based":
-			return pickMinScore(candidates, priceScore);
+			return pickByComparablePrice(candidates);
 		case "health-aware":
 			return pickMaxScore(
 				candidates,

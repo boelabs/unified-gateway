@@ -69,6 +69,7 @@ try {
 					promptTokens: row.promptTokens,
 					completionTokens: row.completionTokens,
 					totalTokens: row.totalTokens,
+					searchUnits: row.searchUnits,
 					consumerCostCents: row.costCents,
 					upstreamCostCents: row.costCents,
 					durationMs: row.durationMs,

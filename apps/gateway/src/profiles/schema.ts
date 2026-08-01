@@ -8,6 +8,7 @@ export const pricingSchema = z
 		outputCentsPerMTokens: z.number().nonnegative().optional(),
 		cacheReadCentsPerMTokens: z.number().nonnegative().optional(),
 		cacheWriteCentsPerMTokens: z.number().nonnegative().optional(),
+		searchUnitCents: z.number().nonnegative().optional(),
 		tiers: z
 			.array(
 				z
@@ -374,6 +375,43 @@ const embeddingOperationProfileSchema = z
 		}
 	});
 
+const rerankOperationProfileSchema = z
+	.object({
+		documentModalities: z.array(z.enum(["text", "image"])).min(1),
+		imageSources: z
+			.array(z.enum(["url", "data_url"]))
+			.min(1)
+			.optional(),
+		maxDocuments: z.int().positive().optional(),
+		maxQueryBytes: z.int().positive().optional(),
+		maxDocumentBytes: z.int().positive().optional(),
+		maxTotalDocumentBytes: z.int().positive().optional(),
+		maxTokensPerDocument: z.int().positive().optional(),
+		maxTotalTokens: z.int().positive().optional(),
+		documentsPerSearchUnit: z.int().positive().optional(),
+	})
+	.strict()
+	.superRefine((value, ctx) => {
+		if (!value.documentModalities.includes("image") && value.imageSources) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["imageSources"],
+				message: 'only allowed when documentModalities includes "image"',
+			});
+		}
+		if (
+			value.maxDocumentBytes !== undefined &&
+			value.maxTotalDocumentBytes !== undefined &&
+			value.maxDocumentBytes > value.maxTotalDocumentBytes
+		) {
+			ctx.addIssue({
+				code: "custom",
+				path: ["maxDocumentBytes"],
+				message: "must be <= maxTotalDocumentBytes",
+			});
+		}
+	});
+
 export const operationProfilesSchema = z
 	.object({
 		"text.generate": textGenerateProfileSchema.optional(),
@@ -382,6 +420,7 @@ export const operationProfilesSchema = z
 		"video.generate": videoOperationProfileSchema.optional(),
 		"audio.transcribe": transcriptionOperationProfileSchema.optional(),
 		"embedding.create": embeddingOperationProfileSchema.optional(),
+		rerank: rerankOperationProfileSchema.optional(),
 	})
 	.strict()
 	.refine(

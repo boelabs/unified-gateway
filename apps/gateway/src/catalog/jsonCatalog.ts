@@ -31,6 +31,7 @@ const OPERATION_IDS = new Set<keyof OperationProfiles>([
 	"video.generate",
 	"audio.transcribe",
 	"embedding.create",
+	"rerank",
 ]);
 
 const REASONING_KINDS = new Set<ReasoningControlKind>([
@@ -103,6 +104,7 @@ function validatePricing(value: unknown, path: string): void {
 		"outputCentsPerMTokens",
 		"cacheReadCentsPerMTokens",
 		"cacheWriteCentsPerMTokens",
+		"searchUnitCents",
 	]) {
 		if (value[key] !== undefined) assertNumber(value[key], `${path}.${key}`);
 	}
@@ -309,6 +311,43 @@ function validateOperations(value: unknown, path: string): void {
 							`unknown format "${format}"`,
 						);
 				}
+			}
+		} else if (operation === "rerank") {
+			assertStringArray(
+				profile.documentModalities,
+				`${path}.${operation}.documentModalities`,
+			);
+			for (const modality of profile.documentModalities as string[]) {
+				if (modality !== "text" && modality !== "image")
+					fail(
+						`${path}.${operation}.documentModalities`,
+						`unknown modality "${modality}"`,
+					);
+			}
+			if (profile.imageSources !== undefined) {
+				assertStringArray(
+					profile.imageSources,
+					`${path}.${operation}.imageSources`,
+				);
+				for (const source of profile.imageSources) {
+					if (source !== "url" && source !== "data_url")
+						fail(
+							`${path}.${operation}.imageSources`,
+							`unknown source "${source}"`,
+						);
+				}
+			}
+			for (const key of [
+				"maxDocuments",
+				"maxQueryBytes",
+				"maxDocumentBytes",
+				"maxTotalDocumentBytes",
+				"maxTokensPerDocument",
+				"maxTotalTokens",
+				"documentsPerSearchUnit",
+			]) {
+				if (profile[key] !== undefined)
+					assertNumber(profile[key], `${path}.${operation}.${key}`);
 			}
 		} else if (operation === "video.generate") {
 			for (const key of [

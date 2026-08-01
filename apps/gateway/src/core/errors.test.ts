@@ -64,6 +64,20 @@ test("publicMessage override exposes a specific message when desired", () => {
 	assert.equal(err.toOpenAI().error.message, "The 'model' field is required.");
 });
 
+test("toOpenRouter exposes only numeric HTTP code and safe public message", () => {
+	const error = new GatewayError({
+		class: "server",
+		message: "upstream secret response",
+	});
+	assert.deepEqual(error.toOpenRouter(), {
+		error: {
+			code: 502,
+			message:
+				"The service is temporarily unavailable. Please try again later.",
+		},
+	});
+});
+
 test("allows status override and recognizes instances", () => {
 	const err = new GatewayError({
 		class: "server",

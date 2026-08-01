@@ -5,6 +5,7 @@ import type { TranscriptionProfile } from "#core/audio.ts";
 import type { OperationId } from "#operations/registry.ts";
 import type { ImageModelProfile } from "#core/images.ts";
 import type { VideoModelProfile } from "#core/videos.ts";
+import type { RerankProfile } from "#core/rerank.ts";
 
 interface TextGenerateProfile {
 	// Client contract.
@@ -54,6 +55,7 @@ export interface OperationProfiles {
 	"video.generate"?: VideoModelProfile;
 	"audio.transcribe"?: TranscriptionProfile;
 	"embedding.create"?: EmbeddingProfile;
+	rerank?: RerankProfile;
 }
 
 export type TransportOverrides = Partial<Record<OperationId, string>>;

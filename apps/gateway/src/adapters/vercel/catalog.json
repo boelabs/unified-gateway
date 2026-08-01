@@ -913,6 +913,60 @@
 				]
 			}
 		},
+		"alibaba/qwen3.7-flash": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 991000,
+					"maxOutputTokens": 64000,
+					"modalities": {
+						"input": ["image", "pdf", "text"],
+						"output": ["text"]
+					},
+					"contracts": ["chat.completions", "responses"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"stop": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true
+					},
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"]
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 3,
+				"outputCentsPerMTokens": 13,
+				"cacheReadCentsPerMTokens": 0.6,
+				"cacheWriteCentsPerMTokens": 3.8,
+				"tiers": [
+					{
+						"aboveInputTokens": 32000,
+						"inputCentsPerMTokens": 10,
+						"outputCentsPerMTokens": 40,
+						"cacheReadCentsPerMTokens": 2,
+						"cacheWriteCentsPerMTokens": 12.5
+					},
+					{
+						"aboveInputTokens": 256000,
+						"inputCentsPerMTokens": 20,
+						"outputCentsPerMTokens": 80,
+						"cacheReadCentsPerMTokens": 4,
+						"cacheWriteCentsPerMTokens": 25
+					}
+				]
+			}
+		},
 		"alibaba/qwen3.7-max": {
 			"operations": {
 				"text.generate": {
@@ -2125,6 +2179,45 @@
 				"inputCentsPerMTokens": 12
 			}
 		},
+		"cohere/rerank-v3.5": {
+			"operations": {
+				"rerank": {
+					"documentModalities": ["text"],
+					"maxDocuments": 1000,
+					"maxTokensPerDocument": 4096,
+					"documentsPerSearchUnit": 100
+				}
+			},
+			"pricing": {
+				"searchUnitCents": 0.1
+			}
+		},
+		"cohere/rerank-v4-fast": {
+			"operations": {
+				"rerank": {
+					"documentModalities": ["text"],
+					"maxDocuments": 1000,
+					"maxTokensPerDocument": 32000,
+					"documentsPerSearchUnit": 100
+				}
+			},
+			"pricing": {
+				"searchUnitCents": 0.2
+			}
+		},
+		"cohere/rerank-v4-pro": {
+			"operations": {
+				"rerank": {
+					"documentModalities": ["text"],
+					"maxDocuments": 1000,
+					"maxTokensPerDocument": 32000,
+					"documentsPerSearchUnit": 100
+				}
+			},
+			"pricing": {
+				"searchUnitCents": 0.25
+			}
+		},
 		"deepseek/deepseek-r1": {
 			"operations": {
 				"text.generate": {
@@ -2305,7 +2398,7 @@
 					"capabilities": {
 						"tools": true,
 						"vision": false,
-						"reasoning": true,
+						"reasoning": false,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 128000,
@@ -2316,17 +2409,11 @@
 					},
 					"contracts": ["chat.completions", "responses"],
 					"parameters": {
-						"include_reasoning": true,
 						"max_tokens": true,
-						"reasoning": true,
 						"stop": true,
 						"temperature": true,
 						"tool_choice": true,
 						"tools": true
-					},
-					"reasoning": {
-						"kind": "fixed",
-						"levels": ["high"]
 					}
 				}
 			},
@@ -2370,6 +2457,43 @@
 			"pricing": {
 				"inputCentsPerMTokens": 14,
 				"outputCentsPerMTokens": 28,
+				"cacheReadCentsPerMTokens": 0.28
+			}
+		},
+		"deepseek/deepseek-v4-flash-0731": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": false,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 384000,
+					"modalities": {
+						"input": ["text"],
+						"output": ["text"]
+					},
+					"contracts": ["chat.completions", "responses"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"stop": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true
+					},
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"]
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 13,
+				"outputCentsPerMTokens": 26,
 				"cacheReadCentsPerMTokens": 2.8
 			}
 		},
@@ -2454,14 +2578,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": false,
-						"vision": false,
+						"vision": true,
 						"reasoning": false,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 32768,
 					"maxOutputTokens": 65536,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["image", "text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -2472,6 +2596,13 @@
 					}
 				},
 				"image.generate": {
+					"outputFormats": ["png", "jpeg", "webp"],
+					"responseFormats": ["b64_json"],
+					"autoSize": {},
+					"nativeOutputFormat": false,
+					"nativeOutputCompression": false
+				},
+				"image.edit": {
 					"outputFormats": ["png", "jpeg", "webp"],
 					"responseFormats": ["b64_json"],
 					"autoSize": {},
@@ -2620,14 +2751,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": false,
-						"vision": false,
+						"vision": true,
 						"reasoning": false,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 65536,
 					"maxOutputTokens": 32768,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["image", "text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -2643,58 +2774,19 @@
 					"autoSize": {},
 					"nativeOutputFormat": false,
 					"nativeOutputCompression": false
+				},
+				"image.edit": {
+					"outputFormats": ["png", "jpeg", "webp"],
+					"responseFormats": ["b64_json"],
+					"autoSize": {},
+					"nativeOutputFormat": false,
+					"nativeOutputCompression": false
 				}
 			},
 			"pricing": {
 				"inputCentsPerMTokens": 200,
 				"outputCentsPerMTokens": 1200,
 				"cacheReadCentsPerMTokens": 20
-			}
-		},
-		"google/gemini-3-pro-preview": {
-			"operations": {
-				"text.generate": {
-					"capabilities": {
-						"tools": true,
-						"vision": true,
-						"reasoning": true,
-						"structuredOutputs": false
-					},
-					"maxInputTokens": 1000000,
-					"maxOutputTokens": 64000,
-					"modalities": {
-						"input": ["image", "pdf", "text"],
-						"output": ["text"]
-					},
-					"contracts": ["chat.completions", "responses"],
-					"parameters": {
-						"include_reasoning": true,
-						"max_tokens": true,
-						"reasoning": true,
-						"reasoning_effort": true,
-						"stop": true,
-						"temperature": true,
-						"tool_choice": true,
-						"tools": true
-					},
-					"reasoning": {
-						"kind": "openai_effort",
-						"levels": ["low", "high"]
-					}
-				}
-			},
-			"pricing": {
-				"inputCentsPerMTokens": 200,
-				"outputCentsPerMTokens": 1200,
-				"cacheReadCentsPerMTokens": 20,
-				"tiers": [
-					{
-						"aboveInputTokens": 200001,
-						"inputCentsPerMTokens": 400,
-						"outputCentsPerMTokens": 1800,
-						"cacheReadCentsPerMTokens": 40
-					}
-				]
 			}
 		},
 		"google/gemini-3.1-flash-image": {
@@ -3372,14 +3464,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": true,
-						"vision": false,
+						"vision": true,
 						"reasoning": true,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 256000,
 					"maxOutputTokens": 80000,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -3477,14 +3569,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": true,
-						"vision": false,
+						"vision": true,
 						"reasoning": true,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 256000,
 					"maxOutputTokens": 80000,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -4217,14 +4309,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": true,
-						"vision": false,
+						"vision": true,
 						"reasoning": false,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 128000,
 					"maxOutputTokens": 4000,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -4247,14 +4339,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": true,
-						"vision": false,
+						"vision": true,
 						"reasoning": false,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 128000,
 					"maxOutputTokens": 4000,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -4385,14 +4477,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": true,
-						"vision": false,
+						"vision": true,
 						"reasoning": false,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 128000,
 					"maxOutputTokens": 128000,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -5313,7 +5405,7 @@
 			"pricing": {
 				"inputCentsPerMTokens": 125,
 				"outputCentsPerMTokens": 1000,
-				"cacheReadCentsPerMTokens": 12.5
+				"cacheReadCentsPerMTokens": 13
 			}
 		},
 		"openai/gpt-5-mini": {
@@ -5462,7 +5554,7 @@
 			"pricing": {
 				"inputCentsPerMTokens": 125,
 				"outputCentsPerMTokens": 1000,
-				"cacheReadCentsPerMTokens": 12.5
+				"cacheReadCentsPerMTokens": 13
 			}
 		},
 		"openai/gpt-5.1-codex-max": {
@@ -5538,7 +5630,7 @@
 			"pricing": {
 				"inputCentsPerMTokens": 25,
 				"outputCentsPerMTokens": 200,
-				"cacheReadCentsPerMTokens": 2.5
+				"cacheReadCentsPerMTokens": 3
 			}
 		},
 		"openai/gpt-5.1-instant": {
@@ -5569,7 +5661,7 @@
 			"pricing": {
 				"inputCentsPerMTokens": 125,
 				"outputCentsPerMTokens": 1000,
-				"cacheReadCentsPerMTokens": 12.5
+				"cacheReadCentsPerMTokens": 13
 			}
 		},
 		"openai/gpt-5.1-thinking": {
@@ -6081,17 +6173,17 @@
 				}
 			},
 			"pricing": {
-				"inputCentsPerMTokens": 100,
-				"outputCentsPerMTokens": 600,
-				"cacheReadCentsPerMTokens": 10,
-				"cacheWriteCentsPerMTokens": 125,
+				"inputCentsPerMTokens": 20,
+				"outputCentsPerMTokens": 120,
+				"cacheReadCentsPerMTokens": 2,
+				"cacheWriteCentsPerMTokens": 25,
 				"tiers": [
 					{
 						"aboveInputTokens": 272000,
-						"inputCentsPerMTokens": 200,
-						"outputCentsPerMTokens": 900,
-						"cacheReadCentsPerMTokens": 20,
-						"cacheWriteCentsPerMTokens": 250
+						"inputCentsPerMTokens": 40,
+						"outputCentsPerMTokens": 180,
+						"cacheReadCentsPerMTokens": 4,
+						"cacheWriteCentsPerMTokens": 50
 					}
 				]
 			}
@@ -6177,17 +6269,17 @@
 				}
 			},
 			"pricing": {
-				"inputCentsPerMTokens": 250,
-				"outputCentsPerMTokens": 1500,
-				"cacheReadCentsPerMTokens": 25,
-				"cacheWriteCentsPerMTokens": 312.5,
+				"inputCentsPerMTokens": 200,
+				"outputCentsPerMTokens": 1200,
+				"cacheReadCentsPerMTokens": 20,
+				"cacheWriteCentsPerMTokens": 250,
 				"tiers": [
 					{
 						"aboveInputTokens": 272000,
-						"inputCentsPerMTokens": 500,
-						"outputCentsPerMTokens": 2250,
-						"cacheReadCentsPerMTokens": 50,
-						"cacheWriteCentsPerMTokens": 625
+						"inputCentsPerMTokens": 400,
+						"outputCentsPerMTokens": 1800,
+						"cacheReadCentsPerMTokens": 40,
+						"cacheWriteCentsPerMTokens": 500
 					}
 				]
 			}
@@ -6677,14 +6769,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": false,
-						"vision": false,
+						"vision": true,
 						"reasoning": true,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 127000,
 					"maxOutputTokens": 8000,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -6936,14 +7028,14 @@
 				"text.generate": {
 					"capabilities": {
 						"tools": true,
-						"vision": false,
+						"vision": true,
 						"reasoning": true,
 						"structuredOutputs": false
 					},
 					"maxInputTokens": 262114,
 					"maxOutputTokens": 262114,
 					"modalities": {
-						"input": ["text"],
+						"input": ["image", "text"],
 						"output": ["text"]
 					},
 					"contracts": ["chat.completions", "responses"],
@@ -7080,6 +7172,67 @@
 				"inputCentsPerMTokens": 100,
 				"outputCentsPerMTokens": 405,
 				"cacheReadCentsPerMTokens": 17
+			}
+		},
+		"thinkingmachines/inkling-small": {
+			"operations": {
+				"text.generate": {
+					"capabilities": {
+						"tools": true,
+						"vision": true,
+						"reasoning": true,
+						"structuredOutputs": false
+					},
+					"maxInputTokens": 1000000,
+					"maxOutputTokens": 1000000,
+					"modalities": {
+						"input": ["image", "pdf", "text"],
+						"output": ["text"]
+					},
+					"contracts": ["chat.completions", "responses"],
+					"parameters": {
+						"include_reasoning": true,
+						"max_tokens": true,
+						"reasoning": true,
+						"stop": true,
+						"temperature": true,
+						"tool_choice": true,
+						"tools": true
+					},
+					"reasoning": {
+						"kind": "fixed",
+						"levels": ["high"]
+					}
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 50,
+				"outputCentsPerMTokens": 120,
+				"cacheReadCentsPerMTokens": 10
+			}
+		},
+		"voyage/rerank-2.5": {
+			"operations": {
+				"rerank": {
+					"documentModalities": ["text"],
+					"maxDocuments": 1000,
+					"maxTokensPerDocument": 32000
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 5
+			}
+		},
+		"voyage/rerank-2.5-lite": {
+			"operations": {
+				"rerank": {
+					"documentModalities": ["text"],
+					"maxDocuments": 1000,
+					"maxTokensPerDocument": 32000
+				}
+			},
+			"pricing": {
+				"inputCentsPerMTokens": 2
 			}
 		},
 		"voyage/voyage-3-large": {
@@ -8120,9 +8273,8 @@
 				}
 			},
 			"pricing": {
-				"inputCentsPerMTokens": 95,
-				"outputCentsPerMTokens": 315,
-				"cacheReadCentsPerMTokens": 20
+				"inputCentsPerMTokens": 100,
+				"outputCentsPerMTokens": 320
 			}
 		},
 		"zai/glm-5-turbo": {
@@ -8196,8 +8348,8 @@
 				}
 			},
 			"pricing": {
-				"inputCentsPerMTokens": 130,
-				"outputCentsPerMTokens": 430,
+				"inputCentsPerMTokens": 140,
+				"outputCentsPerMTokens": 440,
 				"cacheReadCentsPerMTokens": 26
 			}
 		},
@@ -8210,7 +8362,7 @@
 						"reasoning": true,
 						"structuredOutputs": false
 					},
-					"maxInputTokens": 1040000,
+					"maxInputTokens": 1000000,
 					"maxOutputTokens": 128000,
 					"modalities": {
 						"input": ["text"],
@@ -8234,9 +8386,9 @@
 				}
 			},
 			"pricing": {
-				"inputCentsPerMTokens": 140,
-				"outputCentsPerMTokens": 440,
-				"cacheReadCentsPerMTokens": 26
+				"inputCentsPerMTokens": 110,
+				"outputCentsPerMTokens": 385.1,
+				"cacheReadCentsPerMTokens": 27.5
 			}
 		},
 		"zai/glm-5.2-fast": {

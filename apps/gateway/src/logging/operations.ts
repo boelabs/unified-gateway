@@ -494,7 +494,9 @@ export function completeOperation(
 		outcome === "blocked";
 	const attempts = (input.attempts ?? []) as LegacyAttempt[];
 	const knownUpstreamCost = attempts.reduce(
-		(total, attempt) => total + (attempt.estimatedCostCents ?? 0),
+		(total, attempt) =>
+			total +
+			(attempt.usage?.providerCostCents ?? attempt.estimatedCostCents ?? 0),
 		0,
 	);
 	const upstreamBytes = attempts.reduce(
@@ -538,6 +540,7 @@ export function completeOperation(
 							cacheReadTokens: input.usage?.cacheReadTokens ?? null,
 							cacheWriteTokens: input.usage?.cacheWriteTokens ?? null,
 							totalTokens: input.usage?.totalTokens ?? null,
+							searchUnits: input.usage?.searchUnits ?? null,
 							consumerCostCents: input.cost?.totalCents.toFixed(10) ?? null,
 							upstreamCostCents:
 								(attempts.length > 0
@@ -661,6 +664,7 @@ export function completeOperation(
 										cacheReadTokens: attempt.usage?.cacheReadTokens ?? null,
 										cacheWriteTokens: attempt.usage?.cacheWriteTokens ?? null,
 										totalTokens: attempt.usage?.totalTokens ?? null,
+										searchUnits: attempt.usage?.searchUnits ?? null,
 										lastProgressAt: new Date(
 											attempt.lastProgressAt ?? endedAt.getTime(),
 										),
@@ -722,6 +726,7 @@ export function completeOperation(
 									cacheReadTokens: sql`excluded.cache_read_tokens`,
 									cacheWriteTokens: sql`excluded.cache_write_tokens`,
 									totalTokens: sql`excluded.total_tokens`,
+									searchUnits: sql`excluded.search_units`,
 									lastProgressAt: sql`excluded.last_progress_at`,
 									startedAt: sql`excluded.started_at`,
 									endedAt: sql`excluded.ended_at`,

@@ -9,6 +9,7 @@ import { openaicompatibleProvider } from "./openaicompatible/index.ts";
 import { azurefoundryProvider } from "./azurefoundry/index.ts";
 import { loadProviderCatalog } from "#catalog/jsonCatalog.ts";
 import { azureopenaiProvider } from "./azureopenai/index.ts";
+import { openrouterProvider } from "./openrouter/index.ts";
 import type { Adapter, ProviderModule } from "./types.ts";
 import { anthropicProvider } from "./anthropic/index.ts";
 import { deepseekProvider } from "./deepseek/index.ts";
@@ -69,6 +70,10 @@ const PROVIDER_REGISTRATIONS: readonly ProviderRegistration[] = [
 	{
 		provider: vercelProvider,
 		catalogUrl: new URL("./vercel/catalog.json", import.meta.url),
+	},
+	{
+		provider: openrouterProvider,
+		catalogUrl: new URL("./openrouter/catalog.json", import.meta.url),
 	},
 ];
 

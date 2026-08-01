@@ -40,3 +40,47 @@ test("budget reasoning requires an explicit token budget for max", () => {
 		true,
 	);
 });
+
+test("rerank profiles are strict, text-ready, and reserve image sources coherently", () => {
+	const base = {
+		operations: {
+			rerank: {
+				documentModalities: ["text"],
+				maxDocuments: 1_000,
+				maxQueryBytes: 1_024,
+				maxDocumentBytes: 2_048,
+				maxTotalDocumentBytes: 4_096,
+				maxTokensPerDocument: 4_096,
+				maxTotalTokens: 32_768,
+				documentsPerSearchUnit: 100,
+			},
+		},
+		pricing: { searchUnitCents: 0.1 },
+	};
+	assert.equal(customCatalogEntrySchema.safeParse(base).success, true);
+	assert.equal(
+		customCatalogEntrySchema.safeParse({
+			...base,
+			operations: {
+				rerank: {
+					...base.operations.rerank,
+					imageSources: ["url"],
+				},
+			},
+		}).success,
+		false,
+	);
+	assert.equal(
+		customCatalogEntrySchema.safeParse({
+			...base,
+			operations: {
+				rerank: {
+					...base.operations.rerank,
+					documentModalities: ["text", "image"],
+					imageSources: ["url", "data_url"],
+				},
+			},
+		}).success,
+		true,
+	);
+});

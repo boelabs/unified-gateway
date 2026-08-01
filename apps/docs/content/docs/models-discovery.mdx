@@ -54,11 +54,11 @@ Aggregation rules:
 
 - **`architecture`** — the union of input/output modalities across every operation every deployment in
   the pool supports (vision-capable text models add `image` to input; embedding models add `embedding`
-  to output; and so on).
+  to output; rerank models add `rerank` to output; and so on).
 - **`top_provider`** — the **maximum** context length and max output tokens across the pool (the most
   capable deployment behind this name).
-- **`pricing`** — the **minimum** (cheapest) rate across the pool, converted to USD per token
-  (the gateway's internal unit is cents per 1M tokens).
+- **`pricing`** — the **minimum** (cheapest) rate across the pool, converted to USD per token;
+  rerank search-unit pricing is exposed as `search_unit` in USD per unit.
 - **`operations`** — the union of operation ids the pool supports, each with its public endpoint path(s).
 - **`supported_parameters`** — the union of parameter names any deployment in the pool declares as
   supported (see [Parameter policy](/docs/parameter-policy) for what "supported" means).
