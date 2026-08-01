@@ -4,9 +4,13 @@
  * `bun run test:integration`. Creates rows with unique names and deletes them at the end.
  */
 
+import { gatewayOperations, upstreamAttempts } from "#db/schema.ts";
+import { operationSummary } from "#db/repos/operations.ts";
 import { pgAvailable } from "#test-support/infra.ts";
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
+import { db } from "#db/client.ts";
+import { eq } from "drizzle-orm";
 import { test } from "node:test";
 
 import {
@@ -127,5 +131,47 @@ test("response_states: store=false rows are invisible to item lookup", {
 		assert.equal(await findResponseItemByIdForScope(itemId, vkId), undefined);
 	} finally {
 		await deleteExpiredResponseStates(new Date(Date.now() + 10 ** 12));
+	}
+});
+
+test("observability summary counts operations with protocol failures", {
+	skip,
+}, async () => {
+	const operationId = randomUUID();
+	const startedAt = new Date();
+	await db.insert(gatewayOperations).values({
+		id: operationId,
+		requestId: randomUUID(),
+		publicModel: "itest-protocol-summary",
+		callType: "responses",
+		lifecycleState: "finished",
+		outcome: "error",
+		degraded: true,
+		startedAt,
+		endedAt: startedAt,
+	});
+	await db.insert(upstreamAttempts).values({
+		operationId,
+		ordinal: 1,
+		adapterKey: "googleaistudio",
+		outcome: "error",
+		failureOwner: "provider",
+		failureKind: "protocol",
+		failurePhase: "streaming",
+		startedAt,
+		endedAt: startedAt,
+	});
+	try {
+		const summary = await operationSummary(
+			new Date(startedAt.getTime() - 1_000),
+		);
+		assert.ok(Number(summary.totals.protocolErrors) >= 1);
+	} finally {
+		await db
+			.delete(upstreamAttempts)
+			.where(eq(upstreamAttempts.operationId, operationId));
+		await db
+			.delete(gatewayOperations)
+			.where(eq(gatewayOperations.id, operationId));
 	}
 });

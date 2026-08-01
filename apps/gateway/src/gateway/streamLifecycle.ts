@@ -264,7 +264,6 @@ export function observeChatStream(
 		items: (async function* () {
 			let finish: CanonicalFinishReason | null = null;
 			let adapterTerminal: AdapterDiagnostics["terminal"];
-			let terminalFrames = 0;
 			let terminalSeen = false;
 			let usage: Usage | null = null;
 			let progressDeadline = policy ? Date.now() + policy.firstOutputMs : null;
@@ -296,9 +295,15 @@ export function observeChatStream(
 				const diagnostics = adapterDiagnostics(chunk);
 				if (diagnostics) {
 					if (diagnostics.terminal) {
-						if (adapterTerminal)
+						// Some upstreams repeat the same terminal evidence on a trailing usage or
+						// metadata frame. Collapse equivalent evidence, but never contradictions.
+						if (
+							adapterTerminal &&
+							(adapterTerminal.outcome !== diagnostics.terminal.outcome ||
+								adapterTerminal.reason !== diagnostics.terminal.reason)
+						)
 							throw protocolError(
-								"Upstream stream emitted more than one adapter terminal",
+								"Upstream stream emitted conflicting adapter terminals",
 							);
 						adapterTerminal = diagnostics.terminal;
 					}
@@ -329,13 +334,10 @@ export function observeChatStream(
 				const frameReasons = chunk.choices
 					.map((choice) => choice.finishReason)
 					.filter((reason): reason is CanonicalFinishReason => reason !== null);
+				// A repeated, equivalent finish reason is idempotent wire evidence. The
+				// observation below still exposes exactly one normalized terminal.
 				if (frameReasons.length > 0) {
-					terminalFrames += 1;
 					terminalSeen = true;
-					if (terminalFrames > 1)
-						throw protocolError(
-							"Upstream stream emitted more than one terminal frame",
-						);
 				}
 				for (const choice of chunk.choices) {
 					if (choice.finishReason !== null) {

@@ -11,7 +11,7 @@ import {
 
 const chunk = (
 	content: string | undefined,
-	finishReason: "stop" | "content_filter" | null = null,
+	finishReason: "stop" | "tool_calls" | "content_filter" | null = null,
 ): CanonicalChatStreamChunk => ({
 	id: "response-1",
 	created: 1,
@@ -86,10 +86,28 @@ describe("observeChatStream", () => {
 		}
 	});
 
-	test("rejects a second terminal frame", async () => {
+	test("coalesces repeated compatible terminal evidence", async () => {
 		async function* source() {
 			yield chunk(undefined, "stop");
+			yield {
+				...chunk(undefined, "stop"),
+				usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3 },
+			};
+		}
+		const observed = observeChatStream(source());
+		assert.equal((await drain(observed.items)).length, 2);
+		assert.equal(observed.observation.usageFrames, 1);
+		assert.deepEqual(observed.observation.terminal, {
+			outcome: "completed",
+			reason: "stop",
+			usage: { promptTokens: 2, completionTokens: 1, totalTokens: 3 },
+		});
+	});
+
+	test("rejects conflicting terminal evidence", async () => {
+		async function* source() {
 			yield chunk(undefined, "stop");
+			yield chunk(undefined, "content_filter");
 		}
 		await assert.rejects(
 			() => drain(observeChatStream(source()).items),

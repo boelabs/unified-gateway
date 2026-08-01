@@ -1,4 +1,5 @@
 import type { CanonicalEmbeddingsRequest } from "#core/embeddings.ts";
+import { observeChatStream } from "#gateway/streamLifecycle.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
 import type { AdapterContext } from "#adapters/types.ts";
 import { isUsageConsistent } from "#core/usage.ts";
@@ -805,6 +806,29 @@ test("google.parseStream: deltas + usage final", async () => {
 	assert.equal(out.join(""), "Hello");
 	assert.equal(firstHadRole, true);
 	assert.equal(usageTotal, 5);
+});
+
+test("google.parseStream: repeated STOP after a tool call remains one tool terminal", async () => {
+	const sse =
+		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call-1","name":"search_web","args":{"queries":["example"]}}}],"role":"model"},"finishReason":"STOP","index":0}]}` +
+		"\n\n" +
+		`data: {"candidates":[{"content":{"parts":[]},"finishReason":"STOP","index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}` +
+		"\n\n";
+	const observed = observeChatStream(
+		googleAdapter.chat!.parseStream(new Response(sse).body!, ctx),
+	);
+	const chunks = [];
+	for await (const chunk of observed.items) chunks.push(chunk);
+
+	assert.deepEqual(
+		chunks.map((chunk) => chunk.choices[0]?.finishReason),
+		["tool_calls", "tool_calls"],
+	);
+	assert.deepEqual(observed.observation.terminal, {
+		outcome: "completed",
+		reason: "tool_calls",
+		usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+	});
 });
 
 test("google.buildRequest: a client-echoed suffixed id arrives clean via the contract", async () => {

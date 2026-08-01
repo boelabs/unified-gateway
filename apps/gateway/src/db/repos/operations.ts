@@ -137,53 +137,71 @@ export async function operationSummary(since: Date) {
 		.select({ value: count() })
 		.from(gatewayOperations)
 		.where(eq(gatewayOperations.lifecycleState, "in_progress"));
-	const [totals, byModel, byAdapter, byDeployment] = await Promise.all([
-		db
-			.select({
-				requests: count(),
-				stalls: sql<number>`count(*) filter (where ${gatewayOperations.firstOutputMs} > 30000 or ${gatewayOperations.maxInterEventGapMs} > 30000 or exists (select 1 from ${upstreamAttempts} a where a.operation_id = ${gatewayOperations.id} and a.failure_kind = 'timeout' and a.failure_phase = 'first_progress'))::int`,
-				retried: sql<number>`count(*) filter (where exists (select 1 from ${upstreamAttempts} a where a.operation_id = ${gatewayOperations.id} and a.ordinal > 1))::int`,
-				abandoned: sql<number>`count(*) filter (where ${gatewayOperations.outcome} = 'abandoned')::int`,
-				degraded: sql<number>`count(*) filter (where ${gatewayOperations.degraded})::int`,
-				cancelled: sql<number>`count(*) filter (where ${gatewayOperations.outcome} = 'cancelled')::int`,
-				protocolErrors: sql<number>`count(*) filter (where exists (select 1 from ${upstreamAttempts} a where a.operation_id = ${gatewayOperations.id} and a.failure_kind = 'protocol'))::int`,
-				unverifiedTerminalOutcomes: sql<number>`count(*) filter (where ${gatewayOperations.outcome} in ('success', 'incomplete', 'blocked') and not ${gatewayOperations.terminalVerified})::int`,
-				p95FirstOutputMs: sql<
-					number | null
-				>`percentile_cont(0.95) within group (order by ${gatewayOperations.firstOutputMs})`,
-			})
-			.from(gatewayOperations)
-			.where(gte(gatewayOperations.startedAt, since)),
-		db
-			.select({ key: gatewayOperations.publicModel, requests: count() })
-			.from(gatewayOperations)
-			.where(gte(gatewayOperations.startedAt, since))
-			.groupBy(gatewayOperations.publicModel),
-		db
-			.select({ key: upstreamAttempts.adapterKey, attempts: count() })
-			.from(upstreamAttempts)
-			.where(gte(upstreamAttempts.startedAt, since))
-			.groupBy(upstreamAttempts.adapterKey),
-		db
-			.select({ key: upstreamAttempts.deploymentId, attempts: count() })
-			.from(upstreamAttempts)
-			.where(gte(upstreamAttempts.startedAt, since))
-			.groupBy(upstreamAttempts.deploymentId),
-	]);
+	const [totals, byModel, byAdapter, byDeployment, protocolErrorOperations] =
+		await Promise.all([
+			db
+				.select({
+					requests: count(),
+					stalls: sql<number>`count(*) filter (where ${gatewayOperations.firstOutputMs} > 30000 or ${gatewayOperations.maxInterEventGapMs} > 30000 or exists (select 1 from ${upstreamAttempts} a where a.operation_id = ${gatewayOperations.id} and a.failure_kind = 'timeout' and a.failure_phase = 'first_progress'))::int`,
+					retried: sql<number>`count(*) filter (where exists (select 1 from ${upstreamAttempts} a where a.operation_id = ${gatewayOperations.id} and a.ordinal > 1))::int`,
+					abandoned: sql<number>`count(*) filter (where ${gatewayOperations.outcome} = 'abandoned')::int`,
+					degraded: sql<number>`count(*) filter (where ${gatewayOperations.degraded})::int`,
+					cancelled: sql<number>`count(*) filter (where ${gatewayOperations.outcome} = 'cancelled')::int`,
+					unverifiedTerminalOutcomes: sql<number>`count(*) filter (where ${gatewayOperations.outcome} in ('success', 'incomplete', 'blocked') and not ${gatewayOperations.terminalVerified})::int`,
+					p95FirstOutputMs: sql<
+						number | null
+					>`percentile_cont(0.95) within group (order by ${gatewayOperations.firstOutputMs})`,
+				})
+				.from(gatewayOperations)
+				.where(gte(gatewayOperations.startedAt, since)),
+			db
+				.select({ key: gatewayOperations.publicModel, requests: count() })
+				.from(gatewayOperations)
+				.where(gte(gatewayOperations.startedAt, since))
+				.groupBy(gatewayOperations.publicModel),
+			db
+				.select({ key: upstreamAttempts.adapterKey, attempts: count() })
+				.from(upstreamAttempts)
+				.where(gte(upstreamAttempts.startedAt, since))
+				.groupBy(upstreamAttempts.adapterKey),
+			db
+				.select({ key: upstreamAttempts.deploymentId, attempts: count() })
+				.from(upstreamAttempts)
+				.where(gte(upstreamAttempts.startedAt, since))
+				.groupBy(upstreamAttempts.deploymentId),
+			db
+				.select({
+					value: sql<number>`count(distinct ${upstreamAttempts.operationId})::int`,
+				})
+				.from(upstreamAttempts)
+				.innerJoin(
+					gatewayOperations,
+					eq(upstreamAttempts.operationId, gatewayOperations.id),
+				)
+				.where(
+					and(
+						gte(gatewayOperations.startedAt, since),
+						eq(upstreamAttempts.failureKind, "protocol"),
+					),
+				),
+		]);
+	const totalMetrics = totals[0] ?? {
+		requests: 0,
+		stalls: 0,
+		retried: 0,
+		abandoned: 0,
+		degraded: 0,
+		cancelled: 0,
+		unverifiedTerminalOutcomes: 0,
+		p95FirstOutputMs: null,
+	};
 	return {
 		since,
 		active: Number(active?.value ?? 0),
 		outcomes: rows,
-		totals: totals[0] ?? {
-			requests: 0,
-			stalls: 0,
-			retried: 0,
-			abandoned: 0,
-			degraded: 0,
-			cancelled: 0,
-			protocolErrors: 0,
-			unverifiedTerminalOutcomes: 0,
-			p95FirstOutputMs: null,
+		totals: {
+			...totalMetrics,
+			protocolErrors: Number(protocolErrorOperations[0]?.value ?? 0),
 		},
 		groups: { models: byModel, adapters: byAdapter, deployments: byDeployment },
 	};
