@@ -28,7 +28,12 @@ import "#adapters/index.ts";
 const hasInfra = (await pgAvailable()) && (await redisAvailable());
 const skip = hasInfra ? false : "Postgres/Redis unavailable";
 
-async function waitForOperation(requestId: string) {
+async function waitForOperation(
+	requestId: string,
+	ready?: (
+		operation: NonNullable<Awaited<ReturnType<typeof getOperationDetail>>>,
+	) => boolean,
+) {
 	return eventually(
 		async () => {
 			const page = await listOperationsPage({
@@ -37,7 +42,8 @@ async function waitForOperation(requestId: string) {
 				requestId,
 			});
 			const operation = page.rows[0];
-			return operation ? getOperationDetail(operation.id) : null;
+			const detail = operation ? await getOperationDetail(operation.id) : null;
+			return detail && (!ready || ready(detail)) ? detail : null;
 		},
 		{ description: `gateway_operation ${requestId}` },
 	);
@@ -197,7 +203,10 @@ test("POST /v1/rerank routes OpenRouter preferences, falls back across adapters,
 		assert.equal(openRouterCalls, 1);
 		assert.equal(vercelCalls, 0, "provider preferences must exclude Vercel");
 
-		const operation = await waitForOperation(providerRequestId);
+		const operation = await waitForOperation(
+			providerRequestId,
+			(detail) => detail.attempts[0]?.searchUnits === 1,
+		);
 		assert.equal(operation.callType, "rerank");
 		assert.equal(operation.searchUnits, 1);
 		assert.equal(operation.totalTokens, 0);
