@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
 	extraContentFromProviderSpecificFields,
 	providerSpecificFieldsFromExtraContent,
+	withoutOpenAIResponsesReasoningState,
 	providerSpecificFieldsFromToolCalls,
 	providerFieldsWithOpenAIReasoning,
 	openaiReasoningFromProviderFields,
@@ -146,5 +147,31 @@ test("openai reasoning state: drops malformed or empty items", () => {
 			},
 		}),
 		[{ encrypted_content: "enc" }],
+	);
+});
+
+test("openai reasoning state: native output rendering removes duplicate message state", () => {
+	assert.deepEqual(
+		withoutOpenAIResponsesReasoningState({
+			google: { thought_signature: "sig-a" },
+			openai: {
+				reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+				responses: { reasoning_item_id: "rs_1", sibling: true },
+				other: "kept",
+			},
+		}),
+		{
+			google: { thought_signature: "sig-a" },
+			openai: { responses: { sibling: true }, other: "kept" },
+		},
+	);
+	assert.equal(
+		withoutOpenAIResponsesReasoningState({
+			openai: {
+				reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+				responses: { reasoning_item_id: "rs_1" },
+			},
+		}),
+		undefined,
 	);
 });

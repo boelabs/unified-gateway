@@ -267,18 +267,24 @@ export function openaiReasoningItemIdFromProviderFields(
 	return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
-/** Removes transport-only Responses stream identity before fields reach a public message item. */
-export function withoutOpenAIReasoningStreamMetadata(
+/**
+ * Removes Responses reasoning state that is rendered as native output items before fields reach a
+ * public message item. Keeping a second copy on the message would replay the same reasoning id twice.
+ */
+export function withoutOpenAIResponsesReasoningState(
 	fields: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
 	if (fields === undefined) return undefined;
 	const copy = structuredClone(fields);
 	const openai = recordValue(copy.openai);
+	if (openai !== undefined) delete openai.reasoning;
 	const responses = recordValue(openai?.responses);
-	if (responses === undefined || !("reasoning_item_id" in responses))
-		return copy;
-	delete responses.reasoning_item_id;
-	if (Object.keys(responses).length === 0 && openai !== undefined)
+	if (responses !== undefined) delete responses.reasoning_item_id;
+	if (
+		responses !== undefined &&
+		Object.keys(responses).length === 0 &&
+		openai !== undefined
+	)
 		delete openai.responses;
 	if (openai !== undefined && Object.keys(openai).length === 0)
 		delete copy.openai;

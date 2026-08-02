@@ -1,3 +1,5 @@
+import { responsesEventsToCanonicalChunks } from "./responsesTransport.ts";
+import type { SSEEvent } from "#core/sse.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { z } from "zod";
@@ -983,7 +985,7 @@ test("responses surface: encrypted reasoning round trip (render -> replay -> can
 	});
 });
 
-test("stream->events: accumulated encrypted reasoning emits trailing items before tool calls", async () => {
+test("stream->events: state-only reasoning preserves arrival order before tool calls", async () => {
 	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
 		yield {
 			id: "c",
@@ -1037,6 +1039,192 @@ test("stream->events: accumulated encrypted reasoning emits trailing items befor
 	assert.ok(rs);
 	assert.equal(rs.encrypted_content, "enc-1");
 	assert.equal(rs.id, "rs_1");
+});
+
+test("stream->events: state-only reasoning preserves arrival order before message text", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						providerFields: {
+							openai: {
+								reasoning: [
+									{
+										id: "rs_state_only",
+										encrypted_content: "enc-state-only",
+									},
+								],
+							},
+						},
+					},
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: { content: "Final answer" },
+					finishReason: "stop",
+				},
+			],
+		};
+	}
+
+	const addedOrder: string[] = [];
+	const doneOrder: string[] = [];
+	let completed: TestJsonObject | undefined;
+	for await (const event of canonicalChunksToResponsesEvents(
+		chunks(),
+		renderOpts(),
+	)) {
+		const data = JSON.parse(event.data) as TestJsonObject;
+		if (event.event === "response.output_item.added")
+			addedOrder.push(data.item.type);
+		if (event.event === "response.output_item.done") {
+			doneOrder.push(data.item.type);
+			if (data.item.type === "reasoning") {
+				assert.equal(data.item.id, "rs_state_only");
+				assert.equal(data.item.encrypted_content, "enc-state-only");
+				assert.deepEqual(data.item.summary, []);
+			}
+		}
+		if (event.event === "response.completed") completed = data.response;
+	}
+
+	assert.deepEqual(addedOrder, ["reasoning", "message"]);
+	assert.deepEqual(doneOrder, ["reasoning", "message"]);
+	assert.ok(completed);
+	assert.deepEqual(
+		completed.output.map((item) => item.type),
+		["reasoning", "message"],
+	);
+	assert.equal(
+		"provider_specific_fields" in
+			completed.output.find((item) => item.type === "message")!,
+		false,
+	);
+});
+
+test("responses transport->edge: Azure state-only reasoning stays before the final message", async () => {
+	async function* upstreamEvents(): AsyncGenerator<SSEEvent> {
+		yield {
+			event: "response.created",
+			data: JSON.stringify({
+				response: { id: "resp_azure", model: "gpt-5.6-luna" },
+			}),
+		};
+		yield {
+			event: "response.output_item.added",
+			data: JSON.stringify({
+				output_index: 0,
+				item: { type: "reasoning", id: "rs_azure", summary: [] },
+			}),
+		};
+		yield {
+			event: "response.output_item.done",
+			data: JSON.stringify({
+				output_index: 0,
+				item: {
+					type: "reasoning",
+					id: "rs_azure",
+					summary: [],
+					encrypted_content: "enc-azure",
+				},
+			}),
+		};
+		yield {
+			event: "response.output_item.added",
+			data: JSON.stringify({
+				output_index: 1,
+				item: { type: "message", id: "msg_azure", content: [] },
+			}),
+		};
+		yield {
+			event: "response.output_text.delta",
+			data: JSON.stringify({
+				output_index: 1,
+				item_id: "msg_azure",
+				delta: "Final answer",
+			}),
+		};
+		yield {
+			event: "response.output_item.done",
+			data: JSON.stringify({
+				output_index: 1,
+				item: {
+					type: "message",
+					id: "msg_azure",
+					content: [{ type: "output_text", text: "Final answer" }],
+				},
+			}),
+		};
+		yield {
+			event: "response.completed",
+			data: JSON.stringify({
+				response: {
+					id: "resp_azure",
+					model: "gpt-5.6-luna",
+					status: "completed",
+					output: [
+						{
+							type: "reasoning",
+							id: "rs_azure",
+							summary: [],
+							encrypted_content: "enc-azure",
+						},
+						{
+							type: "message",
+							id: "msg_azure",
+							content: [{ type: "output_text", text: "Final answer" }],
+						},
+					],
+					usage: {
+						input_tokens: 1,
+						output_tokens: 2,
+						total_tokens: 3,
+					},
+				},
+			}),
+		};
+	}
+
+	const publicEvents = canonicalChunksToResponsesEvents(
+		responsesEventsToCanonicalChunks(upstreamEvents()),
+		renderOpts(),
+	);
+	const addedOrder: string[] = [];
+	const doneOrder: string[] = [];
+	let completed: TestJsonObject | undefined;
+	for await (const event of publicEvents) {
+		const data = JSON.parse(event.data) as TestJsonObject;
+		if (event.event === "response.output_item.added")
+			addedOrder.push(data.item.type);
+		if (event.event === "response.output_item.done")
+			doneOrder.push(data.item.type);
+		if (event.event === "response.completed") completed = data.response;
+	}
+
+	assert.deepEqual(addedOrder, ["reasoning", "message"]);
+	assert.deepEqual(doneOrder, ["reasoning", "message"]);
+	assert.ok(completed);
+	assert.deepEqual(
+		completed.output.map((item) => item.type),
+		["reasoning", "message"],
+	);
+	assert.equal(
+		completed.output.filter((item) => item.id === "rs_azure").length,
+		1,
+	);
 });
 
 test("stream->events: native reasoning identity merges visible summary and encrypted state", async () => {
@@ -1121,10 +1309,11 @@ test("stream->events: native reasoning identity merges visible summary and encry
 		completed.output.filter((item) => item.type === "reasoning").length,
 		1,
 	);
-	const messageFields = completed.output.find(
-		(item) => item.type === "message",
-	)!.provider_specific_fields as TestJsonObject;
-	assert.equal("responses" in (messageFields.openai as TestJsonObject), false);
+	assert.equal(
+		"provider_specific_fields" in
+			completed.output.find((item) => item.type === "message")!,
+		false,
+	);
 });
 
 test("response object: every OpenResponses 2.3 required field is present", () => {

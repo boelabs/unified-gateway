@@ -10,7 +10,7 @@ import {
 	openaiReasoningItemIdFromProviderFields,
 	providerSpecificFieldsFromExtraContent,
 	extraContentFromProviderSpecificFields,
-	withoutOpenAIReasoningStreamMetadata,
+	withoutOpenAIResponsesReasoningState,
 	responsesOutputFromProviderFields,
 	providerFieldsWithOpenAIReasoning,
 	openaiReasoningFromProviderFields,
@@ -896,7 +896,7 @@ export function canonicalToResponsesResponse(
 					content,
 					`msg_${randomUUID()}`,
 					choice?.message.phase,
-					choice?.message.providerFields,
+					withoutOpenAIResponsesReasoningState(choice?.message.providerFields),
 				),
 			);
 		for (const tc of choice?.message.toolCalls ?? []) {
@@ -971,15 +971,17 @@ export async function* canonicalChunksToResponsesEvents(
 	let rsIndex = 0;
 	let rsId = `rs_${randomUUID()}`;
 
-	// OpenAI encrypted reasoning state accumulated across deltas (concatenated, deduped by item
-	// id) and emitted as complete reasoning items before the tool-call items.
+	// OpenAI encrypted reasoning state accumulated across deltas. State-only items are emitted at
+	// their arrival point so their native position relative to messages and tool calls is preserved;
+	// state belonging to an open visible summary is held only until that same item can be completed.
 	const reasoningState: OpenAIReasoningStateItem[] = [];
-	const renderedReasoningStateIds = new Set<string>();
+	const renderedReasoningState = new Set<OpenAIReasoningStateItem>();
 	const nativeOutput: Record<string, unknown>[] = [];
 	let messageProviderFields: Record<string, unknown> | undefined;
 	const appendReasoningState = (
 		fields: Record<string, unknown> | undefined,
-	): void => {
+	): OpenAIReasoningStateItem[] => {
+		const appended: OpenAIReasoningStateItem[] = [];
 		for (const item of openaiReasoningFromProviderFields(fields) ?? []) {
 			if (
 				item.id !== undefined &&
@@ -987,7 +989,28 @@ export async function* canonicalChunksToResponsesEvents(
 			)
 				continue;
 			reasoningState.push(item);
+			appended.push(item);
 		}
+		return appended;
+	};
+
+	const reasoningStateEvents = (
+		state: OpenAIReasoningStateItem,
+	): SSEEvent[] => {
+		const item = reasoningStateItems([state], null)[0]!;
+		const outputIndex = nextOutputIndex++;
+		renderedReasoningState.add(state);
+		output.push(item);
+		return [
+			sse("response.output_item.added", next(), {
+				output_index: outputIndex,
+				item,
+			}),
+			sse("response.output_item.done", next(), {
+				output_index: outputIndex,
+				item,
+			}),
+		];
 	};
 
 	const reasoningSummaryDone = (): SSEEvent[] => {
@@ -997,8 +1020,7 @@ export async function* canonicalChunksToResponsesEvents(
 			matchingState === undefined
 				? reasoningItem(reasoning, rsId)
 				: reasoningStateItems([matchingState], reasoning)[0]!;
-		if (matchingState?.id !== undefined)
-			renderedReasoningStateIds.add(matchingState.id);
+		if (matchingState !== undefined) renderedReasoningState.add(matchingState);
 		output.push(item);
 		return [
 			sse("response.reasoning_summary_text.done", next(), {
@@ -1075,6 +1097,21 @@ export async function* canonicalChunksToResponsesEvents(
 				});
 			}
 		}
+		if (delta.providerFields !== undefined) {
+			for (const state of appendReasoningState(delta.providerFields)) {
+				const belongsToOpenSummary =
+					reasoningOpen && state.id !== undefined && state.id === rsId;
+				if (!belongsToOpenSummary) yield* reasoningStateEvents(state);
+			}
+			messageProviderFields = mergeProviderFields(
+				messageProviderFields,
+				withoutOpenAIResponsesReasoningState(delta.providerFields),
+			);
+		}
+		for (const item of responsesOutputFromProviderFields(
+			delta.providerFields,
+		) ?? [])
+			nativeOutput.push(item);
 		if (delta.content) {
 			if (!messageStarted) {
 				if (reasoningOpen) yield* reasoningSummaryDone();
@@ -1118,18 +1155,6 @@ export async function* canonicalChunksToResponsesEvents(
 			if (tc.extraContent !== undefined) cur.extraContent = tc.extraContent;
 			toolCalls.set(tc.index, cur);
 		}
-
-		if (delta.providerFields !== undefined) {
-			appendReasoningState(delta.providerFields);
-			messageProviderFields = mergeProviderFields(
-				messageProviderFields,
-				withoutOpenAIReasoningStreamMetadata(delta.providerFields),
-			);
-		}
-		for (const item of responsesOutputFromProviderFields(
-			delta.providerFields,
-		) ?? [])
-			nativeOutput.push(item);
 	}
 
 	if (reasoningOpen) yield* reasoningSummaryDone();
@@ -1179,13 +1204,10 @@ export async function* canonicalChunksToResponsesEvents(
 		yield* reasoningSummaryDone();
 	}
 
-	// Emit only state items that were not already joined to their live-streamed summary by native
-	// item id. State-only items still precede tool calls so stateless replay preserves ordering.
+	// Defensive terminal fallback for providers that expose encrypted state only in the completed
+	// response. Normal streamed state has already been emitted in native arrival order above.
 	for (const stateItem of reasoningStateItems(
-		reasoningState.filter(
-			(item) =>
-				item.id === undefined || !renderedReasoningStateIds.has(item.id),
-		),
+		reasoningState.filter((item) => !renderedReasoningState.has(item)),
 		null,
 	)) {
 		const stateIndex = nextOutputIndex++;
