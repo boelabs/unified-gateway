@@ -1,7 +1,6 @@
 import type { CanonicalTranscriptionStreamEvent } from "#core/audio.ts";
 import type { CanonicalImageStreamEvent } from "#core/images.ts";
 import type { ExecutionPolicy } from "#core/executionPolicy.ts";
-import { adapterDiagnostics } from "#adapters/diagnostics.ts";
 import type { AdapterDiagnostics } from "#adapters/types.ts";
 import { GatewayError } from "#core/errors.ts";
 import type { Usage } from "#core/usage.ts";
@@ -10,6 +9,11 @@ import type {
 	CanonicalChatStreamChunk,
 	CanonicalFinishReason,
 } from "#core/canonical.ts";
+
+import {
+	attachAdapterDiagnostics,
+	adapterDiagnostics,
+} from "#adapters/diagnostics.ts";
 
 export type CompletionOutcome = "completed" | "incomplete" | "blocked";
 
@@ -262,10 +266,17 @@ export function observeChatStream(
 	return {
 		observation,
 		items: (async function* () {
-			let finish: CanonicalFinishReason | null = null;
 			let adapterTerminal: AdapterDiagnostics["terminal"];
-			let terminalSeen = false;
 			let usage: Usage | null = null;
+			let lastChunk: CanonicalChatStreamChunk | null = null;
+			const choices = new Map<
+				number,
+				{
+					finish: CanonicalFinishReason | null;
+					hasOutput: boolean;
+					hasTool: boolean;
+				}
+			>();
 			let progressDeadline = policy ? Date.now() + policy.firstOutputMs : null;
 			let progressPhase: "first_output" | "idle" = "first_output";
 			let reasoningDeadline: number | null = null;
@@ -287,11 +298,8 @@ export function observeChatStream(
 					break;
 				}
 				const chunk = next.value;
+				lastChunk = chunk;
 				const semantic = chatChunkSemantic(chunk);
-				if (terminalSeen && semantic !== "metadata" && semantic !== "usage")
-					throw protocolError(
-						"Upstream stream emitted semantic output after its terminal frame",
-					);
 				const diagnostics = adapterDiagnostics(chunk);
 				if (diagnostics) {
 					if (diagnostics.terminal) {
@@ -331,32 +339,115 @@ export function observeChatStream(
 					usage = chunk.usage;
 					observation.usage = chunk.usage;
 				}
-				const frameReasons = chunk.choices
-					.map((choice) => choice.finishReason)
-					.filter((reason): reason is CanonicalFinishReason => reason !== null);
-				// A repeated, equivalent finish reason is idempotent wire evidence. The
-				// observation below still exposes exactly one normalized terminal.
-				if (frameReasons.length > 0) {
-					terminalSeen = true;
-				}
 				for (const choice of chunk.choices) {
+					const state = choices.get(choice.index) ?? {
+						finish: null,
+						hasOutput: false,
+						hasTool: false,
+					};
+					const delta = choice.delta;
+					const hasTool = (delta.toolCalls?.length ?? 0) > 0;
+					const hasOutput =
+						hasTool ||
+						(delta.content?.length ?? 0) > 0 ||
+						(delta.reasoning?.length ?? 0) > 0 ||
+						(delta.refusal?.length ?? 0) > 0 ||
+						delta.audio !== undefined;
+					state.hasTool ||= hasTool;
+					state.hasOutput ||= hasOutput;
 					if (choice.finishReason !== null) {
-						if (finish !== null && finish !== choice.finishReason)
+						if (
+							state.finish !== null &&
+							state.finish !== choice.finishReason &&
+							!(
+								[state.finish, choice.finishReason].includes("stop") &&
+								[state.finish, choice.finishReason].includes("tool_calls")
+							)
+						)
 							throw protocolError(
-								"Upstream stream emitted conflicting terminal reasons",
+								`Upstream stream emitted conflicting terminal reasons for choice ${choice.index}`,
 							);
-						finish = choice.finishReason;
+						state.finish =
+							state.finish === "tool_calls" ||
+							choice.finishReason === "tool_calls"
+								? "tool_calls"
+								: choice.finishReason;
 					}
+					choices.set(choice.index, state);
 				}
-				yield chunk;
+
+				// Provider finish reasons are wire evidence, not the public terminal. Holding
+				// them until EOF prevents a provider that repeats or emits finish evidence
+				// before trailing semantic parts from prematurely closing the public stream.
+				if (chunk.choices.some((choice) => choice.finishReason !== null)) {
+					const normalized = {
+						...chunk,
+						choices: chunk.choices.map((choice) => ({
+							...choice,
+							finishReason: null,
+						})),
+					};
+					yield diagnostics
+						? attachAdapterDiagnostics(normalized, diagnostics)
+						: normalized;
+				} else {
+					yield chunk;
+				}
 			}
-			if (finish === null)
+			if (choices.size === 0 || lastChunk === null)
 				throw protocolError(
 					"Upstream stream ended without a semantic terminal",
 				);
+
+			const terminalChoices = [...choices.entries()]
+				.sort(([left], [right]) => left - right)
+				.map(([index, state]) => {
+					if (state.finish === null)
+						throw protocolError(
+							`Upstream stream ended without a terminal reason for choice ${index}`,
+						);
+					const finish =
+						state.hasTool && state.finish === "stop"
+							? "tool_calls"
+							: state.finish;
+					if (
+						!state.hasOutput &&
+						finish === "stop" &&
+						observation.diagnostics?.metadata?.emptyOutputAllowed !== true
+					)
+						throw protocolError(
+							`Upstream stream completed choice ${index} without semantic output`,
+						);
+					if (finish === "tool_calls" && !state.hasTool)
+						throw protocolError(
+							`Upstream stream completed choice ${index} with tool_calls but emitted no tool call`,
+						);
+					return { index, delta: {}, finishReason: finish };
+				});
+			const reasons = terminalChoices.map((choice) => choice.finishReason);
+			const uniqueReasons = new Set(reasons);
 			observation.terminal = adapterTerminal
 				? { ...adapterTerminal, usage }
-				: terminalForFinish(finish, usage);
+				: uniqueReasons.size === 1
+					? terminalForFinish(reasons[0]!, usage)
+					: {
+							outcome: reasons.includes("length")
+								? "incomplete"
+								: reasons.every((reason) => reason === "content_filter")
+									? "blocked"
+									: "completed",
+							reason: "other",
+							usage,
+						};
+			const terminalChunk: CanonicalChatStreamChunk = {
+				id: lastChunk.id,
+				created: lastChunk.created,
+				model: lastChunk.model,
+				choices: terminalChoices,
+			};
+			yield observation.diagnostics
+				? attachAdapterDiagnostics(terminalChunk, observation.diagnostics)
+				: terminalChunk;
 		})(),
 	};
 }

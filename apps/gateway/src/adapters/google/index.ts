@@ -431,17 +431,32 @@ function mapGeminiFinish(
 	reason: unknown,
 	hasToolCalls: boolean,
 ): CanonicalFinishReason | null {
-	if (hasToolCalls) return "tool_calls";
 	switch (reason) {
 		case "STOP":
-			return "stop";
+			return hasToolCalls ? "tool_calls" : "stop";
 		case "MAX_TOKENS":
 			return "length";
 		case "SAFETY":
 		case "RECITATION":
 		case "PROHIBITED_CONTENT":
 		case "BLOCKLIST":
+		case "SPII":
+		case "IMAGE_SAFETY":
+		case "IMAGE_PROHIBITED_CONTENT":
+		case "IMAGE_RECITATION":
 			return "content_filter";
+		case "MALFORMED_FUNCTION_CALL":
+		case "UNEXPECTED_TOOL_CALL":
+		case "TOO_MANY_TOOL_CALLS":
+			throw new GatewayError({
+				class: "server",
+				code: "upstream_invalid_tool_call",
+				message: `Gemini could not produce a valid tool call: ${reason}`,
+				failureKind: "transient",
+				// The model produced a bad candidate, but the credential/deployment is alive.
+				deploymentHealth: "neutral",
+				provider: { body: { finishReason: reason } },
+			});
 		case undefined:
 		case null:
 			return null;
@@ -450,6 +465,8 @@ function mapGeminiFinish(
 				class: "server",
 				code: "upstream_protocol_error",
 				message: `Gemini returned an unknown finish reason: ${String(reason)}`,
+				failureKind: "transient",
+				deploymentHealth: "penalize",
 				provider: { body: { finishReason: reason } },
 			});
 	}
@@ -743,11 +760,34 @@ function parseGeminiEmbeddingsResponse(
 	};
 }
 
+function googleRetryAfterMs(
+	_status: number,
+	body: unknown,
+): number | undefined {
+	const details = (body as { error?: { details?: unknown } })?.error?.details;
+	if (!Array.isArray(details)) return undefined;
+	for (const detail of details) {
+		if (detail === null || typeof detail !== "object") continue;
+		const record = detail as Record<string, unknown>;
+		if (
+			record["@type"] !== "type.googleapis.com/google.rpc.RetryInfo" ||
+			typeof record.retryDelay !== "string"
+		)
+			continue;
+		const match = /^(\d+(?:\.\d+)?)s$/.exec(record.retryDelay);
+		if (!match) continue;
+		const seconds = Number(match[1]);
+		if (Number.isFinite(seconds)) return Math.max(0, Math.ceil(seconds * 1000));
+	}
+	return undefined;
+}
+
 function mapGoogleError(err: unknown): GatewayError {
 	return mapUpstreamHttpError(err, {
 		label: "Google",
 		refineBadRequest: (message) =>
 			looksLikeContextWindowError(message) ? "context_window" : null,
+		retryAfterMs: googleRetryAfterMs,
 	});
 }
 

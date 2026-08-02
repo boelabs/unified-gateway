@@ -33,6 +33,30 @@ test("upstream errors: unusual 4xx request failures do not become server outages
 	assert.equal(error.deploymentHealth, "neutral");
 });
 
+test("upstream errors: provider-body retry hints are a header fallback", () => {
+	const fromBody = mapUpstreamHttpError(
+		{ status: 429, body: { retry: 4200 } },
+		{
+			...mapping,
+			retryAfterMs: (_status, body) => (body as { retry?: number }).retry,
+		},
+	);
+	assert.equal(fromBody.retryAfterMs, 4200);
+
+	const headerWins = mapUpstreamHttpError(
+		{
+			status: 429,
+			body: { retry: 4200 },
+			headers: { "retry-after": "1" },
+		},
+		{
+			...mapping,
+			retryAfterMs: (_status, body) => (body as { retry?: number }).retry,
+		},
+	);
+	assert.equal(headerWins.retryAfterMs, 1000);
+});
+
 test("upstream errors: invalid provider configuration is quarantinable", () => {
 	const error = mapUpstreamHttpError(
 		{

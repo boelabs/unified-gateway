@@ -2,7 +2,12 @@ import { GatewayError } from "#core/errors.ts";
 
 export interface GatewayAbortReason {
 	owner: "client" | "gateway";
-	type: "cancelled" | "timeout" | "settled" | "shutdown";
+	type:
+		| "cancelled"
+		| "timeout"
+		| "settled"
+		| "shutdown"
+		| "downstream_backpressure";
 	phase?: string;
 }
 
@@ -16,10 +21,18 @@ function typedReason(signal: AbortSignal): GatewayAbortReason | null {
 		candidate.type !== "cancelled" &&
 		candidate.type !== "timeout" &&
 		candidate.type !== "settled" &&
-		candidate.type !== "shutdown"
+		candidate.type !== "shutdown" &&
+		candidate.type !== "downstream_backpressure"
 	)
 		return null;
 	return candidate as GatewayAbortReason;
+}
+
+/** An untyped aborted signal is conservatively treated as a client disconnect. */
+export function isClientAbortSignal(signal: AbortSignal): boolean {
+	if (!signal.aborted) return false;
+	const reason = typedReason(signal);
+	return reason === null || reason.owner === "client";
 }
 
 export function abortGatewayError(
@@ -34,6 +47,16 @@ export function abortGatewayError(
 			code: "client_closed_request",
 			message: "Client closed the request before completion",
 			failureKind: "request",
+			deploymentHealth: "neutral",
+			routingScope: "request",
+			retryable: false,
+		});
+	if (reason?.type === "downstream_backpressure")
+		return new GatewayError({
+			class: "server",
+			code: "downstream_backpressure",
+			message: "Downstream client write exceeded its deadline",
+			failureKind: "gateway",
 			deploymentHealth: "neutral",
 			routingScope: "request",
 			retryable: false,

@@ -15,6 +15,14 @@ async function* completedTurn(): AsyncIterable<CanonicalChatStreamChunk> {
 		id: "response_1",
 		created: 1,
 		model: "gpt-5.6",
+		choices: [
+			{ index: 0, delta: { content: "completed" }, finishReason: null },
+		],
+	};
+	yield {
+		id: "response_1",
+		created: 1,
+		model: "gpt-5.6",
 		choices: [{ index: 0, delta: {}, finishReason: "stop" }],
 	};
 }
@@ -266,14 +274,15 @@ test("responses websocket sessions: generate:false stays local for providers wit
 	if (result.kind === "stream") {
 		const chunks: CanonicalChatStreamChunk[] = [];
 		for await (const chunk of result.chunks) chunks.push(chunk);
-		assert.equal(chunks.length, 1);
+		assert.equal(chunks.length, 2);
 		assert.deepEqual(chunks[0]?.choices[0]?.delta, {});
-		assert.equal(chunks[0]?.choices[0]?.finishReason, "stop");
+		assert.equal(chunks[0]?.choices[0]?.finishReason, null);
 		assert.deepEqual(chunks[0]?.usage, {
 			promptTokens: 0,
 			completionTokens: 0,
 			totalTokens: 0,
 		});
+		assert.equal(chunks[1]?.choices[0]?.finishReason, "stop");
 	}
 	sessions.close();
 });

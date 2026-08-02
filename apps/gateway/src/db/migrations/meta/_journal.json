@@ -78,6 +78,13 @@
       "when": 1785601287716,
       "tag": "0010_rerank_execution_policy_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785636768370,
+      "tag": "0011_sturdy_roulette",
+      "breakpoints": true
     }
   ]
 }

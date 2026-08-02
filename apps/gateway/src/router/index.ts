@@ -2,6 +2,7 @@ import { getEffectiveSettings, type EffectiveSettings } from "./settings.ts";
 import type { AdapterContext, AdapterDiagnostics } from "#adapters/types.ts";
 import type { CanonicalTerminal } from "#gateway/streamLifecycle.ts";
 import { beginUpstreamAttempt } from "#logging/operations.ts";
+import { isClientAbortSignal } from "#gateway/abortReason.ts";
 import type { UpstreamTransport } from "#core/transport.ts";
 import { getFallbackPolicy } from "#db/repos/router.ts";
 import type { CallType } from "#core/callType.ts";
@@ -703,7 +704,7 @@ export async function route<T>(
 									attemptRecord.providerBody = streamError.provider.body;
 
 								if (
-									opts.clientSignal.aborted ||
+									isClientAbortSignal(opts.clientSignal) ||
 									streamError.code === "client_closed_request"
 								) {
 									attemptRecord.errorClass = "client_closed_request";
@@ -733,10 +734,22 @@ export async function route<T>(
 								};
 								switch (streamError.failureKind) {
 									case "transient":
-										await settleSideEffects(opts.requestId, [
-											onAttemptFailure(chosen.row.id, true),
-											recordTransientFailure(permit, circuitSettings, cause),
-										]);
+										await settleSideEffects(
+											opts.requestId,
+											streamError.deploymentHealth === "neutral"
+												? [
+														onAttemptFailure(chosen.row.id, false),
+														closeCircuits(permit),
+													]
+												: [
+														onAttemptFailure(chosen.row.id, true),
+														recordTransientFailure(
+															permit,
+															circuitSettings,
+															cause,
+														),
+													],
+										);
 										break;
 									case "configuration":
 										await settleSideEffects(opts.requestId, [
@@ -789,7 +802,7 @@ export async function route<T>(
 					// If the CLIENT cancelled (not an upstream timeout), it is NOT the deployment's fault:
 					// release the inflight, do not count toward allowed_fails/cooldown, and do not retry.
 					// Prevents quickly cancelling requests from putting the deployment pool into cooldown.
-					if (opts.clientSignal.aborted) {
+					if (isClientAbortSignal(opts.clientSignal)) {
 						finishUpstreamAttemptTelemetry(attemptTelemetry, {
 							endedAt: Date.now(),
 							outcome: "cancelled",
@@ -888,6 +901,12 @@ export async function route<T>(
 					};
 					switch (ge.failureKind) {
 						case "transient": {
+							if (ge.deploymentHealth === "neutral") {
+								await onAttemptFailure(chosen.row.id, false);
+								await closeCircuits(permit);
+								neutralCandidateError ??= ge;
+								break;
+							}
 							await onAttemptFailure(chosen.row.id, true);
 							const firstSignal =
 								!countedTransientDeployments.has(chosen.row.id) ||

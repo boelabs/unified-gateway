@@ -494,6 +494,45 @@ test("google.buildRequest: wraps non-object JSON tool outputs in a Struct", () =
 	}
 });
 
+test("google.buildRequest: tool execution failures remain ordinary function responses", () => {
+	const body = JSON.parse(
+		googleAdapter.chat!.buildRequest(
+			{
+				...req,
+				messages: [
+					{ role: "user", content: "search" },
+					{
+						role: "assistant",
+						content: null,
+						toolCalls: [
+							{
+								id: "call-1",
+								name: "search_web",
+								arguments: '{"queries":["example"]}',
+							},
+						],
+					},
+					{
+						role: "tool",
+						toolCallId: "call-1",
+						content:
+							'{"state":"output-error","errorText":"An error occurred."}',
+					},
+				],
+			},
+			ctx,
+		).body!,
+	);
+	assert.deepEqual(body.contents[2].parts[0].functionResponse, {
+		id: "call-1",
+		name: "search_web",
+		response: {
+			state: "output-error",
+			errorText: "An error occurred.",
+		},
+	});
+});
+
 test("google.buildRequest: Gemini 3 recovers unsigned Responses history", async () => {
 	const { responsesRequestSchema } = await import(
 		"#contracts/openai/responses.ts"
@@ -786,6 +825,29 @@ test("google.mapError: generic 400 stays bad_request", () => {
 	assert.equal(ge.class, "bad_request");
 });
 
+test("google.mapError: google.rpc.RetryInfo controls capacity cooldown", () => {
+	const ge = googleAdapter.chat!.mapError(
+		{
+			status: 429,
+			body: {
+				error: {
+					message: "Quota exceeded",
+					details: [
+						{
+							"@type": "type.googleapis.com/google.rpc.RetryInfo",
+							retryDelay: "6.125s",
+						},
+					],
+				},
+			},
+		},
+		ctx,
+	);
+	assert.equal(ge.class, "rate_limit");
+	assert.equal(ge.failureKind, "throttle");
+	assert.equal(ge.retryAfterMs, 6125);
+});
+
 test("google.parseStream: deltas + usage final", async () => {
 	const sse =
 		`data: {"candidates":[{"content":{"parts":[{"text":"Hel"}],"role":"model"},"index":0}]}\n\n` +
@@ -822,13 +884,78 @@ test("google.parseStream: repeated STOP after a tool call remains one tool termi
 
 	assert.deepEqual(
 		chunks.map((chunk) => chunk.choices[0]?.finishReason),
-		["tool_calls", "tool_calls"],
+		[null, null, "tool_calls"],
 	);
 	assert.deepEqual(observed.observation.terminal, {
 		outcome: "completed",
 		reason: "tool_calls",
 		usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
 	});
+});
+
+test("google.parseStream: finish evidence before a trailing tool call closes once", async () => {
+	const sse =
+		`data: {"candidates":[{"content":{"parts":[{"text":"thinking","thought":true}],"role":"model"},"finishReason":"STOP","index":0}]}` +
+		"\n\n" +
+		`data: {"candidates":[{"content":{"parts":[{"functionCall":{"id":"call-1","name":"search_web","args":{"queries":["example"]}}}],"role":"model"},"index":0}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":2,"totalTokenCount":12}}` +
+		"\n\n";
+	const observed = observeChatStream(
+		googleAdapter.chat!.parseStream(new Response(sse).body!, ctx),
+	);
+	const chunks = [];
+	for await (const chunk of observed.items) chunks.push(chunk);
+
+	assert.deepEqual(
+		chunks.map((chunk) => chunk.choices[0]?.finishReason),
+		[null, null, "tool_calls"],
+	);
+	assert.deepEqual(observed.observation.terminal, {
+		outcome: "completed",
+		reason: "tool_calls",
+		usage: { promptTokens: 10, completionTokens: 2, totalTokens: 12 },
+	});
+});
+
+test("google.parseResponse: documented safety reasons stay blocked even with tool parts", () => {
+	for (const finishReason of ["SPII", "IMAGE_SAFETY"] as const) {
+		const response = googleAdapter.chat!.parseResponse(
+			{
+				candidates: [
+					{
+						index: 0,
+						finishReason,
+						content: {
+							parts: [{ functionCall: { name: "search_web", args: {} } }],
+						},
+					},
+				],
+				usageMetadata: {},
+			},
+			ctx,
+		);
+		assert.equal(response.choices[0]?.finishReason, "content_filter");
+	}
+});
+
+test("google.parseResponse: malformed and unexpected tool calls are explicit upstream failures", () => {
+	for (const finishReason of [
+		"MALFORMED_FUNCTION_CALL",
+		"UNEXPECTED_TOOL_CALL",
+	] as const) {
+		assert.throws(
+			() =>
+				googleAdapter.chat!.parseResponse(
+					{
+						candidates: [{ index: 0, finishReason, content: { parts: [] } }],
+					},
+					ctx,
+				),
+			(error: unknown) =>
+				GatewayError.is(error) &&
+				error.code === "upstream_invalid_tool_call" &&
+				error.deploymentHealth === "neutral",
+		);
+	}
 });
 
 test("google.buildRequest: a client-echoed suffixed id arrives clean via the contract", async () => {

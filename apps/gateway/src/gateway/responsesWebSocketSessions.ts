@@ -41,6 +41,13 @@ export class ResponsesWebSocketUpstreams {
 				? candidate.adapter.responsesWebSocket
 				: undefined;
 		const localWarmup = (): ChatExecResult => {
+			const diagnostics = adapterContextDiagnostics(ctx);
+			diagnostics.terminal = { outcome: "completed", reason: "stop" };
+			diagnostics.metadata = {
+				...(diagnostics.metadata ?? {}),
+				emptyOutputAllowed: true,
+				generate: false,
+			};
 			async function* warmup() {
 				yield {
 					id: "",
@@ -63,8 +70,8 @@ export class ResponsesWebSocketUpstreams {
 			const observed = observeChatStream(
 				warmup(),
 				remainingExecutionPolicy(ctx),
+				diagnostics,
 			);
-			observed.observation.diagnostics = adapterContextDiagnostics(ctx);
 			return {
 				kind: "stream",
 				chunks: traceUpstreamStream(observed.items, ctx),

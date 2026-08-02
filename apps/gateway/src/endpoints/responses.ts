@@ -3,6 +3,8 @@ import type { GatewayError as GatewayErrorType } from "#core/errors.ts";
 import { authenticateRequest, getAuth } from "#auth/middleware.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { hasContentInputs } from "#files/requestContentInputs.ts";
+import type { CanonicalChatRequest } from "#core/canonical.ts";
+import type { EffectiveSettings } from "#router/settings.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
@@ -32,6 +34,19 @@ import {
 } from "#contracts/openai/responsesRender.ts";
 
 import {
+	finishDownstreamWriteObservation,
+	type DownstreamWriteObservation,
+	markDownstreamSemanticWritten,
+	markDownstreamTerminalWritten,
+	newDownstreamWriteObservation,
+	markDownstreamClientAborted,
+	awaitWithSSEHeartbeats,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
+
+import {
 	applyCanonicalResponseExtensions,
 	applyCanonicalRequestExtensions,
 	applyStreamEventExtensions,
@@ -58,14 +73,6 @@ import {
 	getResponseStateForScope,
 	storeResponseState,
 } from "#db/repos/responseStates.ts";
-
-import {
-	type DownstreamWriteObservation,
-	newDownstreamWriteObservation,
-	withSSEHeartbeats,
-	writeSSEHeartbeat,
-	writeSSE,
-} from "./runtime/sse.ts";
 
 import {
 	contentInputResolutionLogMetadata,
@@ -314,6 +321,289 @@ async function persistResponseState(opts: {
 	});
 }
 
+function streamResponses(
+	c: Context<AppEnv>,
+	log: RequestLogDraft,
+	auth: Auth,
+	pipelineReq: ResponsesRequest,
+	prepared: PreparedResponsesRequest,
+	canonical: CanonicalChatRequest,
+	settings: EffectiveSettings,
+): Response {
+	return streamSSE(c, async (stream) => {
+		const downstream = newDownstreamWriteObservation(log.operationId);
+		stream.onAbort(() => {
+			markDownstreamClientAborted(downstream);
+			log.abortClient();
+		});
+		let routed: Awaited<ReturnType<typeof routeChat>> | null = null;
+		let usage: Usage | null = null;
+		let firstTokenAt: number | null = null;
+		let lastChunkAt: number | null = null;
+		let streamError: GatewayError | null = null;
+		let statePersisted = false;
+		let metadata: Record<string, unknown> = { downstream };
+		let responseIdentity: {
+			id: string;
+			createdAt: number;
+			model: string;
+		} | null = null;
+		let nextFailureSequence = 0;
+		try {
+			await writeSSEHeartbeat(stream, downstream);
+			const routePromise = routeChat(c, canonical, log.requestId, settings, {
+				signal: log.clientSignal,
+				operationId: log.operationId,
+			});
+			routed = await awaitWithSSEHeartbeats(routePromise, () =>
+				writeSSEHeartbeat(stream, downstream),
+			);
+			const { routing, parameterPolicy, contentInputResolution } = routed;
+			log.applyRouting(routing);
+			if (routing.value.kind !== "stream")
+				throw new GatewayError({
+					class: "server",
+					message: "Streaming Responses unexpectedly returned JSON",
+				});
+			const upstreamStartedAt = routing.upstreamStartedAt;
+			const meta = routing.candidate.meta;
+			const renderOpts: RenderOptions = {
+				req: pipelineReq,
+				upstreamModel: routing.candidate.upstreamModel,
+			};
+			metadata = {
+				...candidateMetadata(routing.candidate),
+				streamLifecycle: routing.value.observation,
+				downstream,
+			};
+			const reasoning = reasoningLogInfo(
+				canonical.reasoning,
+				meta.capabilities.reasoning ? meta.reasoning : undefined,
+			);
+			if (reasoning) metadata.reasoning = reasoning;
+			const parameterMetadata = parameterPolicyLogMetadata(
+				parameterPolicy,
+				settings.unsupportedParameterStrategy,
+			);
+			if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+			const contentInputMetadata = contentInputResolutionLogMetadata(
+				contentInputResolution,
+			);
+			if (contentInputMetadata) metadata.contentInputs = contentInputMetadata;
+			const routingMetadata = routingMetadataRequested(c)
+				? publicRoutingMetadata(routing, settings)
+				: null;
+			const tapped = tapFirstToken(
+				routing.value.chunks,
+				(at) => {
+					firstTokenAt = at;
+				},
+				(at) => {
+					lastChunkAt = at;
+				},
+			);
+			async function* transformedChunks() {
+				for await (const chunk of tapped) {
+					log.progress();
+					yield await applyStreamEventExtensions(
+						c,
+						"chat",
+						canonical.model,
+						chunk,
+					);
+				}
+			}
+			const events = canonicalChunksToResponsesEvents(
+				transformedChunks(),
+				renderOpts,
+			);
+			for await (const ev of withSSEHeartbeats(events, () =>
+				writeSSEHeartbeat(stream, downstream),
+			)) {
+				const clientEvent = responseEventForClient(ev, pipelineReq.include);
+				let eventData = clientEvent.data;
+				try {
+					const sequenced = JSON.parse(ev.data) as {
+						sequence_number?: unknown;
+					};
+					if (typeof sequenced.sequence_number === "number")
+						nextFailureSequence = Math.max(
+							nextFailureSequence,
+							sequenced.sequence_number + 1,
+						);
+				} catch {
+					// Renderer validation remains authoritative for the event itself.
+				}
+				if (ev.event === "response.created") {
+					try {
+						const created = JSON.parse(ev.data) as {
+							response?: {
+								id?: string;
+								created_at?: number;
+								model?: string;
+							};
+						};
+						if (created.response?.id)
+							responseIdentity = {
+								id: created.response.id,
+								createdAt:
+									created.response.created_at ?? Math.floor(Date.now() / 1000),
+								model: created.response.model ?? canonical.model,
+							};
+					} catch {
+						// The regular renderer validation below remains authoritative.
+					}
+				}
+				if (
+					ev.event === "response.completed" ||
+					ev.event === "response.incomplete"
+				) {
+					let completed:
+						| (Record<string, unknown> & { usage?: unknown })
+						| undefined;
+					let internalResponse: Record<string, unknown> | undefined;
+					try {
+						const internalData = JSON.parse(ev.data) as {
+							response?: Record<string, unknown> & { usage?: unknown };
+						};
+						internalResponse = internalData.response;
+						const data = JSON.parse(clientEvent.data) as {
+							response?: Record<string, unknown> & { usage?: unknown };
+						};
+						completed = data.response;
+						if (routingMetadata && completed)
+							eventData = JSON.stringify({
+								...data,
+								response: {
+									...completed,
+									unified_routing: routingMetadata,
+								},
+							});
+						const finalUsage = completed?.usage as
+							| {
+									input_tokens?: number;
+									output_tokens?: number;
+									total_tokens?: number;
+							  }
+							| undefined;
+						if (finalUsage)
+							usage = {
+								promptTokens: finalUsage.input_tokens ?? 0,
+								completionTokens: finalUsage.output_tokens ?? 0,
+								totalTokens: finalUsage.total_tokens ?? 0,
+							};
+					} catch {
+						completed = undefined;
+					}
+					if (completed && !statePersisted) {
+						await persistResponseState({
+							auth,
+							req: pipelineReq,
+							effectiveInput: prepared.effectiveInput,
+							response: completed,
+							...(internalResponse
+								? { internalOutput: outputItemsFromResponse(internalResponse) }
+								: {}),
+							deploymentId: routing.candidate.row.id,
+							adapterKey: routing.candidate.adapter.key,
+							requestId: log.requestId,
+							metadata,
+						});
+						statePersisted = true;
+					}
+				}
+				await writeSSE(
+					stream,
+					{ event: clientEvent.event!, data: eventData },
+					downstream,
+				);
+				if (
+					ev.event === "response.output_text.delta" ||
+					ev.event === "response.reasoning_summary_text.delta" ||
+					ev.event === "response.function_call_arguments.delta"
+				)
+					markDownstreamSemanticWritten(downstream);
+				if (
+					ev.event === "response.completed" ||
+					ev.event === "response.incomplete"
+				)
+					markDownstreamTerminalWritten(downstream);
+			}
+			await writeSSE(stream, { data: "[DONE]" }, downstream);
+			if (firstTokenAt !== null)
+				log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
+		} catch (error) {
+			streamError = toGatewayError(error);
+			log.applyFailedAttempts(streamError.attempts);
+			if (streamError.code === "downstream_backpressure") log.abortUpstream();
+			await notifyExtensionError(c, "chat", canonical.model, streamError);
+			if (
+				streamError.code !== "downstream_backpressure" &&
+				!log.clientSignal.aborted
+			) {
+				const publicError = streamError.toOpenAI().error;
+				try {
+					await writeSSE(
+						stream,
+						{
+							event: "response.failed",
+							data: JSON.stringify({
+								type: "response.failed",
+								sequence_number: nextFailureSequence,
+								response: {
+									id: responseIdentity?.id ?? `resp_${randomUUID()}`,
+									object: "response",
+									created_at:
+										responseIdentity?.createdAt ??
+										Math.floor(Date.now() / 1000),
+									status: "failed",
+									model: responseIdentity?.model ?? canonical.model,
+									output: [],
+									error: publicError,
+									incomplete_details: null,
+									usage: null,
+								},
+							}),
+						},
+						downstream,
+					);
+					markDownstreamTerminalWritten(downstream);
+					await writeSSE(stream, { data: "[DONE]" }, downstream);
+				} catch {
+					// The original stream failure remains authoritative.
+				}
+			}
+		} finally {
+			if (routed)
+				await routed.routing.finish(
+					usage,
+					lastChunkAt ?? undefined,
+					streamError,
+					undefined,
+					downstream,
+				);
+			else finishDownstreamWriteObservation(downstream, streamError?.code);
+			const cost = routed
+				? accountUsage(c, routed.routing.candidate.meta, usage)
+				: null;
+			log.write({
+				status: streamError ? "error" : "success",
+				httpStatus:
+					downstream.clientAbortAt !== null ||
+					streamError?.code === "client_closed_request"
+						? 499
+						: 200,
+				usage,
+				cost,
+				ttftMs: firstTokenAt !== null ? firstTokenAt - log.startedAt : null,
+				responseBody: { streamed: true },
+				metadata,
+				error: streamError ? streamError.toLog() : null,
+			});
+		}
+	});
+}
+
 /**
  * POST /v1/responses - OpenResponses API, provider-agnostic.
  * Translates the request to canonical, routes to an adapter with a `chat` handler, and renders the
@@ -353,6 +643,16 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 		if (cache.hit) return c.json(cache.body as object);
 
 		const settings = await getEffectiveSettings();
+		if (canonical.stream)
+			return streamResponses(
+				c,
+				log,
+				auth,
+				pipelineReq,
+				prepared,
+				canonical,
+				settings,
+			);
 		const { routing, parameterPolicy, contentInputResolution } =
 			await routeChat(c, canonical, log.requestId, settings, {
 				signal: log.clientSignal,
@@ -432,201 +732,9 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 			return c.json(body);
 		}
 
-		let firstTokenAt: number | null = null;
-		let lastChunkAt: number | null = null;
-		let responseIdentity: {
-			id: string;
-			createdAt: number;
-			model: string;
-		} | null = null;
-		const tapped = tapFirstToken(
-			routing.value.chunks,
-			(at) => {
-				firstTokenAt = at;
-			},
-			(at) => {
-				lastChunkAt = at;
-			},
-		);
-		async function* transformedChunks() {
-			for await (const chunk of tapped) {
-				log.progress();
-				yield await applyStreamEventExtensions(
-					c,
-					"chat",
-					canonical.model,
-					chunk,
-				);
-			}
-		}
-		const events = canonicalChunksToResponsesEvents(
-			transformedChunks(),
-			renderOpts,
-		);
-		return streamSSE(c, async (stream) => {
-			stream.onAbort(() => log.abortClient());
-			const downstream = newDownstreamWriteObservation(log.operationId);
-			let usage: Usage | null = null;
-			let streamError: GatewayError | null = null;
-			let statePersisted = false;
-			try {
-				for await (const ev of withSSEHeartbeats(events, () =>
-					writeSSEHeartbeat(stream, downstream),
-				)) {
-					const clientEvent = responseEventForClient(ev, pipelineReq.include);
-					let eventData = clientEvent.data;
-					if (ev.event === "response.created") {
-						try {
-							const created = JSON.parse(ev.data) as {
-								response?: {
-									id?: string;
-									created_at?: number;
-									model?: string;
-								};
-							};
-							if (created.response?.id)
-								responseIdentity = {
-									id: created.response.id,
-									createdAt:
-										created.response.created_at ??
-										Math.floor(Date.now() / 1000),
-									model: created.response.model ?? canonical.model,
-								};
-						} catch {
-							// The regular renderer validation below remains authoritative.
-						}
-					}
-					if (
-						ev.event === "response.completed" ||
-						ev.event === "response.incomplete"
-					) {
-						let completed:
-							| (Record<string, unknown> & { usage?: unknown })
-							| undefined;
-						let internalResponse: Record<string, unknown> | undefined;
-						try {
-							const internalData = JSON.parse(ev.data) as {
-								response?: Record<string, unknown> & { usage?: unknown };
-							};
-							internalResponse = internalData.response;
-							const data = JSON.parse(clientEvent.data) as {
-								response?: Record<string, unknown> & { usage?: unknown };
-							};
-							completed = data.response;
-							if (routingMetadata && completed) {
-								eventData = JSON.stringify({
-									...data,
-									response: {
-										...completed,
-										unified_routing: routingMetadata,
-									},
-								});
-							}
-							const u = completed?.usage as
-								| {
-										input_tokens?: number;
-										output_tokens?: number;
-										total_tokens?: number;
-								  }
-								| undefined;
-							if (u) {
-								usage = {
-									promptTokens: u.input_tokens ?? 0,
-									completionTokens: u.output_tokens ?? 0,
-									totalTokens: u.total_tokens ?? 0,
-								};
-							}
-						} catch {
-							completed = undefined; // malformed final event: skip usage/persist, still forward to client
-						}
-						// Persist before the terminal event: store=true must never acknowledge an unretrievable id.
-						if (completed && !statePersisted) {
-							await persistResponseState({
-								auth,
-								req: pipelineReq,
-								effectiveInput: prepared.effectiveInput,
-								response: completed,
-								...(internalResponse
-									? {
-											internalOutput: outputItemsFromResponse(internalResponse),
-										}
-									: {}),
-								deploymentId: routing.candidate.row.id,
-								adapterKey: routing.candidate.adapter.key,
-								requestId: log.requestId,
-								metadata,
-							});
-							statePersisted = true;
-						}
-					}
-					await writeSSE(
-						stream,
-						{
-							event: clientEvent.event!,
-							data: eventData,
-						},
-						downstream,
-					);
-				}
-				await writeSSE(stream, { data: "[DONE]" }, downstream);
-			} catch (err) {
-				streamError = GatewayError.is(err)
-					? err
-					: new GatewayError({
-							class: "server",
-							message: "Error during streaming",
-							cause: err,
-						});
-				await notifyExtensionError(c, "chat", canonical.model, streamError);
-				if (streamError.code !== "downstream_backpressure") {
-					const publicError = streamError.toOpenAI().error;
-					await writeSSE(
-						stream,
-						{
-							event: "response.failed",
-							data: JSON.stringify({
-								type: "response.failed",
-								response: {
-									id: responseIdentity?.id ?? `resp_${randomUUID()}`,
-									object: "response",
-									created_at:
-										responseIdentity?.createdAt ??
-										Math.floor(Date.now() / 1000),
-									status: "failed",
-									model: responseIdentity?.model ?? canonical.model,
-									output: [],
-									error: publicError,
-									incomplete_details: null,
-									usage: null,
-								},
-							}),
-						},
-						downstream,
-					);
-					await writeSSE(stream, { data: "[DONE]" }, downstream);
-				}
-			} finally {
-				if (firstTokenAt !== null)
-					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(
-					usage,
-					lastChunkAt ?? undefined,
-					streamError,
-					undefined,
-					downstream,
-				);
-				const cost = accountUsage(c, meta, usage);
-				log.write({
-					status: streamError ? "error" : "success",
-					httpStatus: 200,
-					usage,
-					cost,
-					ttftMs: firstTokenAt !== null ? firstTokenAt - log.startedAt : null,
-					responseBody: { streamed: true },
-					metadata,
-					error: streamError ? streamError.toLog() : null,
-				});
-			}
+		throw new GatewayError({
+			class: "server",
+			message: "Non-streaming Responses unexpectedly returned a stream",
 		});
 	} catch (err) {
 		const ge = toGatewayError(err);

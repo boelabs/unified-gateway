@@ -65,7 +65,7 @@ test("router settings: execution policies are configurable by operation and mode
 					...originalSettings!.executionPolicies!.chat,
 					stream: {
 						...originalSettings!.executionPolicies!.chat.stream,
-						firstOutputMs: 42_000,
+						firstOutputMs: 20_000,
 						maxAttempts: 7,
 					},
 				},
@@ -80,7 +80,7 @@ test("router settings: execution policies are configurable by operation and mode
 	assert.equal(body.data.allowedFails, 0);
 	assert.equal(body.data.cooldownSeconds, 7);
 	assert.equal(body.data.executionPolicies?.chat.stream.maxAttempts, 7);
-	assert.equal(body.data.executionPolicies?.chat.stream.firstOutputMs, 42_000);
+	assert.equal(body.data.executionPolicies?.chat.stream.firstOutputMs, 20_000);
 	assert.equal(body.data.retryAfterSeconds, 2);
 	assert.equal("numRetries" in body.data, false);
 });
