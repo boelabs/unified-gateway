@@ -10,7 +10,7 @@ info:
     AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or ?api_key=<key> query parameter (for browser EventSource clients). The master key is required for /admin/*.
 
     RESPONSE CONVENTIONS:
-    - Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/models): documented OpenAI/OpenResponses-compatible contracts with explicit native-only features.
+    - Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/rerank, /v1/models): documented OpenAI/OpenResponses-compatible contracts with explicit native-only features.
     - Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], "pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.
 
     RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). Virtual-key inference responses can also include x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.
@@ -294,6 +294,44 @@ paths:
         "401": *a1
         "403": *a1
         "429": *a1
+  /v1/rerank:
+    post:
+      operationId: rerank
+      tags:
+        - Inference
+      summary: Rerank documents (OpenRouter contract, no-stream)
+      description: Ranks 1-1000 text documents against a query. Requests route across OpenRouter and Vercel AI Gateway unless OpenRouter provider preferences are supplied, in which case only OpenRouter-backed deployments are eligible. Result documents are reconstructed from the request and response caching is disabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerankRequest"
+            examples:
+              mixedDocuments:
+                value:
+                  model: cohere/rerank-v3.5
+                  query: What is the capital of France?
+                  documents:
+                    - Paris is the capital of France.
+                    - text: Berlin is the capital of Germany.
+                  top_n: 2
+      responses:
+        "200":
+          description: OpenRouter-shaped rerank response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RerankResponse"
+        "400": &a4
+          $ref: "#/components/responses/OpenRouterError"
+        "401": *a4
+        "403": *a4
+        "413": *a4
+        "429": *a4
+        "500": *a4
+        "502": *a4
+        "503": *a4
   /v1/images/generations:
     post:
       operationId: createImageGeneration
@@ -1145,7 +1183,7 @@ paths:
     get:
       tags:
         - Admin
-      summary: Aggregate usage (requests, tokens, cost), optionally grouped (master key)
+      summary: Aggregate usage (requests, tokens, search units, cost), optionally grouped (master key)
       description: Sums consumer usage/cost and estimated upstream cost over gateway operations. Accepts the same filters as /admin/logs. groupBy=none returns a single total.
       parameters:
         - name: groupBy
@@ -1196,7 +1234,7 @@ paths:
             format: date-time
       responses:
         "200":
-          description: "{ data: [{ key, requests, promptTokens, completionTokens, reasoningTokens, totalTokens, consumerCostCents, upstreamCostCents }] }"
+          description: "{ data: [{ key, requests, promptTokens, completionTokens, reasoningTokens, totalTokens, searchUnits, consumerCostCents, upstreamCostCents }] }"
         "400": *a1
   /admin/router-settings:
     get:
@@ -1786,6 +1824,193 @@ components:
       required:
         - model
         - input
+    RerankRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 1
+        query:
+          type: string
+          minLength: 1
+        documents:
+          minItems: 1
+          maxItems: 1000
+          type: array
+          items:
+            anyOf:
+              - type: string
+                minLength: 1
+              - type: object
+                properties:
+                  text:
+                    type: string
+                    minLength: 1
+                required:
+                  - text
+                additionalProperties: false
+        top_n:
+          type: integer
+          exclusiveMinimum: 0
+          maximum: 9007199254740991
+        provider:
+          type: object
+          properties:
+            allow_fallbacks:
+              anyOf:
+                - type: boolean
+                - type: "null"
+            data_collection:
+              anyOf:
+                - type: string
+                  enum:
+                    - allow
+                    - deny
+                - type: "null"
+            enforce_distillable_text:
+              anyOf:
+                - type: boolean
+                - type: "null"
+            ignore:
+              anyOf:
+                - type: array
+                  items:
+                    type: string
+                    minLength: 1
+                - type: "null"
+            max_price:
+              type: object
+              properties:
+                audio:
+                  type: string
+                  minLength: 1
+                completion:
+                  type: string
+                  minLength: 1
+                image:
+                  type: string
+                  minLength: 1
+                prompt:
+                  type: string
+                  minLength: 1
+                request:
+                  type: string
+                  minLength: 1
+              additionalProperties: false
+            only:
+              anyOf:
+                - type: array
+                  items:
+                    type: string
+                    minLength: 1
+                - type: "null"
+            order:
+              anyOf:
+                - type: array
+                  items:
+                    type: string
+                    minLength: 1
+                - type: "null"
+            preferred_max_latency:
+              anyOf:
+                - anyOf:
+                    - type: number
+                      minimum: 0
+                    - type: object
+                      properties:
+                        p50:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                        p75:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                        p90:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                        p99:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                      additionalProperties: false
+                - type: "null"
+            preferred_min_throughput:
+              anyOf:
+                - anyOf:
+                    - type: number
+                      minimum: 0
+                    - type: object
+                      properties:
+                        p50:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                        p75:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                        p90:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                        p99:
+                          anyOf:
+                            - type: number
+                              minimum: 0
+                            - type: "null"
+                      additionalProperties: false
+                - type: "null"
+            quantizations:
+              anyOf:
+                - type: array
+                  items:
+                    type: string
+                    minLength: 1
+                - type: "null"
+            require_parameters:
+              anyOf:
+                - type: boolean
+                - type: "null"
+            sort:
+              anyOf:
+                - anyOf:
+                    - type: string
+                      minLength: 1
+                    - type: object
+                      properties:
+                        by:
+                          anyOf:
+                            - type: string
+                            - type: "null"
+                        partition:
+                          anyOf:
+                            - type: string
+                              enum:
+                                - model
+                                - none
+                            - type: "null"
+                      additionalProperties: false
+                - type: "null"
+            zdr:
+              anyOf:
+                - type: boolean
+                - type: "null"
+          additionalProperties: false
+      required:
+        - model
+        - query
+        - documents
+      additionalProperties: false
+      description: Strict OpenRouter-shaped text reranking request. Image documents are reserved for a future contract version.
     ImageGenerationRequest:
       type: object
       properties:
@@ -2248,6 +2473,7 @@ components:
           - video.generate
           - audio.transcribe
           - embedding.create
+          - rerank
       additionalProperties:
         type: object
         propertyNames:
@@ -2260,6 +2486,7 @@ components:
         - video.generate
         - audio.transcribe
         - embedding.create
+        - rerank
     TransportOverrides:
       type: object
       propertyNames:
@@ -2271,6 +2498,7 @@ components:
           - video.generate
           - audio.transcribe
           - embedding.create
+          - rerank
       additionalProperties:
         type: string
       required:
@@ -2280,6 +2508,7 @@ components:
         - video.generate
         - audio.transcribe
         - embedding.create
+        - rerank
       description: Advanced operation-to-transport override. Defaults normally come from the adapter.
     CreateDeployment:
       type: object
@@ -3002,6 +3231,88 @@ components:
               required:
                 - json
                 - stream
+            rerank:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
           required:
             - chat
             - images.generations
@@ -3009,6 +3320,7 @@ components:
             - videos.generations
             - audio.transcriptions
             - embeddings
+            - rerank
         routingStrategy:
           type: string
           enum:
@@ -3108,6 +3420,25 @@ components:
           required:
             - message
             - type
+          additionalProperties: false
+      required:
+        - error
+      additionalProperties: false
+    OpenRouterError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            message:
+              type: string
+          required:
+            - code
+            - message
           additionalProperties: false
       required:
         - error
@@ -3380,6 +3711,60 @@ components:
         - embedding
         - index
       additionalProperties: false
+    RerankResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RerankResult"
+        usage:
+          type: object
+          properties:
+            total_tokens:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            search_units:
+              type: integer
+              minimum: 0
+              maximum: 9007199254740991
+            cost:
+              type: number
+              minimum: 0
+          additionalProperties: false
+      required:
+        - model
+        - results
+      additionalProperties: false
+    RerankResult:
+      type: object
+      properties:
+        index:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        relevance_score:
+          type: number
+        document:
+          type: object
+          properties:
+            text:
+              type: string
+          required:
+            - text
+          additionalProperties: false
+      required:
+        - index
+        - relevance_score
+        - document
+      additionalProperties: false
     ImagesResponse:
       type: object
       properties:
@@ -3629,6 +4014,12 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+    OpenRouterError:
+      description: OpenRouter-shaped rerank error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/OpenRouterError"
   parameters:
     IdPath:
       name: id

@@ -42,6 +42,10 @@ const catalogs = [
 		adapterKey: "vercel",
 		url: new URL("../src/adapters/vercel/catalog.json", import.meta.url),
 	},
+	{
+		adapterKey: "openrouter",
+		url: new URL("../src/adapters/openrouter/catalog.json", import.meta.url),
+	},
 ] as const;
 
 let total = 0;

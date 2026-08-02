@@ -32,6 +32,7 @@ export interface UpstreamErrorMapping {
 function upstreamMessage(body: unknown, label: string, status: number): string {
 	return (
 		(body as { error?: { message?: string } })?.error?.message ??
+		(body as { message?: string })?.message ??
 		`${label} upstream error (HTTP ${status})`
 	);
 }

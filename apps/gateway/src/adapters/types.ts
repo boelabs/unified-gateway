@@ -35,6 +35,11 @@ import type {
 	CanonicalEmbeddingsRequest,
 } from "#core/embeddings.ts";
 
+import type {
+	CanonicalRerankResponse,
+	CanonicalRerankRequest,
+} from "#core/rerank.ts";
+
 /** Upstream error the executor passes to `mapError` when the response is not 2xx. */
 export interface UpstreamError {
 	status: number;
@@ -215,6 +220,18 @@ export interface EmbeddingsHandler {
 	mapError(err: unknown, ctx: AdapterContext): GatewayError;
 }
 
+/** An adapter's canonical reranking handler. No streaming. */
+export interface RerankHandler {
+	/** Whether the OpenRouter-shaped `provider` routing object can be honored. */
+	supportsProviderRouting?: boolean;
+	buildRequest(
+		req: CanonicalRerankRequest,
+		ctx: AdapterContext,
+	): UpstreamHttpRequest;
+	parseResponse(raw: unknown, ctx: AdapterContext): CanonicalRerankResponse;
+	mapError(err: unknown, ctx: AdapterContext): GatewayError;
+}
+
 export interface VideoJobRef {
 	upstreamJobId: string;
 	upstreamGenerationId?: string | null;
@@ -263,6 +280,7 @@ export interface Adapter {
 	videoGeneration?: VideoHandler;
 	audioTranscription?: TranscriptionHandler;
 	embeddings?: EmbeddingsHandler;
+	rerank?: RerankHandler;
 	/** Upstream transports per CallType. */
 	transports?: Partial<Record<CallType, AdapterTransports>>;
 	/** Native multimodal-input support by upstream transport. */

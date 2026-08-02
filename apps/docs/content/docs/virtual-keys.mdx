@@ -79,6 +79,8 @@ it only for trusted operator tooling, not for client-facing keys.
   is rejected until the window resets. Models without pricing bill as zero.
 - **RPM/TPM:** sliding per-minute counters in Redis. Exceeding either returns `429` with code
   `rate_limit_exceeded`.
+  Rerank search units contribute to spend and budgets but never synthesize tokens for TPM; RPM still
+  counts each rerank request.
 - **Headers:** when a key carries any limit, responses include the matching
   `x-ratelimit-limit-*` / `x-ratelimit-remaining-*` / `x-ratelimit-reset-*` headers (requests, tokens,
   and budget-cents), so clients can back off before being throttled.

@@ -1,6 +1,6 @@
 ---
 title: "Vercel AI Gateway"
-description: "Adapter key vercel. Responses, Chat Completions, embeddings, and images through Vercel AI Gateway."
+description: "Adapter key vercel. Responses, Chat Completions, embeddings, images, and reranking through Vercel AI Gateway."
 ---
 
 ```json
@@ -19,16 +19,19 @@ description: "Adapter key vercel. Responses, Chat Completions, embeddings, and i
 - **Text transports**: Responses and Chat Completions. The public Responses and Chat endpoints prefer
   their matching upstream wire; the public Anthropic Messages endpoint continues through the
   canonical text core and uses the adapter's default Responses transport.
-- **Other operations**: OpenAI-compatible embeddings and image generation/editing. Audio
+- **Other operations**: OpenAI-compatible embeddings and image generation/editing, plus the
+  Cohere-compatible `POST /rerank` transport used internally by the public OpenRouter-shaped
+  `/v1/rerank` endpoint. Audio
   transcription and video generation are not advertised because Vercel's current protocols do not
   match the transports implemented by this gateway.
 - **Owned catalog**: Vercel does not borrow a first-party provider's entry. Its committed catalog is
   generated from Vercel's unauthenticated `/v1/models` API, keyed by the complete `creator/model` id.
   Limits, modalities, parameters, reasoning controls, base token pricing, and context tiers therefore
   describe the Vercel route rather than the creator's direct API.
-- **Catalog coverage**: the sync emits language, embedding, and image operations implemented by this
+- **Catalog coverage**: the sync emits language, embedding, image, and reranking operations implemented by this
   adapter. It reports Vercel models whose operation families are not implemented (currently video,
-  reranking, transcription, realtime, and speech) instead of publishing unusable catalog entries.
+  transcription, realtime, and speech) instead of publishing unusable catalog entries. Rerank
+  profiles remain text-only and ambiguous zero pricing is reported rather than treated as free.
 - **Reasoning**: Vercel's source-provided effort values are preserved exactly through its normalized
   REST reasoning object; `max` and `xhigh` are never aliases. A source toggle becomes the canonical
   `none | high` control. Models with a reasoning tag or budget but no effort levels are described as
@@ -46,3 +49,4 @@ description: "Adapter key vercel. Responses, Chat Completions, embeddings, and i
 - [Model catalog](/docs/model-catalog#vercel-owned-sync) — regenerate and verify the Vercel snapshot.
 - [Reasoning](/docs/reasoning) — normalized effort levels and clamping.
 - [Provider-specific fields](/docs/provider-specific-fields) — opaque state round-tripping.
+- [Reranking](/docs/reranking) — request semantics and Vercel/OpenRouter pooling.

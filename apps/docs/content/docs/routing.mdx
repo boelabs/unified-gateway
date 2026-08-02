@@ -22,13 +22,17 @@ there is no per-deployment or per-public-model override today.
 | `usage-based-tpm` | The fewest tokens in the current minute | Enforcing soft TPM parity across a pool |
 | `latency-based` | The lowest EWMA completion latency | Minimizing time-to-response across mixed-speed providers |
 | `throughput-based` | The highest EWMA output tokens/second | Maximizing streaming throughput |
-| `price-based` | The lowest `inputCentsPerMTokens + outputCentsPerMTokens` | Cost optimization across equivalent models |
+| `price-based` | The lowest comparable token rate or `searchUnitCents` | Cost optimization across equivalent models with one billing basis |
 | `health-aware` | The highest `successRate × weight` | Steering traffic away from a flaky deployment without cutting it off entirely |
 
 A pool of exactly one deployment skips selection entirely — the strategy never runs, and metrics still
 accrue for observability. All strategies that rank by a live metric (`latency-based`,
 `throughput-based`, `price-based`, `health-aware`) fall back to weighted-random when no candidate has a
 usable value yet (e.g. a fresh deployment with no completed requests).
+
+For reranking, search-unit prices are exact only when every candidate declares that same basis. If a
+pool mixes token and search-unit billing, combines both bases, or contains an unknown price,
+`price-based` falls back to weighted selection instead of presenting a false numeric comparison.
 
 ### How each metric is measured
 

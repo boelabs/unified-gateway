@@ -4,13 +4,13 @@
  * `bun run test:integration`. Creates rows with unique names and deletes them at the end.
  */
 
-import { gatewayOperations, upstreamAttempts } from "#db/schema.ts";
 import { operationSummary } from "#db/repos/operations.ts";
+import { aggregateUsage } from "#db/repos/requestLogs.ts";
 import { pgAvailable } from "#test-support/infra.ts";
 import { randomUUID } from "node:crypto";
 import assert from "node:assert/strict";
+import { and, eq } from "drizzle-orm";
 import { db } from "#db/client.ts";
-import { eq } from "drizzle-orm";
 import { test } from "node:test";
 
 import {
@@ -28,6 +28,12 @@ import {
 	createDeployment,
 	deleteDeployment,
 } from "#db/repos/deployments.ts";
+
+import {
+	gatewayOperations,
+	upstreamAttempts,
+	requestLogs,
+} from "#db/schema.ts";
 
 const skip = (await pgAvailable()) ? false : "Postgres unavailable";
 
@@ -173,5 +179,43 @@ test("observability summary counts operations with protocol failures", {
 		await db
 			.delete(gatewayOperations)
 			.where(eq(gatewayOperations.id, operationId));
+	}
+});
+
+test("partitioned request_logs persist and aggregate rerank search units", {
+	skip,
+}, async () => {
+	const requestId = randomUUID();
+	const [row] = await db
+		.insert(requestLogs)
+		.values({
+			requestId,
+			callType: "rerank",
+			status: "success",
+			promptTokens: 0,
+			completionTokens: 0,
+			totalTokens: 0,
+			searchUnits: 2,
+			costCents: "0.2",
+		})
+		.returning({ id: requestLogs.id, startTime: requestLogs.startTime });
+
+	try {
+		const [usage] = await aggregateUsage({ requestId, groupBy: "none" });
+		assert.equal(usage?.requests, 1);
+		assert.equal(usage?.totalTokens, 0);
+		assert.equal(usage?.searchUnits, 2);
+		assert.equal(usage?.costCents, 0.2);
+	} finally {
+		if (row) {
+			await db
+				.delete(requestLogs)
+				.where(
+					and(
+						eq(requestLogs.id, row.id),
+						eq(requestLogs.startTime, row.startTime),
+					),
+				);
+		}
 	}
 });

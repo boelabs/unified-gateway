@@ -83,7 +83,7 @@ rules the admin API enforces.
 - Embeddings are declared with `embedding.create`. The profile may indicate `dimensions`,
   `supportsDimensions`, `minDimensions`, `maxDimensions`, `encodingFormats`, input limits, and
   `supportsTokenInput`. The presence of `embedding.create` enables `/v1/embeddings`.
-- `pricing` uses the gateway's internal unit: USD cents per 1M tokens.
+- Token `pricing` uses USD cents per 1M tokens; `searchUnitCents` uses USD cents per reranking search unit.
 - `reasoning.kind` must be compatible with `adapter.reasoningKinds`; it is validated at startup.
 - `reasoning.levels` are points on the canonical ladder `none < minimal < low < medium < high < xhigh < max`.
   Including `"none"` declares a **literal off switch** (the model can skip reasoning); omitting it means
@@ -220,6 +220,33 @@ To validate all catalogs:
 bun run --filter @boelabs/unified-gateway catalog:validate
 ```
 
+## Reranking
+
+A reranking model declares the independent `rerank` operation:
+
+```json
+{
+  "operations": {
+    "rerank": {
+      "documentModalities": ["text"],
+      "maxDocuments": 1000,
+      "maxQueryBytes": 1048576,
+      "maxDocumentBytes": 1048576,
+      "maxTotalDocumentBytes": 16777216,
+      "maxTokensPerDocument": 32768,
+      "maxTotalTokens": 32768,
+      "documentsPerSearchUnit": 100
+    }
+  },
+  "pricing": { "searchUnitCents": 0.25 }
+}
+```
+
+`documentModalities` is required. `imageSources` (`url` or `data_url`) is reserved in the schema for
+future image-capable profiles, but current catalogs expose `text` only. Byte and document limits are
+enforced before an upstream call. Token fields describe documented provider limits and do not trigger
+local approximate tokenization.
+
 ## Catalog sync
 
 The cross-provider sync (`catalog:sync` and `catalog:sync:verify`) compares Vercel AI Gateway,
@@ -245,13 +272,30 @@ bun run --filter @boelabs/unified-gateway catalog:sync:vercel:verify
 
 The writer refuses suspiciously small source responses and duplicate/invalid ids, so a broken or
 partial fetch cannot erase the committed catalog. The report lists unsupported operation families,
-per-image pricing that the token-pricing schema cannot represent, and budget-only reasoning models
+per-image pricing that the token-pricing schema cannot represent, rerank zero-pricing ambiguity and
+withheld multimodal capability, and budget-only reasoning models
 for which no effort ladder was invented. Future reasoning labels outside the canonical ladder are
 also reported instead of being silently accepted or aliased.
 
 The generated catalog includes only operations the Vercel adapter can execute. Language models use
 the source's exact limits, modalities, supported parameters, reasoning options, and token pricing.
-Embedding and image entries receive conservative adapter-level profiles; multimodal language models
+Embedding, image, and rerank entries receive conservative adapter-level profiles; multimodal language models
 that output images also expose image generation (and editing when their source modalities accept
 image input). Vercel-only model ids are first-class entries and do not require a matching direct
 provider adapter.
+
+### OpenRouter rerank sync
+
+OpenRouter is the primary functional and catalog source for reranking. Its dedicated deterministic
+sync filters the live source by `output_modalities=rerank`, preserves complete model ids, and has the
+same report/write/verify modes:
+
+```bash
+bun run --filter @boelabs/unified-gateway catalog:sync:openrouter
+bun run --filter @boelabs/unified-gateway catalog:sync:openrouter:write
+bun run --filter @boelabs/unified-gateway catalog:sync:openrouter:verify
+```
+
+No model count is hard-coded. The report surfaces additions/removals through snapshot drift,
+multimodal capability withheld by the text-only release, ambiguous zero token prices, orphaned
+reviewed search-unit overrides, and paid models without a representable catalog cost.

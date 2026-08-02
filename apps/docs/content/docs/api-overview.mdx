@@ -23,7 +23,8 @@ Full model: [Security](/docs/security).
 
 ## Error shape
 
-Every error uses the OpenAI-compatible envelope, translated to Anthropic's shape on `/v1/messages`:
+Most errors use the OpenAI-compatible envelope. `/v1/messages` uses Anthropic's shape and
+`/v1/rerank` uses OpenRouter's `{ "error": { "code": <status>, "message": "..." } }` shape:
 
 ```json
 { "error": { "message": "...", "type": "invalid_request_error", "param": "model", "code": "model_not_found" } }
@@ -64,6 +65,7 @@ variable (e.g. `http://localhost:4000`) and the bearer token in Bruno's auth UI.
 | `POST /v1/images/generations`, `POST /v1/images/edits` | OpenAI Images | [Images](/docs/images) |
 | `POST/GET/DELETE /v1/videos`, `GET /v1/videos/:id/content` | OpenAI-shaped Videos | [Videos](/docs/videos) |
 | `POST /v1/embeddings` | OpenAI Embeddings | [Embeddings](/docs/embeddings) |
+| `POST /v1/rerank` | OpenRouter Rerank | [Reranking](/docs/reranking) |
 | `POST /v1/audio/transcriptions` | OpenAI Audio | [Audio transcriptions](/docs/audio-transcriptions) |
 | `GET /v1/models`, `GET /v1/models/{model}`, `GET /v1/models/{model}/deployments` | Model discovery | [Model discovery](/docs/models-discovery) |
 

@@ -1,3 +1,4 @@
+import { assertRerankResponseValid } from "./rerankResponseValidation.ts";
 import { assertTextRequestSupported } from "./textRequestValidation.ts";
 import type { AdapterDiagnostics } from "#adapters/types.ts";
 import { upstreamFetch } from "./instrumentedTransport.ts";
@@ -49,6 +50,11 @@ import {
 } from "#adapters/diagnostics.ts";
 
 import type {
+	CanonicalRerankResponse,
+	CanonicalRerankRequest,
+} from "#core/rerank.ts";
+
+import type {
 	UpstreamHttpRequest,
 	AdapterContext,
 	Adapter,
@@ -98,6 +104,13 @@ export type TranscriptionExecResult =
 export type EmbeddingsExecResult = {
 	kind: "json";
 	response: CanonicalEmbeddingsResponse;
+	terminal: CanonicalTerminal;
+	diagnostics: AdapterDiagnostics;
+};
+
+export type RerankExecResult = {
+	kind: "json";
+	response: CanonicalRerankResponse;
 	terminal: CanonicalTerminal;
 	diagnostics: AdapterDiagnostics;
 };
@@ -207,6 +220,8 @@ async function dispatch(
 ): Promise<Response> {
 	let res: Response;
 	try {
+		// Reject an already-exhausted request-wide deadline before constructing the fetch promise.
+		await beforeFirstOutput(Promise.resolve(), ctx);
 		res = await beforeFirstOutput(
 			upstreamFetch(ctx, httpReq.url, {
 				method: httpReq.method,
@@ -465,6 +480,36 @@ export async function executeEmbeddings(
 			failureKind: "transient",
 			deploymentHealth: "penalize",
 		});
+	return {
+		kind: "json",
+		response,
+		terminal: completedTerminal(),
+		diagnostics: adapterContextDiagnostics(ctx),
+	};
+}
+
+/** Executes a reranking call and validates the normalized ranking. */
+export async function executeRerank(
+	adapter: Adapter,
+	req: CanonicalRerankRequest,
+	ctx: AdapterContext,
+): Promise<RerankExecResult> {
+	const handler = adapter.rerank;
+	if (!handler)
+		throw new Error(`Adapter "${adapter.key}" does not implement rerank`);
+
+	const res = await dispatch(
+		handler.buildRequest(req, ctx),
+		ctx,
+		handler.mapError,
+	);
+	const response = await beforeFirstOutput(
+		Promise.resolve(parseBody(res)).then((raw) =>
+			handler.parseResponse(raw, ctx),
+		),
+		ctx,
+	);
+	assertRerankResponseValid(req, response);
 	return {
 		kind: "json",
 		response,

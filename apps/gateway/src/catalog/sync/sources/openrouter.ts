@@ -49,6 +49,17 @@ function authHeaders(): Record<string, string> {
 	return key ? { authorization: `Bearer ${key}` } : {};
 }
 
+/** Lightweight inventory used by the dedicated, deterministic rerank catalog sync. */
+export async function fetchOpenRouterRerankModels(): Promise<
+	OpenRouterModel[]
+> {
+	const response = await fetchJsonWithRetry<{ data: OpenRouterModel[] }>(
+		`${BASE_URL}/api/v1/models?output_modalities=rerank`,
+		{ headers: authHeaders() },
+	);
+	return response.data;
+}
+
 function endpointPath(modelId: string): string {
 	return `/api/v1/models/${modelId
 		.split("/")

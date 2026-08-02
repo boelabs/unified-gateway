@@ -53,3 +53,19 @@ export function makeOpenAIContractTestApp(
 		mountRoutes(app);
 	});
 }
+
+/** Mini-app for the OpenRouter-shaped `/v1/rerank` error contract. */
+export function makeOpenRouterContractTestApp(
+	mountRoutes: (app: Hono<AppEnv>) => void,
+): Hono<AppEnv> {
+	const app = new Hono<AppEnv>();
+	app.use("*", requestContextMiddleware());
+	app.onError((err, c) =>
+		GatewayError.is(err)
+			? c.json(err.toOpenRouter(), err.httpStatus as ContentfulStatusCode)
+			: c.json({ error: { code: 500, message: "Internal server error" } }, 500),
+	);
+	app.use("/v1/*", authMiddleware());
+	mountRoutes(app);
+	return app;
+}

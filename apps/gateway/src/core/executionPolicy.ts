@@ -56,6 +56,10 @@ export const DEFAULT_EXECUTION_POLICIES: ExecutionPolicies = {
 		json: policy(30_000, null, null, 60_000, 60_000, 3),
 		stream: policy(30_000, null, null, 60_000, 60_000, 3),
 	},
+	rerank: {
+		json: policy(30_000, null, null, 60_000, 60_000, 3),
+		stream: policy(30_000, null, null, 60_000, 60_000, 3),
+	},
 	"videos.generations": {
 		json: policy(60_000, null, null, 120_000, 120_000, 3),
 		stream: policy(30_000, 30_000, null, 60_000, 900_000, 2),

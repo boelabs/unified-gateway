@@ -33,6 +33,11 @@ deployment health.
 its complete attempt timeline. `GET /admin/observability/summary?window=5m|1h|24h` returns outcome,
 stall, retry, active/abandoned, and latency aggregates.
 
+Rerank request summaries record only the public model, document count and byte totals, `top_n`, and
+provider-option names. Response summaries contain only result count, indexes, usage, and cost. Query
+and document contents are never stored in normal rows. `searchUnits` is persisted on operations and
+attempts and included in `/admin/usage` aggregates.
+
 ## Payload privacy
 
 Ordinary rows contain summaries and HMAC fingerprints, never request or response bodies. IP addresses
@@ -61,6 +66,9 @@ render, and persistence children, plus low-cardinality counters, histograms, act
 depth, and persistence-loss metrics. Payload bodies are never emitted to OpenTelemetry. PostgreSQL,
 `/health`, the observability summary, and structured JSON logs remain sufficient for the initial
 operating model.
+
+Rerank usage also increments `unifiedgateway_search_units_total`; it remains independent from
+`unifiedgateway_tokens_total`.
 
 ## Initial alerts
 

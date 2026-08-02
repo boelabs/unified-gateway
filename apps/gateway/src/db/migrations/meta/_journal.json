@@ -64,6 +64,20 @@
       "when": 1785572264723,
       "tag": "0008_sloppy_karnak",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1785599138673,
+      "tag": "0009_optimal_zarek",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1785601287716,
+      "tag": "0010_rerank_execution_policy_backfill",
+      "breakpoints": true
     }
   ]
 }

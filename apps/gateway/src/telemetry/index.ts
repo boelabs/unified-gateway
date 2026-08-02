@@ -44,6 +44,9 @@ interface Instruments {
 	tokenCounter: ReturnType<
 		ReturnType<typeof metrics.getMeter>["createCounter"]
 	>;
+	searchUnitCounter: ReturnType<
+		ReturnType<typeof metrics.getMeter>["createCounter"]
+	>;
 	costCounter: ReturnType<ReturnType<typeof metrics.getMeter>["createCounter"]>;
 	outcomeCounter: ReturnType<
 		ReturnType<typeof metrics.getMeter>["createCounter"]
@@ -105,6 +108,13 @@ function createInstruments(): Instruments {
 		tokenCounter: meter.createCounter("unifiedgateway_tokens_total", {
 			description: "Total tokens reported by upstream providers.",
 		}),
+		searchUnitCounter: meter.createCounter(
+			"unifiedgateway_search_units_total",
+			{
+				description:
+					"Total reranking search units reported by upstream providers.",
+			},
+		),
 		costCounter: meter.createCounter("unifiedgateway_cost_cents_total", {
 			description: "Total estimated request cost in USD cents.",
 		}),
@@ -379,6 +389,8 @@ export function recordRequestTelemetry(input: RequestLogInput): void {
 	if (input.status === "error") inst.errorCounter.add(1, attrs);
 	if (input.usage?.totalTokens)
 		inst.tokenCounter.add(input.usage.totalTokens, attrs);
+	if (input.usage?.searchUnits)
+		inst.searchUnitCounter.add(input.usage.searchUnits, attrs);
 	if (input.cost?.totalCents)
 		inst.costCounter.add(input.cost.totalCents, attrs);
 	const lifecycle = input.metadata.streamLifecycle as

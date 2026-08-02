@@ -67,6 +67,7 @@ export interface UsageRow {
 	promptTokens: number;
 	completionTokens: number;
 	totalTokens: number;
+	searchUnits: number;
 	costCents: number;
 }
 
@@ -91,6 +92,7 @@ export async function aggregateUsage(
 		promptTokens: sql<number>`coalesce(sum(${requestLogs.promptTokens}), 0)::int`,
 		completionTokens: sql<number>`coalesce(sum(${requestLogs.completionTokens}), 0)::int`,
 		totalTokens: sql<number>`coalesce(sum(${requestLogs.totalTokens}), 0)::int`,
+		searchUnits: sql<number>`coalesce(sum(${requestLogs.searchUnits}), 0)::int`,
 		costCents: sql<number>`coalesce(sum(${requestLogs.costCents}), 0)::float8`,
 	};
 
@@ -117,6 +119,7 @@ export async function aggregateUsage(
 		promptTokens: Number(r.promptTokens),
 		completionTokens: Number(r.completionTokens),
 		totalTokens: Number(r.totalTokens),
+		searchUnits: Number(r.searchUnits),
 		costCents: Number(r.costCents),
 	}));
 }
@@ -128,6 +131,7 @@ function emptyIfMissing(
 				promptTokens: number;
 				completionTokens: number;
 				totalTokens: number;
+				searchUnits: number;
 				costCents: number;
 		  }
 		| undefined,
@@ -137,6 +141,7 @@ function emptyIfMissing(
 		promptTokens: Number(row?.promptTokens ?? 0),
 		completionTokens: Number(row?.completionTokens ?? 0),
 		totalTokens: Number(row?.totalTokens ?? 0),
+		searchUnits: Number(row?.searchUnits ?? 0),
 		costCents: Number(row?.costCents ?? 0),
 	};
 }

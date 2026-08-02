@@ -29,7 +29,8 @@ type Modality =
 	| "pdf"
 	| "file"
 	| "embedding"
-	| "moderation";
+	| "moderation"
+	| "rerank";
 
 interface PublicModelGroup {
 	name: string;
@@ -94,6 +95,10 @@ function addModalitiesForOperation(
 			input.add("text");
 			output.add("embedding");
 			break;
+		case "rerank":
+			input.add("text");
+			output.add("rerank");
+			break;
 	}
 }
 
@@ -156,10 +161,16 @@ function publicPricing(metas: ResolvedModelMetadata[]): Record<string, string> {
 	const cacheWrite = centsPerMillionToUsdPerToken(
 		minDefined(pricing.map((p) => p?.cacheWriteCentsPerMTokens)),
 	);
+	const searchUnitCents = minDefined(pricing.map((p) => p?.searchUnitCents));
 	if (prompt !== undefined) result.prompt = prompt;
 	if (completion !== undefined) result.completion = completion;
 	if (cacheRead !== undefined) result.input_cache_read = cacheRead;
 	if (cacheWrite !== undefined) result.input_cache_write = cacheWrite;
+	if (searchUnitCents !== undefined)
+		result.search_unit =
+			searchUnitCents === 0
+				? "0"
+				: (searchUnitCents / 100).toFixed(12).replace(/\.?0+$/, "");
 	return result;
 }
 

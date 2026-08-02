@@ -17,6 +17,7 @@ const HANDLER_KEY: Partial<Record<CallType, keyof Adapter>> = {
 	"videos.generations": "videoGeneration",
 	"audio.transcriptions": "audioTranscription",
 	embeddings: "embeddings",
+	rerank: "rerank",
 };
 const CONTENT_INPUT_SOURCES = new Set(["provider_file_id", "url", "data_url"]);
 

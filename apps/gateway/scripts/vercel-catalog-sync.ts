@@ -102,6 +102,26 @@ async function run(): Promise<void> {
 			`pricing fields not representable by token pricing: ${generated.report.unrepresentedPricing.length}`,
 		);
 	}
+	if (generated.report.ambiguousZeroPricing.length > 0) {
+		console.warn(
+			`rerank models with ambiguous zero token pricing: ${generated.report.ambiguousZeroPricing.join(", ")}`,
+		);
+	}
+	if (generated.report.multimodalRerankWithheld.length > 0) {
+		console.warn(
+			`multimodal rerank capability withheld: ${generated.report.multimodalRerankWithheld.join(", ")}`,
+		);
+	}
+	if (generated.report.paidRerankModelsWithoutCost.length > 0) {
+		console.warn(
+			`paid rerank models without representable cost: ${generated.report.paidRerankModelsWithoutCost.join(", ")}`,
+		);
+	}
+	if (generated.report.orphanedRerankPricingOverrides.length > 0) {
+		console.warn(
+			`orphaned rerank pricing overrides: ${generated.report.orphanedRerankPricingOverrides.join(", ")}`,
+		);
+	}
 }
 
 await run();

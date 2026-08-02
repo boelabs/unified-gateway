@@ -276,6 +276,13 @@ export class GatewayError extends Error {
 		};
 	}
 
+	/** Error body used by the OpenRouter-shaped rerank contract. */
+	toOpenRouter(): { error: { code: number; message: string } } {
+		return {
+			error: { code: this.httpStatus, message: this.publicMessage },
+		};
+	}
+
 	static is(value: unknown): value is GatewayError {
 		return value instanceof GatewayError;
 	}

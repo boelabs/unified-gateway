@@ -5,6 +5,7 @@ import type { TranscriptionProfile } from "#core/audio.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
 import type { ImageModelProfile } from "#core/images.ts";
 import type { VideoModelProfile } from "#core/videos.ts";
+import type { RerankProfile } from "#core/rerank.ts";
 import type { CallType } from "#core/callType.ts";
 
 /**
@@ -42,6 +43,7 @@ export interface ResolvedModelMetadata {
 	image?: ImageModelProfile;
 	video?: VideoModelProfile;
 	embedding?: EmbeddingProfile;
+	rerank?: RerankProfile;
 	operations?: OperationProfiles;
 	pricing?: RuntimeModelMetadata["pricing"];
 	maxInputTokens?: number;
@@ -85,4 +87,10 @@ export function embeddingProfileFor(
 		(meta.operations?.["embedding.create"] as EmbeddingProfile | undefined) ??
 		meta.embedding
 	);
+}
+
+export function rerankProfileFor(
+	meta: ResolvedModelMetadata,
+): RerankProfile | undefined {
+	return (meta.operations?.rerank as RerankProfile | undefined) ?? meta.rerank;
 }

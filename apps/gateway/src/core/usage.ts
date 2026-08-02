@@ -23,6 +23,10 @@ export interface Usage {
 	cacheWriteTokens?: number;
 	/** Reasoning tokens. Subset of completionTokens. */
 	reasoningTokens?: number;
+	/** Provider-reported reranking search units. Independent from token counters. */
+	searchUnits?: number;
+	/** Upstream-reported request cost in USD cents, used only when configured pricing is absent. */
+	providerCostCents?: number;
 }
 
 /** Does the usage satisfy the invariant total = prompt + completion? (helper for tests/dev). */

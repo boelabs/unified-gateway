@@ -101,3 +101,58 @@ test("GET /v1/models and /v1/models/{id} are public, but /v1/models/{id}/deploym
 		if (deploymentId) await deleteDeployment(deploymentId);
 	}
 });
+
+test("rerank model discovery exposes operation, modality, search pricing, and redacted transport", {
+	skip,
+}, async () => {
+	const app = modelsTestApp();
+	const publicModel = `rerank-models-e2e-${randomUUID()}`;
+	let deploymentId: string | undefined;
+	let virtualKey: CreatedVirtualKey | undefined;
+	try {
+		const deployment = await createDeployment({
+			publicModel,
+			adapterKey: "openrouter",
+			upstreamModel: "cohere/rerank-v3.5",
+			credentials: { apiKey: "test-upstream-key" },
+			transportOverrides: { rerank: "openrouter_rerank" },
+		});
+		deploymentId = deployment.row.id;
+		virtualKey = await createVirtualKey({
+			name: `rerank-models-e2e-${randomUUID()}`,
+		});
+
+		const single = await app.request(`/v1/models/${publicModel}`);
+		assert.equal(single.status, 200);
+		const body = (await single.json()) as {
+			architecture: { input_modalities: string[]; output_modalities: string[] };
+			pricing: Record<string, string>;
+			operations: Array<{ id: string; endpoints: string[] }>;
+		};
+		assert.deepEqual(body.architecture.input_modalities, ["text"]);
+		assert.deepEqual(body.architecture.output_modalities, ["rerank"]);
+		assert.equal(body.pricing.search_unit, "0.001");
+		assert.deepEqual(body.operations, [
+			{ id: "rerank", endpoints: ["/v1/rerank"] },
+		]);
+
+		const detail = await app.request(`/v1/models/${publicModel}/deployments`, {
+			headers: { authorization: `Bearer ${virtualKey.rawKey}` },
+		});
+		assert.equal(detail.status, 200);
+		const detailBody = (await detail.json()) as {
+			data: Array<Record<string, unknown>>;
+		};
+		assert.equal(detailBody.data[0]?.upstreamModel, undefined);
+		assert.equal(detailBody.data[0]?.upstream_model, undefined);
+		assert.deepEqual(detailBody.data[0]?.transports, {
+			rerank: "openrouter_rerank",
+		});
+	} finally {
+		if (virtualKey) {
+			await invalidateVirtualKey(virtualKey.row.keyHash);
+			await deleteVirtualKey(virtualKey.row.id);
+		}
+		if (deploymentId) await deleteDeployment(deploymentId);
+	}
+});

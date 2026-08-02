@@ -74,7 +74,8 @@
 				"pdf",
 				"file",
 				"embedding",
-				"moderation"
+				"moderation",
+				"rerank"
 			]
 		},
 		"operationProfiles": {
@@ -86,7 +87,8 @@
 				"image.edit": { "$ref": "#/$defs/imageModelProfile" },
 				"video.generate": { "$ref": "#/$defs/videoModelProfile" },
 				"audio.transcribe": { "$ref": "#/$defs/transcriptionProfile" },
-				"embedding.create": { "$ref": "#/$defs/embeddingProfile" }
+				"embedding.create": { "$ref": "#/$defs/embeddingProfile" },
+				"rerank": { "$ref": "#/$defs/rerankProfile" }
 			},
 			"minProperties": 1
 		},
@@ -417,6 +419,31 @@
 				"supportsTokenInput": { "type": "boolean" }
 			}
 		},
+		"rerankProfile": {
+			"type": "object",
+			"additionalProperties": false,
+			"required": ["documentModalities"],
+			"properties": {
+				"documentModalities": {
+					"type": "array",
+					"items": { "enum": ["text", "image"] },
+					"minItems": 1,
+					"uniqueItems": true
+				},
+				"imageSources": {
+					"type": "array",
+					"items": { "enum": ["url", "data_url"] },
+					"uniqueItems": true
+				},
+				"maxDocuments": { "type": "integer", "minimum": 1 },
+				"maxQueryBytes": { "type": "integer", "minimum": 1 },
+				"maxDocumentBytes": { "type": "integer", "minimum": 1 },
+				"maxTotalDocumentBytes": { "type": "integer", "minimum": 1 },
+				"maxTokensPerDocument": { "type": "integer", "minimum": 1 },
+				"maxTotalTokens": { "type": "integer", "minimum": 1 },
+				"documentsPerSearchUnit": { "type": "integer", "minimum": 1 }
+			}
+		},
 		"pricing": {
 			"type": "object",
 			"description": "Runtime unit: USD cents per 1M tokens. Tiers are absolute step rates, not marginal rates.",
@@ -426,6 +453,7 @@
 				"outputCentsPerMTokens": { "type": "number", "minimum": 0 },
 				"cacheReadCentsPerMTokens": { "type": "number", "minimum": 0 },
 				"cacheWriteCentsPerMTokens": { "type": "number", "minimum": 0 },
+				"searchUnitCents": { "type": "number", "minimum": 0 },
 				"tiers": {
 					"type": "array",
 					"items": { "$ref": "#/$defs/pricingTier" }

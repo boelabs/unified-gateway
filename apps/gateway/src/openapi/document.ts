@@ -9,6 +9,9 @@ import * as c from "./components.ts";
 import * as z from "zod/v4";
 
 const errorResponse = { $ref: "#/components/responses/Error" } as const;
+const rerankErrorResponse = {
+	$ref: "#/components/responses/OpenRouterError",
+} as const;
 const cacheParams = [
 	{ $ref: "#/components/parameters/CacheHeader" },
 	{ $ref: "#/components/parameters/CacheTtlHeader" },
@@ -42,7 +45,7 @@ export function buildOpenApiDocument() {
 				"?api_key=<key> query parameter (for browser EventSource clients). The master key is " +
 				"required for /admin/*.\n\n" +
 				"RESPONSE CONVENTIONS:\n" +
-				"- Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, " +
+				"- Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/rerank, " +
 				"/v1/models): documented OpenAI/OpenResponses-compatible contracts with explicit native-only features.\n" +
 				'- Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], ' +
 				'"pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.\n\n' +
@@ -119,6 +122,10 @@ export function buildOpenApiDocument() {
 				Error: {
 					description: "OpenAI-shaped error",
 					content: { "application/json": { schema: c.ErrorSchema } },
+				},
+				OpenRouterError: {
+					description: "OpenRouter-shaped rerank error",
+					content: { "application/json": { schema: c.OpenRouterError } },
 				},
 			},
 		},
@@ -394,6 +401,42 @@ export function buildOpenApiDocument() {
 						"401": errorResponse,
 						"403": errorResponse,
 						"429": errorResponse,
+					},
+				},
+			},
+			"/v1/rerank": {
+				post: {
+					operationId: "rerank",
+					tags: ["Inference"],
+					summary: "Rerank documents (OpenRouter contract, no-stream)",
+					description:
+						"Ranks 1-1000 text documents against a query. Requests route across OpenRouter and Vercel AI Gateway unless OpenRouter provider preferences are supplied, in which case only OpenRouter-backed deployments are eligible. Result documents are reconstructed from the request and response caching is disabled.",
+					requestBody: jsonBody(c.RerankRequest, {
+						mixedDocuments: {
+							value: {
+								model: "cohere/rerank-v3.5",
+								query: "What is the capital of France?",
+								documents: [
+									"Paris is the capital of France.",
+									{ text: "Berlin is the capital of Germany." },
+								],
+								top_n: 2,
+							},
+						},
+					}),
+					responses: {
+						"200": {
+							description: "OpenRouter-shaped rerank response",
+							content: { "application/json": { schema: c.RerankResponse } },
+						},
+						"400": rerankErrorResponse,
+						"401": rerankErrorResponse,
+						"403": rerankErrorResponse,
+						"413": rerankErrorResponse,
+						"429": rerankErrorResponse,
+						"500": rerankErrorResponse,
+						"502": rerankErrorResponse,
+						"503": rerankErrorResponse,
 					},
 				},
 			},
@@ -1189,7 +1232,7 @@ export function buildOpenApiDocument() {
 				get: {
 					tags: ["Admin"],
 					summary:
-						"Aggregate usage (requests, tokens, cost), optionally grouped (master key)",
+						"Aggregate usage (requests, tokens, search units, cost), optionally grouped (master key)",
 					description:
 						"Sums consumer usage/cost and estimated upstream cost over gateway operations. Accepts the same filters as /admin/logs. groupBy=none returns a single total.",
 					parameters: [
@@ -1231,7 +1274,7 @@ export function buildOpenApiDocument() {
 					responses: {
 						"200": {
 							description:
-								"{ data: [{ key, requests, promptTokens, completionTokens, reasoningTokens, totalTokens, consumerCostCents, upstreamCostCents }] }",
+								"{ data: [{ key, requests, promptTokens, completionTokens, reasoningTokens, totalTokens, searchUnits, consumerCostCents, upstreamCostCents }] }",
 						},
 						"400": errorResponse,
 					},

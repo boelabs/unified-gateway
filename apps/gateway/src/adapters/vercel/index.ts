@@ -1,10 +1,10 @@
 import { parseOpenAIChatChunk } from "#contracts/openai/chatTransport.ts";
-import type { AdapterContext, ProviderModule } from "#adapters/types.ts";
 import { mergeProviderFields } from "#core/providerSpecificFields.ts";
 import { makeOpenAIStyleAdapter } from "#adapters/openaiStyle.ts";
 import { looksLikeContextWindowError } from "#core/httpError.ts";
 import { GatewayError, type ErrorClass } from "#core/errors.ts";
 import type { ReasoningControlKind } from "#core/reasoning.ts";
+import { makeVercelRerankHandler } from "./rerank.ts";
 import { parseSSE } from "#core/sse.ts";
 
 import {
@@ -23,6 +23,12 @@ import {
 	applyVercelNativeReasoning,
 	vercelRestReasoningSpec,
 } from "./reasoning.ts";
+
+import type {
+	AdapterContext,
+	ProviderModule,
+	Adapter,
+} from "#adapters/types.ts";
 
 const DEFAULT_BASE_URL = "https://ai-gateway.vercel.sh/v1";
 const VERCEL_REASONING_KINDS = new Set<ReasoningControlKind>([
@@ -187,6 +193,15 @@ const openAIStyleChat = openAIStyle.chat!;
 
 export const vercelAdapter = {
 	...openAIStyle,
+	supportedCallTypes: new Set([...openAIStyle.supportedCallTypes, "rerank"]),
+	transports: {
+		...openAIStyle.transports,
+		rerank: {
+			supported: ["cohere_rerank"],
+			default: "cohere_rerank",
+		},
+	},
+	rerank: makeVercelRerankHandler(DEFAULT_BASE_URL),
 	reasoningKinds: VERCEL_REASONING_KINDS,
 	chat: {
 		...openAIStyleChat,
@@ -255,7 +270,7 @@ export const vercelAdapter = {
 			}
 		},
 	},
-} satisfies typeof openAIStyle;
+} satisfies Adapter;
 
 export const vercelProvider: ProviderModule = { adapter: vercelAdapter };
 

@@ -52,6 +52,11 @@ test("vercel registers the operations supported by the existing core", () => {
 	assert.ok(vercelAdapter.supportedCallTypes.has("embeddings"));
 	assert.ok(vercelAdapter.supportedCallTypes.has("images.generations"));
 	assert.ok(vercelAdapter.supportedCallTypes.has("images.edits"));
+	assert.ok(vercelAdapter.supportedCallTypes.has("rerank"));
+	assert.deepEqual(vercelAdapter.transports?.rerank, {
+		supported: ["cohere_rerank"],
+		default: "cohere_rerank",
+	});
 	assert.equal(vercelAdapter.audioTranscription, undefined);
 	assert.equal(vercelAdapter.videoGeneration, undefined);
 });

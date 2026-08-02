@@ -676,6 +676,7 @@ const routerSettingsSchema = z
 				"videos.generations",
 				"audio.transcriptions",
 				"embeddings",
+				"rerank",
 			]),
 			z.object({
 				json: executionPolicySchema,

@@ -182,6 +182,45 @@ test("Vercel catalog generates conservative embedding and image profiles", () =>
 	]);
 });
 
+test("Vercel reranking models generate text-only profiles and safe pricing", () => {
+	const generated = buildVercelCatalog([
+		{
+			id: "cohere/rerank-v4-pro",
+			type: "reranking",
+			context_window: 32_768,
+			modalities: { input: ["text", "image"], output: ["rerank"] },
+			pricing: { input: "0", output: "0" },
+		},
+		{
+			id: "voyage/rerank-2.5",
+			type: "reranking",
+			context_window: 32_000,
+			pricing: { input: "0.00000005", output: "0" },
+		},
+	]);
+	assert.deepEqual(generated.document.models["cohere/rerank-v4-pro"], {
+		operations: {
+			rerank: {
+				documentModalities: ["text"],
+				maxDocuments: 1_000,
+				maxTokensPerDocument: 32_768,
+				documentsPerSearchUnit: 100,
+			},
+		},
+		pricing: { searchUnitCents: 0.25 },
+	});
+	assert.deepEqual(generated.document.models["voyage/rerank-2.5"]?.pricing, {
+		inputCentsPerMTokens: 5,
+		outputCentsPerMTokens: 0,
+	});
+	assert.deepEqual(generated.report.ambiguousZeroPricing, [
+		"cohere/rerank-v4-pro",
+	]);
+	assert.deepEqual(generated.report.multimodalRerankWithheld, [
+		"cohere/rerank-v4-pro",
+	]);
+});
+
 test("Vercel multimodal language models expose image operations from source modalities", () => {
 	const generated = buildVercelCatalog([
 		language("google/gemini-image", {

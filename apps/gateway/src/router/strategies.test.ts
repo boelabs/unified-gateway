@@ -95,6 +95,23 @@ test("price-based chooses the lowest catalog price", () => {
 	assert.equal(pickDeployment("price-based", c, new Map()).row.id, "b");
 });
 
+test("price-based compares search-unit rates when every candidate uses that basis", () => {
+	const c = [cand("a"), cand("b")];
+	c[0]!.meta.pricing = { searchUnitCents: 0.25 };
+	c[1]!.meta.pricing = { searchUnitCents: 0.1 };
+	assert.equal(pickDeployment("price-based", c, new Map()).row.id, "b");
+});
+
+test("price-based never falsely compares token pricing with search-unit pricing", () => {
+	const c = [cand("tokens"), cand("search")];
+	c[0]!.meta.pricing = { inputCentsPerMTokens: 1 };
+	c[1]!.meta.pricing = { searchUnitCents: 10_000 };
+	const seen = new Set<string>();
+	for (let i = 0; i < 100; i++)
+		seen.add(pickDeployment("price-based", c, new Map()).row.id);
+	assert.deepEqual(seen, new Set(["tokens", "search"]));
+});
+
 test("health-aware chooses the strongest health score adjusted by weight", () => {
 	const c = [cand("a", 1), cand("b", 2)];
 	const m = metrics({ a: { healthScore: 0.9 }, b: { healthScore: 0.8 } });

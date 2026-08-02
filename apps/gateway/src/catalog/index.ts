@@ -141,6 +141,7 @@ export function resolveModelMetadata(
 	if (info?.image !== undefined) meta.image = info.image;
 	if (info?.video !== undefined) meta.video = info.video;
 	if (info?.embedding !== undefined) meta.embedding = info.embedding;
+	if (info?.rerank !== undefined) meta.rerank = info.rerank;
 	if (info?.operations !== undefined) meta.operations = info.operations;
 	return meta;
 }

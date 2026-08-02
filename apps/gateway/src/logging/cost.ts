@@ -10,6 +10,10 @@ export interface CostBreakdown {
 	cacheWriteCents: number;
 	/** Cost of output tokens, in USD cents. */
 	outputCents: number;
+	/** Cost of reranking search units, in USD cents. */
+	searchUnitCents: number;
+	/** Cost reported by the upstream, retained separately for reconciliation. */
+	providerReportedCents: number | null;
 	/** Total in USD cents. */
 	totalCents: number;
 }
@@ -46,6 +50,9 @@ function effectiveRates(p: PricingShape, promptTokens: number): PricingShape {
 		outputCentsPerMTokens: output,
 		cacheReadCentsPerMTokens: cacheRead,
 		cacheWriteCentsPerMTokens: cacheWrite,
+		...(p.searchUnitCents !== undefined
+			? { searchUnitCents: p.searchUnitCents }
+			: {}),
 	};
 }
 
@@ -76,12 +83,34 @@ export function computeCost(
 	const cacheReadCents = cacheRead * cacheReadRate;
 	const cacheWriteCents = cacheWrite * cacheWriteRate;
 	const outputCents = usage.completionTokens * outputRate;
+	const searchUnitCents =
+		(usage.searchUnits ?? 0) * (meta.pricing?.searchUnitCents ?? 0);
+	const providerReportedCents = usage.providerCostCents ?? null;
+	const configuredPricing = meta.pricing;
+	const hasConfiguredPricing =
+		configuredPricing !== undefined &&
+		(configuredPricing.inputCentsPerMTokens !== undefined ||
+			configuredPricing.outputCentsPerMTokens !== undefined ||
+			configuredPricing.cacheReadCentsPerMTokens !== undefined ||
+			configuredPricing.cacheWriteCentsPerMTokens !== undefined ||
+			configuredPricing.searchUnitCents !== undefined ||
+			(configuredPricing.tiers?.length ?? 0) > 0);
+	const calculatedCents =
+		inputCents +
+		cacheReadCents +
+		cacheWriteCents +
+		outputCents +
+		searchUnitCents;
 
 	return {
 		inputCents,
 		cacheReadCents,
 		cacheWriteCents,
 		outputCents,
-		totalCents: inputCents + cacheReadCents + cacheWriteCents + outputCents,
+		searchUnitCents,
+		providerReportedCents,
+		totalCents: hasConfiguredPricing
+			? calculatedCents
+			: (providerReportedCents ?? calculatedCents),
 	};
 }

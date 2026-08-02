@@ -15,6 +15,11 @@ import type {
 } from "#core/embeddings.ts";
 
 import type {
+	CanonicalRerankResponse,
+	CanonicalRerankRequest,
+} from "#core/rerank.ts";
+
+import type {
 	CanonicalChatResponse,
 	CanonicalChatRequest,
 } from "#core/canonical.ts";
@@ -37,13 +42,15 @@ export type ExtensionCanonicalRequest =
 	| CanonicalChatRequest
 	| CanonicalImageRequest
 	| CanonicalEmbeddingsRequest
-	| CanonicalTranscriptionRequest;
+	| CanonicalTranscriptionRequest
+	| CanonicalRerankRequest;
 
 export type ExtensionCanonicalResponse =
 	| CanonicalChatResponse
 	| CanonicalImageResponse
 	| CanonicalEmbeddingsResponse
-	| CanonicalTranscriptionResponse;
+	| CanonicalTranscriptionResponse
+	| CanonicalRerankResponse;
 
 export type ExtensionStreamEvent =
 	| CanonicalChatStreamChunk

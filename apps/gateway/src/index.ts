@@ -25,6 +25,7 @@ import { chatCompletionsHandler } from "./endpoints/chat.ts";
 import { transcriptionsHandler } from "./endpoints/audio.ts";
 import { messagesHandler } from "./endpoints/messages.ts";
 import { getRequestId } from "./http/requestContext.ts";
+import { rerankHandler } from "./endpoints/rerank.ts";
 import { authMiddleware } from "./auth/middleware.ts";
 import { startTelemetry } from "./telemetry/index.ts";
 import { startVideoJobs } from "./videos/jobs.ts";
@@ -113,6 +114,7 @@ app.use("*", async (c, next) => {
 // /v1/messages -> Anthropic shape; everything else -> OpenAI shape.
 app.onError((err, c) => {
 	const isAnthropic = c.req.path === "/v1/messages";
+	const isOpenRouterRerank = c.req.path === "/v1/rerank";
 	// A reachable-dependency failure (Postgres/Redis down) becomes a 503 + Retry-After so clients back
 	// off and retry, instead of the opaque 500 a raw driver error would otherwise produce.
 	const gatewayError = GatewayError.is(err)
@@ -128,7 +130,9 @@ app.onError((err, c) => {
 		}
 		const body = isAnthropic
 			? gatewayError.toAnthropic()
-			: gatewayError.toOpenAI();
+			: isOpenRouterRerank
+				? gatewayError.toOpenRouter()
+				: gatewayError.toOpenAI();
 		return c.json(body, gatewayError.httpStatus as ContentfulStatusCode);
 	}
 	log.error("http", "unhandled error", { err });
@@ -138,6 +142,12 @@ app.onError((err, c) => {
 				type: "error",
 				error: { type: "api_error", message: "Internal server error" },
 			},
+			500,
+		);
+	}
+	if (isOpenRouterRerank) {
+		return c.json(
+			{ error: { code: 500, message: "Internal server error" } },
 			500,
 		);
 	}
@@ -241,6 +251,7 @@ app.get("/v1/videos/:id", videoRetrieveHandler);
 app.delete("/v1/videos/:id", videoDeleteHandler);
 app.post("/v1/audio/transcriptions", transcriptionsHandler);
 app.post("/v1/embeddings", embeddingsHandler);
+app.post("/v1/rerank", rerankHandler);
 
 const webSocketServer = new WebSocketServer({
 	noServer: true,

@@ -6,6 +6,7 @@ import { decryptJson } from "#db/crypto.ts";
 import {
 	transcriptionProfileFor,
 	embeddingProfileFor,
+	rerankProfileFor,
 	imageProfileFor,
 	videoProfileFor,
 } from "#catalog/types.ts";
@@ -61,6 +62,7 @@ export async function listDeploymentCandidates(
 			if (callType === "audio.transcriptions" && !transcriptionProfileFor(meta))
 				continue;
 			if (callType === "embeddings" && !embeddingProfileFor(meta)) continue;
+			if (callType === "rerank" && !rerankProfileFor(meta)) continue;
 			out.push({ row, adapter, upstreamModel, meta });
 		}
 	}

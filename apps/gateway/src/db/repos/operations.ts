@@ -220,6 +220,7 @@ export async function aggregateOperationUsage(
 		completionTokens: sql<number>`coalesce(sum(${gatewayOperations.completionTokens}), 0)::int`,
 		reasoningTokens: sql<number>`coalesce(sum(${gatewayOperations.reasoningTokens}), 0)::int`,
 		totalTokens: sql<number>`coalesce(sum(${gatewayOperations.totalTokens}), 0)::int`,
+		searchUnits: sql<number>`coalesce(sum(${gatewayOperations.searchUnits}), 0)::int`,
 		consumerCostCents: sql<number>`coalesce(sum(${gatewayOperations.consumerCostCents}), 0)::float8`,
 		upstreamCostCents: sql<number>`coalesce(sum(${gatewayOperations.upstreamCostCents}), 0)::float8`,
 	};

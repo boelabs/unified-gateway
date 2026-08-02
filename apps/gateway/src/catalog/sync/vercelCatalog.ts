@@ -20,11 +20,12 @@ const TEXT_MODALITIES = new Set([
 type Pricing = NonNullable<CatalogEntry["pricing"]>;
 type PricingTier = NonNullable<Pricing["tiers"]>[number];
 type PricingField = Exclude<keyof Pricing, "tiers">;
+type TierPricingField = Exclude<PricingField, "searchUnitCents">;
 type TierField = Exclude<keyof VercelModelPricing, "image">;
 
 interface TierDefinition {
 	source: TierField;
-	target: PricingField;
+	target: TierPricingField;
 }
 
 const TIER_DEFINITIONS: readonly TierDefinition[] = [
@@ -34,7 +35,19 @@ const TIER_DEFINITIONS: readonly TierDefinition[] = [
 	{ source: "input_cache_write_tiers", target: "cacheWriteCentsPerMTokens" },
 ];
 
-const SUPPORTED_TYPES = new Set(["language", "embedding", "image"]);
+const SUPPORTED_TYPES = new Set([
+	"language",
+	"embedding",
+	"image",
+	"reranking",
+]);
+
+/** Reviewed USD-cent prices per Cohere search (up to 100 documents). */
+const RERANK_SEARCH_UNIT_CENTS: Readonly<Record<string, number>> = {
+	"cohere/rerank-v3.5": 0.1,
+	"cohere/rerank-v4-fast": 0.2,
+	"cohere/rerank-v4-pro": 0.25,
+};
 
 export interface VercelCatalogReport {
 	sourceModels: number;
@@ -45,6 +58,10 @@ export interface VercelCatalogReport {
 	unrepresentedPricing: Array<{ id: string; field: string }>;
 	reasoningWithoutEffortLevels: string[];
 	unrecognizedReasoningEfforts: Array<{ id: string; values: string[] }>;
+	ambiguousZeroPricing: string[];
+	multimodalRerankWithheld: string[];
+	orphanedRerankPricingOverrides: string[];
+	paidRerankModelsWithoutCost: string[];
 }
 
 export interface VercelCatalogGeneration {
@@ -313,6 +330,45 @@ function imageEntry(
 	};
 }
 
+function hasOnlyZeroRates(pricing: Pricing | undefined): boolean {
+	if (!pricing) return false;
+	const values = Object.entries(pricing)
+		.filter(([key]) => key !== "tiers")
+		.map(([, value]) => value);
+	return values.length > 0 && values.every((value) => value === 0);
+}
+
+function rerankEntry(
+	model: VercelModel,
+	report: VercelCatalogReport,
+): CatalogEntry {
+	const maxTokensPerDocument = positiveInteger(model.context_window);
+	const sourcePricing = pricingForVercelModel(model.pricing);
+	const pricing = hasOnlyZeroRates(sourcePricing) ? undefined : sourcePricing;
+	if (hasOnlyZeroRates(sourcePricing))
+		report.ambiguousZeroPricing.push(model.id);
+	const searchUnitCents = RERANK_SEARCH_UNIT_CENTS[model.id];
+	const effectivePricing =
+		searchUnitCents !== undefined ? { ...pricing, searchUnitCents } : pricing;
+	if (model.modalities?.input?.includes("image"))
+		report.multimodalRerankWithheld.push(model.id);
+	if (!effectivePricing && !model.id.endsWith(":free"))
+		report.paidRerankModelsWithoutCost.push(model.id);
+	return {
+		operations: {
+			rerank: {
+				documentModalities: ["text"],
+				maxDocuments: 1_000,
+				...(maxTokensPerDocument !== undefined ? { maxTokensPerDocument } : {}),
+				...(model.id.startsWith("cohere/")
+					? { documentsPerSearchUnit: 100 }
+					: {}),
+			},
+		},
+		...(effectivePricing ? { pricing: effectivePricing } : {}),
+	};
+}
+
 function increment(record: Record<string, number>, key: string): void {
 	record[key] = (record[key] ?? 0) + 1;
 }
@@ -329,6 +385,10 @@ export function buildVercelCatalog(
 		unrepresentedPricing: [],
 		reasoningWithoutEffortLevels: [],
 		unrecognizedReasoningEfforts: [],
+		ambiguousZeroPricing: [],
+		multimodalRerankWithheld: [],
+		orphanedRerankPricingOverrides: [],
+		paidRerankModelsWithoutCost: [],
 	};
 	const models: Record<string, CatalogEntry> = {};
 	const seen = new Set<string>();
@@ -355,10 +415,15 @@ export function buildVercelCatalog(
 				? languageEntry(model, report)
 				: type === "embedding"
 					? embeddingEntry(model)
-					: imageEntry(model, report);
+					: type === "image"
+						? imageEntry(model, report)
+						: rerankEntry(model, report);
 		models[model.id] = entry;
 		increment(report.includedByType, type);
 		report.includedModels += 1;
+	}
+	for (const id of Object.keys(RERANK_SEARCH_UNIT_CENTS)) {
+		if (!seen.has(id)) report.orphanedRerankPricingOverrides.push(id);
 	}
 	return {
 		document: {
