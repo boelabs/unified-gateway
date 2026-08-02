@@ -38,7 +38,7 @@ const policy = (
 export const DEFAULT_EXECUTION_POLICIES: ExecutionPolicies = {
 	chat: {
 		json: policy(30_000, null, null, 100_000, 100_000, 6),
-		stream: policy(30_000, 30_000, 90_000, 100_000, 600_000, 6),
+		stream: policy(15_000, 30_000, 90_000, 25_000, 600_000, 6),
 	},
 	"images.generations": {
 		json: policy(60_000, null, null, 180_000, 600_000, 3),

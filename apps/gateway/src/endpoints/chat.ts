@@ -1,5 +1,8 @@
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { hasContentInputs } from "#files/requestContentInputs.ts";
+import { chatChunkSemantic } from "#gateway/streamLifecycle.ts";
+import type { CanonicalChatRequest } from "#core/canonical.ts";
+import type { EffectiveSettings } from "#router/settings.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
 import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
@@ -9,6 +12,18 @@ import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
 import type { Context } from "hono";
+
+import {
+	finishDownstreamWriteObservation,
+	markDownstreamSemanticWritten,
+	markDownstreamTerminalWritten,
+	newDownstreamWriteObservation,
+	markDownstreamClientAborted,
+	awaitWithSSEHeartbeats,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
 
 import {
 	applyCanonicalResponseExtensions,
@@ -42,12 +57,181 @@ import {
 	attachRoutingMetadata,
 } from "./runtime/routingMetadata.ts";
 
-import {
-	newDownstreamWriteObservation,
-	withSSEHeartbeats,
-	writeSSEHeartbeat,
-	writeSSE,
-} from "./runtime/sse.ts";
+function streamChatCompletion(
+	c: Context<AppEnv>,
+	canonical: CanonicalChatRequest,
+	settings: EffectiveSettings,
+	log: RequestLogDraft,
+): Response {
+	return streamSSE(c, async (stream) => {
+		const downstream = newDownstreamWriteObservation(log.operationId);
+		stream.onAbort(() => {
+			markDownstreamClientAborted(downstream);
+			log.abortClient();
+		});
+		let routed: Awaited<ReturnType<typeof routeChat>> | null = null;
+		let finalUsage: Usage | null = null;
+		let firstTokenAt: number | null = null;
+		let lastChunkAt: number | null = null;
+		let content = "";
+		let streamError: GatewayError | null = null;
+		let metadata: Record<string, unknown> = { downstream };
+		try {
+			// Force headers onto the wire before upstream routing can stall.
+			await writeSSEHeartbeat(stream, downstream);
+			const routePromise = routeChat(c, canonical, log.requestId, settings, {
+				signal: log.clientSignal,
+				operationId: log.operationId,
+			});
+			routed = await awaitWithSSEHeartbeats(routePromise, () =>
+				writeSSEHeartbeat(stream, downstream),
+			);
+			const { routing, parameterPolicy, contentInputResolution } = routed;
+			log.applyRouting(routing);
+			if (routing.value.kind !== "stream")
+				throw new GatewayError({
+					class: "server",
+					message: "Streaming chat unexpectedly returned JSON",
+				});
+			const upstreamStartedAt = routing.upstreamStartedAt;
+			const meta = routing.candidate.meta;
+			metadata = {
+				...candidateMetadata(routing.candidate),
+				streamLifecycle: routing.value.observation,
+				downstream,
+			};
+			const reasoning = reasoningLogInfo(
+				canonical.reasoning,
+				meta.capabilities.reasoning ? meta.reasoning : undefined,
+			);
+			if (reasoning) metadata.reasoning = reasoning;
+			const parameterMetadata = parameterPolicyLogMetadata(
+				parameterPolicy,
+				settings.unsupportedParameterStrategy,
+			);
+			if (parameterMetadata) metadata.parameterPolicy = parameterMetadata;
+			const contentInputMetadata = contentInputResolutionLogMetadata(
+				contentInputResolution,
+			);
+			if (contentInputMetadata) metadata.contentInputs = contentInputMetadata;
+			const routingMetadata = routingMetadataRequested(c)
+				? publicRoutingMetadata(routing, settings)
+				: null;
+			const chunks = tapFirstToken(
+				routing.value.chunks,
+				(at) => {
+					firstTokenAt = at;
+				},
+				(at) => {
+					lastChunkAt = at;
+				},
+			);
+			for await (const chunk of withSSEHeartbeats(chunks, () =>
+				writeSSEHeartbeat(stream, downstream),
+			)) {
+				log.progress();
+				const transformed = await applyStreamEventExtensions(
+					c,
+					"chat",
+					canonical.model,
+					chunk,
+				);
+				const delta = transformed.choices[0]?.delta;
+				if (delta?.content) content += delta.content;
+				if (transformed.usage) finalUsage = transformed.usage;
+
+				let out = transformed;
+				if (!canonical.includeUsage && transformed.usage !== undefined) {
+					if (transformed.choices.length === 0) continue;
+					out = { ...transformed };
+					delete out.usage;
+				}
+				await writeSSE(
+					stream,
+					{ data: JSON.stringify(toOpenAIChatChunk(out)) },
+					downstream,
+				);
+				const semantic = chatChunkSemantic(transformed);
+				if (
+					semantic === "reasoning" ||
+					semantic === "content" ||
+					semantic === "tool"
+				)
+					markDownstreamSemanticWritten(downstream);
+				if (transformed.choices.some((choice) => choice.finishReason !== null))
+					markDownstreamTerminalWritten(downstream);
+			}
+			if (routingMetadata)
+				await writeSSE(
+					stream,
+					{
+						data: JSON.stringify({
+							id: `chatcmpl-${log.requestId}`,
+							object: "chat.completion.chunk",
+							created: Math.floor(Date.now() / 1000),
+							model: routing.candidate.row.publicModel,
+							choices: [],
+							unified_routing: routingMetadata,
+						}),
+					},
+					downstream,
+				);
+			await writeSSE(stream, { data: "[DONE]" }, downstream);
+			markDownstreamTerminalWritten(downstream);
+			if (firstTokenAt !== null)
+				log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
+		} catch (error) {
+			streamError = toGatewayError(error);
+			log.applyFailedAttempts(streamError.attempts);
+			if (streamError.code === "downstream_backpressure") log.abortUpstream();
+			await notifyExtensionError(c, "chat", canonical.model, streamError);
+			if (
+				streamError.code !== "downstream_backpressure" &&
+				!log.clientSignal.aborted
+			)
+				try {
+					await writeSSE(
+						stream,
+						{ data: JSON.stringify(streamError.toOpenAI()) },
+						downstream,
+					);
+					await writeSSE(stream, { data: "[DONE]" }, downstream);
+					markDownstreamTerminalWritten(downstream);
+				} catch {
+					// The original stream failure remains authoritative.
+				}
+		} finally {
+			if (routed) {
+				await routed.routing.finish(
+					finalUsage,
+					lastChunkAt ?? undefined,
+					streamError,
+					undefined,
+					downstream,
+				);
+			} else {
+				finishDownstreamWriteObservation(downstream, streamError?.code);
+			}
+			const cost = routed
+				? accountUsage(c, routed.routing.candidate.meta, finalUsage)
+				: null;
+			log.write({
+				status: streamError ? "error" : "success",
+				httpStatus:
+					downstream.clientAbortAt !== null ||
+					streamError?.code === "client_closed_request"
+						? 499
+						: 200,
+				usage: finalUsage,
+				cost,
+				ttftMs: firstTokenAt !== null ? firstTokenAt - log.startedAt : null,
+				responseBody: { streamed: true, content },
+				metadata,
+				error: streamError ? streamError.toLog() : null,
+			});
+		}
+	});
+}
 
 /** POST /v1/chat/completions - compatible public contract, stream and non-stream, with logging. */
 export async function chatCompletionsHandler(
@@ -80,6 +264,8 @@ export async function chatCompletionsHandler(
 		if (cache.hit) return c.json(cache.body as object);
 
 		const settings = await getEffectiveSettings();
+		if (canonical.stream)
+			return streamChatCompletion(c, canonical, settings, log);
 		const { routing, parameterPolicy, contentInputResolution } =
 			await routeChat(c, canonical, log.requestId, settings, {
 				signal: log.clientSignal,
@@ -141,112 +327,9 @@ export async function chatCompletionsHandler(
 			});
 			return c.json(oa);
 		}
-
-		let firstTokenAt: number | null = null;
-		let lastChunkAt: number | null = null;
-		const chunks = tapFirstToken(
-			routing.value.chunks,
-			(at) => {
-				firstTokenAt = at;
-			},
-			(at) => {
-				lastChunkAt = at;
-			},
-		);
-		return streamSSE(c, async (stream) => {
-			stream.onAbort(() => log.abortClient());
-			const downstream = newDownstreamWriteObservation(log.operationId);
-			let finalUsage: Usage | null = null;
-			let content = "";
-			let streamError: GatewayError | null = null;
-			try {
-				for await (const chunk of withSSEHeartbeats(chunks, () =>
-					writeSSEHeartbeat(stream, downstream),
-				)) {
-					log.progress();
-					const transformed = await applyStreamEventExtensions(
-						c,
-						"chat",
-						canonical.model,
-						chunk,
-					);
-					const delta = transformed.choices[0]?.delta;
-					if (delta?.content) content += delta.content;
-					if (transformed.usage) finalUsage = transformed.usage; // capture ALWAYS for accounting
-
-					// Fidelity to the client: we only send usage if it was requested (include_usage).
-					let out = transformed;
-					if (!canonical.includeUsage && transformed.usage !== undefined) {
-						if (transformed.choices.length === 0) continue; // usage-only chunk -> do not forward
-						out = { ...transformed };
-						delete out.usage;
-					}
-					await writeSSE(
-						stream,
-						{
-							data: JSON.stringify(toOpenAIChatChunk(out)),
-						},
-						downstream,
-					);
-				}
-				if (routingMetadata) {
-					await writeSSE(
-						stream,
-						{
-							data: JSON.stringify({
-								id: `chatcmpl-${log.requestId}`,
-								object: "chat.completion.chunk",
-								created: Math.floor(Date.now() / 1000),
-								model: routing.candidate.row.publicModel,
-								choices: [],
-								unified_routing: routingMetadata,
-							}),
-						},
-						downstream,
-					);
-				}
-				await writeSSE(stream, { data: "[DONE]" }, downstream);
-			} catch (err) {
-				streamError = GatewayError.is(err)
-					? err
-					: new GatewayError({
-							class: "server",
-							message: "Error during streaming",
-							cause: err,
-						});
-				await notifyExtensionError(c, "chat", canonical.model, streamError);
-				if (streamError.code !== "downstream_backpressure") {
-					await writeSSE(
-						stream,
-						{
-							data: JSON.stringify(streamError.toOpenAI()),
-						},
-						downstream,
-					);
-					await writeSSE(stream, { data: "[DONE]" }, downstream);
-				}
-			} finally {
-				if (firstTokenAt !== null)
-					log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-				await routing.finish(
-					finalUsage,
-					lastChunkAt ?? undefined,
-					streamError,
-					undefined,
-					downstream,
-				);
-				const cost = accountUsage(c, meta, finalUsage);
-				log.write({
-					status: streamError ? "error" : "success",
-					httpStatus: 200,
-					usage: finalUsage,
-					cost,
-					ttftMs: firstTokenAt !== null ? firstTokenAt - log.startedAt : null,
-					responseBody: { streamed: true, content },
-					metadata,
-					error: streamError ? streamError.toLog() : null,
-				});
-			}
+		throw new GatewayError({
+			class: "server",
+			message: "Non-streaming chat unexpectedly returned a stream",
 		});
 	} catch (err) {
 		const ge = toGatewayError(err);

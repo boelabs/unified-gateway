@@ -27,6 +27,8 @@ export interface UpstreamErrorMapping {
 	 * E.g. `context_window` by message, `content_policy` by code. Returns `null` if it does not apply.
 	 */
 	refineBadRequest?: (message: string, body: unknown) => ErrorClass | null;
+	/** Provider-body retry hint used when the HTTP Retry-After header is absent. */
+	retryAfterMs?: (status: number, body: unknown) => number | undefined;
 }
 
 function upstreamMessage(body: unknown, label: string, status: number): string {
@@ -59,7 +61,9 @@ export function mapUpstreamHttpError(
 			cls = mapping.refineBadRequest(message, up.body) ?? cls;
 		}
 		// Provider detail -> logs (raw provider); the client sees the generic public message.
-		const retryAfterMs = parseRetryAfter(up.headers?.["retry-after"]);
+		const headerRetryAfterMs = parseRetryAfter(up.headers?.["retry-after"]);
+		const retryAfterMs =
+			headerRetryAfterMs ?? mapping.retryAfterMs?.(up.status, up.body);
 		return new GatewayError({
 			class: cls,
 			message,

@@ -117,14 +117,11 @@ export class RequestLogDraft {
 		this.ip = clientIp(c);
 		this.userAgent = c.req.header("user-agent") ?? null;
 		if (opts?.publicModel !== undefined) this._publicModel = opts.publicModel;
-		if (c.req.raw.signal.aborted)
-			this.clientAbortController.abort(c.req.raw.signal.reason);
+		if (c.req.raw.signal.aborted) this.abortClient();
 		else
-			c.req.raw.signal.addEventListener(
-				"abort",
-				() => this.clientAbortController.abort(c.req.raw.signal.reason),
-				{ once: true },
-			);
+			c.req.raw.signal.addEventListener("abort", () => this.abortClient(), {
+				once: true,
+			});
 		this.operationStarted = beginOperation({
 			id: this.operationId,
 			requestId: this.requestId,
@@ -150,9 +147,20 @@ export class RequestLogDraft {
 
 	abortClient(): void {
 		if (!this.clientAbortController.signal.aborted)
-			this.clientAbortController.abort(
-				new DOMException("Client closed the response stream", "AbortError"),
-			);
+			this.clientAbortController.abort({
+				owner: "client",
+				type: "cancelled",
+			});
+	}
+
+	/** Cancels in-flight upstream work because the downstream can no longer be served. */
+	abortUpstream(): void {
+		if (!this.clientAbortController.signal.aborted)
+			this.clientAbortController.abort({
+				owner: "gateway",
+				type: "downstream_backpressure",
+				phase: "rendering",
+			});
 	}
 
 	/** Fills the draft with the router's winning attempt. */

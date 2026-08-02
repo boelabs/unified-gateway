@@ -38,7 +38,11 @@ describe("observeChatStream", () => {
 			yield chunk(undefined, "stop");
 		}
 		const observed = observeChatStream(source());
-		assert.equal((await drain(observed.items)).length, 2);
+		const values = await drain(observed.items);
+		assert.deepEqual(
+			values.map((value) => value.choices[0]?.finishReason),
+			[null, null, "stop"],
+		);
 		assert.equal(observed.observation.contentFrames, 1);
 		assert.deepEqual(observed.observation.terminal, {
 			outcome: "completed",
@@ -88,6 +92,7 @@ describe("observeChatStream", () => {
 
 	test("coalesces repeated compatible terminal evidence", async () => {
 		async function* source() {
+			yield chunk("complete");
 			yield chunk(undefined, "stop");
 			yield {
 				...chunk(undefined, "stop"),
@@ -95,7 +100,11 @@ describe("observeChatStream", () => {
 			};
 		}
 		const observed = observeChatStream(source());
-		assert.equal((await drain(observed.items)).length, 2);
+		const values = await drain(observed.items);
+		assert.equal(
+			values.filter((value) => value.choices[0]?.finishReason !== null).length,
+			1,
+		);
 		assert.equal(observed.observation.usageFrames, 1);
 		assert.deepEqual(observed.observation.terminal, {
 			outcome: "completed",
@@ -116,10 +125,54 @@ describe("observeChatStream", () => {
 		);
 	});
 
-	test("rejects semantic output after the terminal frame", async () => {
+	test("holds provisional terminal evidence until trailing semantic output ends", async () => {
 		async function* source() {
 			yield chunk(undefined, "stop");
 			yield chunk("late output");
+		}
+		const values = await drain(observeChatStream(source()).items);
+		assert.deepEqual(
+			values.map((value) => value.choices[0]?.finishReason),
+			[null, null, "stop"],
+		);
+	});
+
+	test("normalizes a provisional stop followed by a tool call", async () => {
+		async function* source() {
+			yield chunk(undefined, "stop");
+			yield {
+				...chunk(undefined),
+				choices: [
+					{
+						index: 0,
+						delta: {
+							toolCalls: [
+								{
+									index: 0,
+									id: "call-1",
+									name: "search_web",
+									arguments: "{}",
+								},
+							],
+						},
+						finishReason: null,
+					},
+				],
+			};
+		}
+		const observed = observeChatStream(source());
+		const values = await drain(observed.items);
+		assert.equal(values.at(-1)?.choices[0]?.finishReason, "tool_calls");
+		assert.deepEqual(observed.observation.terminal, {
+			outcome: "completed",
+			reason: "tool_calls",
+			usage: null,
+		});
+	});
+
+	test("rejects a streaming stop without semantic output", async () => {
+		async function* source() {
+			yield chunk(undefined, "stop");
 		}
 		await assert.rejects(
 			() => drain(observeChatStream(source()).items),
