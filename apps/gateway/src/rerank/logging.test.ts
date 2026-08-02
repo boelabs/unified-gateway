@@ -1,9 +1,9 @@
-import { rerankResponseLog, rerankRequestLog } from "./logging.ts";
+import { rerankResponseSummary, rerankRequestSummary } from "./logging.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
 test("rerank logging keeps sizes and option names without query or documents", () => {
-	const summary = rerankRequestLog({
+	const summary = rerankRequestSummary({
 		model: "public-reranker",
 		query: "secret query",
 		documents: [
@@ -29,7 +29,7 @@ test("rerank logging keeps sizes and option names without query or documents", (
 
 test("rerank response logging stores only result indexes, usage, and cost", () => {
 	assert.deepEqual(
-		rerankResponseLog(
+		rerankResponseSummary(
 			{
 				results: [
 					{ index: 2, relevanceScore: 0.9 },

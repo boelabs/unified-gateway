@@ -11,6 +11,7 @@
 import "zod-openapi"; // ambient types for `.meta({ id, ... })`
 
 import { EXECUTION_POLICY_MAX_TOTAL_MS } from "#core/executionPolicy.ts";
+import { transcriptionFieldsSchema } from "#contracts/openai/audio.ts";
 import { rerankRequestSchema } from "#contracts/openrouter/rerank.ts";
 import { OPERATION_IDS } from "#operations/registry.ts";
 import { EFFORT_ORDER } from "#core/reasoning.ts";
@@ -32,6 +33,22 @@ const reasoningConfig = loose(
 		summary: z.enum(["auto", "none", "concise", "detailed"]).optional(),
 	},
 	{},
+);
+
+export const AudioTranscriptionRequest = transcriptionFieldsSchema
+	.extend({ file: z.file() })
+	.meta({ id: "AudioTranscriptionRequest" });
+
+export const AudioTranscriptionResponse = loose(
+	{
+		text: z.string(),
+		language: z.string().optional(),
+		duration: z.number().optional(),
+		words: z.array(z.record(z.string(), z.unknown())).optional(),
+		segments: z.array(z.record(z.string(), z.unknown())).optional(),
+		usage: z.record(z.string(), z.unknown()).optional(),
+	},
+	{ id: "AudioTranscriptionResponse" },
 );
 
 /* ------------------------------------------------------------------ shared */
@@ -728,7 +745,7 @@ export const CreateDeployment = z
 		}),
 		label: nullableString.optional().meta({
 			description:
-				"Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label).",
+				"Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into operation metadata and attempt records.",
 		}),
 		failureDomain: nullableString.optional().meta({
 			description:

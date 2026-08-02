@@ -182,7 +182,7 @@ Instances are not pinned to a version; they always bind to the currently active 
 Invalid module exports, a key mismatch, or oversized source are rejected at **upload** time with a
 `400` — they never reach the database. **Loading is never fatal:** a bad artifact (failed import or
 integrity check) is skipped, and an instance that references a missing definition or has invalid
-config is disabled and surfaced in status. A disabled **critical** instance makes `/health` report
+config is disabled and surfaced in status. A disabled **critical** instance makes `/health/ready` report
 unhealthy and fails its matched requests closed with `extension_disabled`, but the gateway still boots
 and the Admin API stays reachable — so you can fix the problem (e.g. upload the missing definition) and
 the next reload re-activates it. The gateway never crash-loops over a misconfigured extension.
@@ -190,7 +190,7 @@ the next reload re-activates it. The gateway never crash-loops over a misconfigu
 At runtime, hook failures return a sanitized gateway error for that request. After
 `UNIFIED_GATEWAY_EXTENSION_MAX_FAILURES` consecutive failures, the instance is disabled for the current
 process. If a disabled instance is critical, affected requests fail with `extension_disabled` and
-`/health` returns unhealthy. Non-critical disabled instances are skipped and reported as degraded.
+`/health/ready` returns unhealthy. Non-critical disabled instances are skipped and reported as degraded.
 
 Each hook runs under a wall-clock budget (`UNIFIED_GATEWAY_EXTENSION_HOOK_TIMEOUT_MS`, default 5000ms;
 set `0` to disable). A hook that exceeds it — or one that ignores its `ctx.signal` while the client

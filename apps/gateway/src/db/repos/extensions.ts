@@ -1,4 +1,4 @@
-import { encryptJson, decryptJson } from "#db/crypto.ts";
+import { decryptString, encryptJson } from "#db/crypto.ts";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "#db/client.ts";
 
@@ -61,7 +61,7 @@ export async function listActiveArtifactsWithCode(): Promise<
 		key: row.key,
 		version: row.version,
 		contentHash: row.contentHash,
-		code: decryptJson<string>(row.code),
+		code: decryptString(row.code, "extension-source"),
 	}));
 }
 
@@ -127,7 +127,7 @@ export async function insertActiveArtifact(
 				version: nextVersion,
 				contentHash: input.contentHash,
 				sizeBytes: input.sizeBytes,
-				code: encryptJson(input.code),
+				code: encryptJson(input.code, "extension-source"),
 				status: "active",
 				uploadedBy: input.uploadedBy,
 			})

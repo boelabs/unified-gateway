@@ -1,8 +1,9 @@
 import { assertTranscriptionRequestSupported } from "#gateway/transcriptionRequestValidation.ts";
+import { estimateTokenReservation } from "#router/tokenReservation.ts";
 import { parseTranscriptionMultipart } from "#audio/multipart.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import { route, type RouteResult } from "#router/index.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { GatewayError } from "#core/errors.ts";
 import type { AppEnv } from "#auth/types.ts";
 import { streamSSE } from "hono/streaming";
@@ -12,9 +13,11 @@ import {
 	applyCanonicalResponseExtensions,
 	applyCanonicalRequestExtensions,
 	applyStreamEventExtensions,
+	assertFinalModelAllowed,
 	notifyExtensionError,
+	usageQuotaForRequest,
+	computeUsageCost,
 	toGatewayError,
-	accountUsage,
 	preflight,
 } from "./runtime/pipeline.ts";
 
@@ -62,12 +65,13 @@ async function handleTranscription(
 	cleanup: Cleanup,
 ): Promise<Response> {
 	let req = inputReq;
-	const log = new RequestLogDraft(c, "audio.transcriptions", {
+	const log = new OperationLogDraft(c, "audio.transcriptions", {
 		publicModel: req.model,
 	});
 	log.requestBody = requestBody;
 
 	let routing: RouteResult<TranscriptionExecResult> | null = null;
+	let fallbackUsage: ReturnType<typeof transcriptionUsageToCore> = null;
 	let finished = false;
 	let cleanupDeferred = false;
 
@@ -78,13 +82,20 @@ async function handleTranscription(
 	): Promise<void> => {
 		if (!routing || finished) return;
 		finished = true;
-		await routing.finish(usage, undefined, error, undefined, downstream);
+		await routing.finish(
+			usage ?? fallbackUsage,
+			undefined,
+			error,
+			undefined,
+			downstream,
+		);
 	};
 
 	try {
+		await preflight(c, req.model);
 		req = await applyCanonicalRequestExtensions(c, "audio.transcriptions", req);
 		log.publicModel = req.model;
-		await preflight(c, req.model);
+		assertFinalModelAllowed(c, req.model);
 
 		routing = await route(
 			req.model,
@@ -96,10 +107,17 @@ async function handleTranscription(
 				executionMode: req.stream ? "stream" : "json",
 				candidateEligibility: (candidate) =>
 					assertTranscriptionRequestSupported(req, candidate.meta),
+				tokenReservation: (candidate) =>
+					estimateTokenReservation(req, {
+						maxOutputTokens: candidate.meta.maxOutputTokens ?? 0,
+					}),
+				usageQuota: usageQuotaForRequest(c),
 			},
 			(candidate, ctx) => executeTranscription(candidate.adapter, req, ctx),
 		);
 		log.applyRouting(routing);
+		if (routing.value.kind === "json")
+			fallbackUsage = transcriptionUsageToCore(routing.value.response.usage);
 		const meta = routing.candidate.meta;
 		const metadata: Record<string, unknown> = {
 			...candidateMetadata(routing.candidate),
@@ -117,7 +135,7 @@ async function handleTranscription(
 				routing.value.response,
 			);
 			const core = transcriptionUsageToCore(response.usage);
-			const cost = accountUsage(c, meta, core);
+			const cost = computeUsageCost(meta, core);
 			await finish(core);
 			await cleanup();
 			log.write({
@@ -195,7 +213,7 @@ async function handleTranscription(
 					);
 			} finally {
 				const core = transcriptionUsageToCore(usage);
-				const cost = accountUsage(c, streamRouting.candidate.meta, core);
+				const cost = computeUsageCost(streamRouting.candidate.meta, core);
 				await finish(core, streamError, downstream);
 				await cleanup();
 				log.write({

@@ -4,9 +4,11 @@ import { authenticateRequest, getAuth } from "#auth/middleware.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { hasContentInputs } from "#files/requestContentInputs.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import type { EffectiveSettings } from "#router/settings.ts";
+import { RouteLifecycle } from "./runtime/routeLifecycle.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
+import type { ChatExecResult } from "#gateway/executor.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { upgradeWebSocket } from "@hono/node-server";
 import { tapFirstToken } from "#gateway/ttft.ts";
@@ -34,6 +36,21 @@ import {
 } from "#contracts/openai/responsesRender.ts";
 
 import {
+	applyCanonicalResponseExtensions,
+	applyCanonicalRequestExtensions,
+	applyStreamEventExtensions,
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	assertFinalModelAllowed,
+	notifyExtensionError,
+	openResponseCache,
+	computeUsageCost,
+	toGatewayError,
+	readJsonBody,
+	parseBody,
+	preflight,
+} from "./runtime/pipeline.ts";
+
+import {
 	finishDownstreamWriteObservation,
 	type DownstreamWriteObservation,
 	markDownstreamSemanticWritten,
@@ -45,19 +62,6 @@ import {
 	writeSSEHeartbeat,
 	writeSSE,
 } from "./runtime/sse.ts";
-
-import {
-	applyCanonicalResponseExtensions,
-	applyCanonicalRequestExtensions,
-	applyStreamEventExtensions,
-	notifyExtensionError,
-	openResponseCache,
-	toGatewayError,
-	accountUsage,
-	readJsonBody,
-	parseBody,
-	preflight,
-} from "./runtime/pipeline.ts";
 
 import {
 	compactResponseRequestSchema,
@@ -180,10 +184,11 @@ const COMPACTION_INSTRUCTIONS =
 export async function compactResponseHandler(
 	c: Context<AppEnv>,
 ): Promise<Response> {
-	const log = new RequestLogDraft(c, "responses.compact");
+	const log = new OperationLogDraft(c, "responses.compact");
+	const lifecycle = new RouteLifecycle<ChatExecResult>();
 	const auth = getAuth(c);
 	try {
-		const json = await readJsonBody(c);
+		const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 		log.requestBody = json;
 		const compact: CompactResponseRequest = parseBody(
 			compactResponseRequestSchema,
@@ -210,9 +215,10 @@ export async function compactResponseHandler(
 		});
 		const prepared = await prepareResponsesRequest(request, auth);
 		let canonical = responsesRequestToCanonical(prepared.req);
+		await preflight(c, canonical.model);
 		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
-		await preflight(c, canonical.model);
+		assertFinalModelAllowed(c, canonical.model);
 		const settings = await getEffectiveSettings();
 		const { routing, parameterPolicy, contentInputResolution } =
 			await routeChat(c, canonical, log.requestId, settings, {
@@ -220,6 +226,9 @@ export async function compactResponseHandler(
 				operationId: log.operationId,
 			});
 		log.applyRouting(routing);
+		lifecycle.attach(routing);
+		if (routing.value.kind === "json")
+			lifecycle.rememberUsage(routing.value.response.usage);
 		if (routing.value.kind !== "json")
 			throw new GatewayError({
 				class: "server",
@@ -237,9 +246,9 @@ export async function compactResponseHandler(
 				class: "server",
 				message: "Compaction returned no summary",
 			});
-		await routing.finish(response.usage);
+		await lifecycle.finish(response.usage);
 		const meta = routing.candidate.meta;
-		const cost = accountUsage(c, meta, response.usage);
+		const cost = computeUsageCost(meta, response.usage);
 		const metadata: Record<string, unknown> = candidateMetadata(
 			routing.candidate,
 		);
@@ -281,6 +290,7 @@ export async function compactResponseHandler(
 	} catch (error) {
 		const gatewayError = toGatewayError(error);
 		log.applyFailedAttempts(gatewayError.attempts);
+		await lifecycle.finish(null, gatewayError);
 		await notifyExtensionError(c, "chat", log.publicModel, gatewayError);
 		log.writeError(gatewayError);
 		throw error;
@@ -323,7 +333,7 @@ async function persistResponseState(opts: {
 
 function streamResponses(
 	c: Context<AppEnv>,
-	log: RequestLogDraft,
+	log: OperationLogDraft,
 	auth: Auth,
 	pipelineReq: ResponsesRequest,
 	prepared: PreparedResponsesRequest,
@@ -584,7 +594,7 @@ function streamResponses(
 				);
 			else finishDownstreamWriteObservation(downstream, streamError?.code);
 			const cost = routed
-				? accountUsage(c, routed.routing.candidate.meta, usage)
+				? computeUsageCost(routed.routing.candidate.meta, usage)
 				: null;
 			log.write({
 				status: streamError ? "error" : "success",
@@ -610,11 +620,12 @@ function streamResponses(
  * canonical result to the OpenResponses contract. Works with any provider.
  */
 export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
-	const log = new RequestLogDraft(c, "responses");
+	const log = new OperationLogDraft(c, "responses");
+	const lifecycle = new RouteLifecycle<ChatExecResult>();
 	const auth = getAuth(c);
 
 	try {
-		const json = await readJsonBody(c);
+		const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 		log.requestBody = json;
 		const req: ResponsesRequest = parseBody(responsesRequestSchema, json);
 		log.publicModel = req.model;
@@ -622,9 +633,10 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 		const prepared = await prepareResponsesRequest(req, auth);
 		const pipelineReq = prepared.req;
 		let canonical = responsesRequestToCanonical(pipelineReq);
+		await preflight(c, canonical.model);
 		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
-		await preflight(c, canonical.model);
+		assertFinalModelAllowed(c, canonical.model);
 
 		// Cache (opt-in, safe): only non-stream, without tools and without server-side state. Isolated per virtual
 		// key (no cross-tenant leak); MASTER never caches.
@@ -659,6 +671,9 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 				operationId: log.operationId,
 			});
 		log.applyRouting(routing);
+		lifecycle.attach(routing);
+		if (routing.value.kind === "json")
+			lifecycle.rememberUsage(routing.value.response.usage);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
 		const renderOpts: RenderOptions = {
@@ -699,8 +714,8 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 				routing.value.response,
 			);
 			const usage = response.usage;
-			await routing.finish(usage);
-			const cost = accountUsage(c, meta, usage);
+			await lifecycle.finish(usage);
+			const cost = computeUsageCost(meta, usage);
 			const internalRendered = canonicalToResponsesResponse(
 				response,
 				renderOpts,
@@ -739,6 +754,7 @@ export async function responsesHandler(c: Context<AppEnv>): Promise<Response> {
 	} catch (err) {
 		const ge = toGatewayError(err);
 		log.applyFailedAttempts(ge.attempts);
+		await lifecycle.finish(null, ge);
 		await notifyExtensionError(c, "chat", log.publicModel, ge);
 		log.writeError(ge);
 		throw err;
@@ -909,7 +925,8 @@ async function executeResponsesWebSocketTurn(
 	const requestId = randomUUID();
 	c.set("turnRequestId", requestId);
 	c.set("turnSignal", turnAbort.signal);
-	const log = new RequestLogDraft(c, "responses.websocket", { requestId });
+	const log = new OperationLogDraft(c, "responses.websocket", { requestId });
+	const lifecycle = new RouteLifecycle<ChatExecResult>();
 	let referencedPreviousId: string | null = null;
 	let logged = false;
 
@@ -969,9 +986,10 @@ async function executeResponsesWebSocketTurn(
 		const pipelineReq = prepared.req;
 		let canonical = responsesRequestToCanonical(pipelineReq);
 		canonical = { ...canonical, stream: true };
+		await preflight(c, canonical.model, { writeHeaders: false });
 		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
-		await preflight(c, canonical.model, { writeHeaders: false });
+		assertFinalModelAllowed(c, canonical.model);
 		const settings = await getEffectiveSettings();
 		const { routing, parameterPolicy, contentInputResolution } =
 			await routeChat(c, canonical, requestId, settings, {
@@ -990,6 +1008,9 @@ async function executeResponsesWebSocketTurn(
 					}),
 			});
 		log.applyRouting(routing);
+		lifecycle.attach(routing);
+		if (routing.value.kind === "json")
+			lifecycle.rememberUsage(routing.value.response.usage);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
 		const renderOpts: RenderOptions = {
@@ -1135,14 +1156,11 @@ async function executeResponsesWebSocketTurn(
 		} finally {
 			if (firstTokenAt !== null)
 				log.upstreamTtftMs = firstTokenAt - upstreamStartedAt;
-			await routing.finish(
-				usage,
-				lastChunkAt ?? undefined,
-				streamError,
-				undefined,
+			await lifecycle.finish(usage, streamError, {
+				...(lastChunkAt !== null ? { finishedAt: lastChunkAt } : {}),
 				downstream,
-			);
-			const cost = accountUsage(c, meta, usage);
+			});
+			const cost = computeUsageCost(meta, usage);
 			log.write({
 				status: streamError ? "error" : "success",
 				httpStatus: streamError?.httpStatus ?? 200,
@@ -1158,6 +1176,7 @@ async function executeResponsesWebSocketTurn(
 	} catch (error) {
 		const gatewayError = toGatewayError(error);
 		log.applyFailedAttempts(gatewayError.attempts);
+		await lifecycle.finish(null, gatewayError);
 		await notifyExtensionError(c, "chat", log.publicModel, gatewayError);
 		if (!logged) log.writeError(gatewayError);
 		if (

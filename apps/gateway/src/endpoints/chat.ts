@@ -2,9 +2,11 @@ import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { hasContentInputs } from "#files/requestContentInputs.ts";
 import { chatChunkSemantic } from "#gateway/streamLifecycle.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import type { EffectiveSettings } from "#router/settings.ts";
+import { RouteLifecycle } from "./runtime/routeLifecycle.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
+import type { ChatExecResult } from "#gateway/executor.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -12,6 +14,21 @@ import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
 import type { Context } from "hono";
+
+import {
+	applyCanonicalResponseExtensions,
+	applyCanonicalRequestExtensions,
+	applyStreamEventExtensions,
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	assertFinalModelAllowed,
+	notifyExtensionError,
+	openResponseCache,
+	computeUsageCost,
+	toGatewayError,
+	readJsonBody,
+	parseBody,
+	preflight,
+} from "./runtime/pipeline.ts";
 
 import {
 	finishDownstreamWriteObservation,
@@ -24,19 +41,6 @@ import {
 	writeSSEHeartbeat,
 	writeSSE,
 } from "./runtime/sse.ts";
-
-import {
-	applyCanonicalResponseExtensions,
-	applyCanonicalRequestExtensions,
-	applyStreamEventExtensions,
-	notifyExtensionError,
-	openResponseCache,
-	toGatewayError,
-	accountUsage,
-	readJsonBody,
-	parseBody,
-	preflight,
-} from "./runtime/pipeline.ts";
 
 import {
 	toCanonicalChatRequest,
@@ -61,7 +65,7 @@ function streamChatCompletion(
 	c: Context<AppEnv>,
 	canonical: CanonicalChatRequest,
 	settings: EffectiveSettings,
-	log: RequestLogDraft,
+	log: OperationLogDraft,
 ): Response {
 	return streamSSE(c, async (stream) => {
 		const downstream = newDownstreamWriteObservation(log.operationId);
@@ -213,7 +217,7 @@ function streamChatCompletion(
 				finishDownstreamWriteObservation(downstream, streamError?.code);
 			}
 			const cost = routed
-				? accountUsage(c, routed.routing.candidate.meta, finalUsage)
+				? computeUsageCost(routed.routing.candidate.meta, finalUsage)
 				: null;
 			log.write({
 				status: streamError ? "error" : "success",
@@ -237,17 +241,20 @@ function streamChatCompletion(
 export async function chatCompletionsHandler(
 	c: Context<AppEnv>,
 ): Promise<Response> {
-	const log = new RequestLogDraft(c, "chat");
+	const log = new OperationLogDraft(c, "chat");
+	const lifecycle = new RouteLifecycle<ChatExecResult>();
 
 	try {
-		const json = await readJsonBody(c);
+		const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 		log.requestBody = json;
 		const parsed = parseBody(chatRequestSchema, json);
 
 		let canonical = toCanonicalChatRequest(parsed);
-		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
 		await preflight(c, canonical.model);
+		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
+		log.publicModel = canonical.model;
+		assertFinalModelAllowed(c, canonical.model);
 
 		// Cache (opt-in, safe): only non-stream and without tools. Isolated per virtual key (no leak
 		// between tenants); the MASTER never caches (it has no tenant to isolate).
@@ -272,6 +279,9 @@ export async function chatCompletionsHandler(
 				operationId: log.operationId,
 			});
 		log.applyRouting(routing);
+		lifecycle.attach(routing);
+		if (routing.value.kind === "json")
+			lifecycle.rememberUsage(routing.value.response.usage);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
 		const metadata: Record<string, unknown> = {
@@ -307,8 +317,8 @@ export async function chatCompletionsHandler(
 				canonical.model,
 				routing.value.response,
 			);
-			await routing.finish(response.usage);
-			const cost = accountUsage(c, meta, response.usage);
+			await lifecycle.finish(response.usage);
+			const cost = computeUsageCost(meta, response.usage);
 			const baseResponse = toOpenAIChatResponse(response);
 			cache.store(baseResponse, response.usage);
 			const oa = attachRoutingMetadata(
@@ -334,6 +344,7 @@ export async function chatCompletionsHandler(
 	} catch (err) {
 		const ge = toGatewayError(err);
 		log.applyFailedAttempts(ge.attempts);
+		await lifecycle.finish(null, ge);
 		await notifyExtensionError(c, "chat", log.publicModel, ge);
 		log.writeError(ge);
 		throw err; // the global onError formats the OpenAI response

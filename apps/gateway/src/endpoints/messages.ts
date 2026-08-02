@@ -2,9 +2,11 @@ import { messagesRequestSchema } from "#contracts/anthropic/messages.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { hasContentInputs } from "#files/requestContentInputs.ts";
 import type { CanonicalChatRequest } from "#core/canonical.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import type { EffectiveSettings } from "#router/settings.ts";
+import { RouteLifecycle } from "./runtime/routeLifecycle.ts";
 import { getEffectiveSettings } from "#router/settings.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
+import type { ChatExecResult } from "#gateway/executor.ts";
 import { reasoningLogInfo } from "#core/reasoning.ts";
 import { tapFirstToken } from "#gateway/ttft.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -12,6 +14,21 @@ import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import { streamSSE } from "hono/streaming";
 import type { Context } from "hono";
+
+import {
+	applyCanonicalResponseExtensions,
+	applyCanonicalRequestExtensions,
+	applyStreamEventExtensions,
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	assertFinalModelAllowed,
+	notifyExtensionError,
+	openResponseCache,
+	computeUsageCost,
+	toGatewayError,
+	readJsonBody,
+	parseBody,
+	preflight,
+} from "./runtime/pipeline.ts";
 
 import {
 	finishDownstreamWriteObservation,
@@ -24,19 +41,6 @@ import {
 	writeSSEHeartbeat,
 	writeSSE,
 } from "./runtime/sse.ts";
-
-import {
-	applyCanonicalResponseExtensions,
-	applyCanonicalRequestExtensions,
-	applyStreamEventExtensions,
-	notifyExtensionError,
-	openResponseCache,
-	toGatewayError,
-	accountUsage,
-	readJsonBody,
-	parseBody,
-	preflight,
-} from "./runtime/pipeline.ts";
 
 import {
 	canonicalChunksToMessagesEvents,
@@ -61,7 +65,7 @@ function streamMessages(
 	c: Context<AppEnv>,
 	canonical: CanonicalChatRequest,
 	settings: EffectiveSettings,
-	log: RequestLogDraft,
+	log: OperationLogDraft,
 ): Response {
 	return streamSSE(c, async (stream) => {
 		const downstream = newDownstreamWriteObservation(log.operationId);
@@ -218,7 +222,7 @@ function streamMessages(
 				);
 			else finishDownstreamWriteObservation(downstream, streamError?.code);
 			const cost = routed
-				? accountUsage(c, routed.routing.candidate.meta, usage)
+				? computeUsageCost(routed.routing.candidate.meta, usage)
 				: null;
 			log.write({
 				status: streamError ? "error" : "success",
@@ -244,17 +248,19 @@ function streamMessages(
  * are returned with the Anthropic shape (onError decides based on the path).
  */
 export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
-	const log = new RequestLogDraft(c, "messages");
+	const log = new OperationLogDraft(c, "messages");
+	const lifecycle = new RouteLifecycle<ChatExecResult>();
 
 	try {
-		const json = await readJsonBody(c);
+		const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 		log.requestBody = json;
 		const req = parseBody(messagesRequestSchema, json);
 		log.publicModel = req.model;
 		let canonical = messagesRequestToCanonical(req);
+		await preflight(c, canonical.model);
 		canonical = await applyCanonicalRequestExtensions(c, "chat", canonical);
 		log.publicModel = canonical.model;
-		await preflight(c, canonical.model);
+		assertFinalModelAllowed(c, canonical.model);
 
 		// Isolated per virtual key (no leak between tenants); the MASTER never caches.
 		const cache = await openResponseCache({
@@ -277,6 +283,9 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 				operationId: log.operationId,
 			});
 		log.applyRouting(routing);
+		lifecycle.attach(routing);
+		if (routing.value.kind === "json")
+			lifecycle.rememberUsage(routing.value.response.usage);
 		const upstreamStartedAt = routing.upstreamStartedAt;
 		const meta = routing.candidate.meta;
 		const renderOpts: MessagesRenderOptions = {
@@ -316,8 +325,8 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 				routing.value.response,
 			);
 			const usage = response.usage;
-			await routing.finish(usage);
-			const cost = accountUsage(c, meta, usage);
+			await lifecycle.finish(usage);
+			const cost = computeUsageCost(meta, usage);
 			const rendered = canonicalToMessagesResponse(response, renderOpts);
 			cache.store(rendered, usage);
 			const body = attachRoutingMetadata(
@@ -344,6 +353,7 @@ export async function messagesHandler(c: Context<AppEnv>): Promise<Response> {
 	} catch (err) {
 		const ge = toGatewayError(err);
 		log.applyFailedAttempts(ge.attempts);
+		await lifecycle.finish(null, ge);
 		await notifyExtensionError(c, "chat", log.publicModel, ge);
 		log.writeError(ge);
 		throw err; // onError formats it in the Anthropic shape (based on the path)

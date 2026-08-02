@@ -1,7 +1,7 @@
 import { getAdapter } from "#adapters/registry.ts";
 import type { Adapter } from "#adapters/types.ts";
 import type { CallType } from "#core/callType.ts";
-import { decryptJson } from "#db/crypto.ts";
+import { decryptRecord } from "#db/crypto.ts";
 
 import {
 	transcriptionProfileFor,
@@ -73,5 +73,5 @@ export async function listDeploymentCandidates(
 export function decryptDeploymentCredentials(
 	candidate: DeploymentCandidate,
 ): Record<string, unknown> {
-	return decryptJson<Record<string, unknown>>(candidate.row.credentials);
+	return decryptRecord(candidate.row.credentials, "deployment-credentials");
 }

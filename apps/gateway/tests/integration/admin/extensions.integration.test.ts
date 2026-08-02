@@ -67,7 +67,7 @@ test("admin extensions: upload, instance, hot-reload, versioning, and cleanup", 
 		headers: json,
 		body: JSON.stringify({ key: KEY, code: moduleCode("v1") }),
 	});
-	assert.equal(up1.status, 201);
+	assert.equal(up1.status, 201, await up1.clone().text());
 	const v1 = (await up1.json()) as { data: { version: number } };
 	assert.equal(v1.data.version, 1);
 

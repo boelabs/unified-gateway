@@ -1,9 +1,10 @@
 import { assertImageRequestSupported } from "#gateway/imageRequestValidation.ts";
 import { executeImage, type ImageExecResult } from "#gateway/executor.ts";
+import { estimateTokenReservation } from "#router/tokenReservation.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import { parseImageEditMultipart } from "#images/multipart.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import { route, type RouteResult } from "#router/index.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { imageResponseLog } from "#images/logging.ts";
 import { imageProfileFor } from "#catalog/types.ts";
 import { imageUsageToCore } from "#core/images.ts";
@@ -17,23 +18,17 @@ import {
 	applyCanonicalRequestExtensions,
 	applyStreamEventExtensions,
 	applyImageOutputExtensions,
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	assertFinalModelAllowed,
 	notifyExtensionError,
+	usageQuotaForRequest,
+	computeUsageCost,
 	toGatewayError,
 	extensionScope,
-	accountUsage,
 	readJsonBody,
 	parseBody,
 	preflight,
 } from "./runtime/pipeline.ts";
-
-import {
-	finishDownstreamWriteObservation,
-	type DownstreamWriteObservation,
-	newDownstreamWriteObservation,
-	withSSEHeartbeats,
-	writeSSEHeartbeat,
-	writeSSE,
-} from "./runtime/sse.ts";
 
 import {
 	imageGenerationRequestSchema,
@@ -42,6 +37,14 @@ import {
 	toOpenAIImageEvent,
 	editToCanonical,
 } from "#contracts/openai/images.ts";
+
+import {
+	type DownstreamWriteObservation,
+	newDownstreamWriteObservation,
+	withSSEHeartbeats,
+	writeSSEHeartbeat,
+	writeSSE,
+} from "./runtime/sse.ts";
 
 import type {
 	CanonicalImageStreamEvent,
@@ -66,10 +69,11 @@ async function handleImageRequest(
 		req.operation === "generation"
 			? ("images.generations" as const)
 			: ("images.edits" as const);
-	const log = new RequestLogDraft(c, callType, { publicModel: req.model });
+	const log = new OperationLogDraft(c, callType, { publicModel: req.model });
 	log.requestBody = requestBody;
 
 	let routing: RouteResult<ImageExecResult> | null = null;
+	let fallbackUsage: ReturnType<typeof imageUsageToCore> = null;
 	let finished = false;
 	let cleanupDeferred = false;
 
@@ -80,13 +84,20 @@ async function handleImageRequest(
 	): Promise<void> => {
 		if (!routing || finished) return;
 		finished = true;
-		await routing.finish(usage, undefined, error, undefined, downstream);
+		await routing.finish(
+			usage ?? fallbackUsage,
+			undefined,
+			error,
+			undefined,
+			downstream,
+		);
 	};
 
 	try {
+		await preflight(c, req.model);
 		req = await applyCanonicalRequestExtensions(c, callType, req);
 		log.publicModel = req.model;
-		await preflight(c, req.model);
+		assertFinalModelAllowed(c, req.model);
 
 		routing = await route(
 			req.model,
@@ -98,10 +109,17 @@ async function handleImageRequest(
 				executionMode: req.stream ? "stream" : "json",
 				candidateEligibility: (candidate) =>
 					assertImageRequestSupported(req, candidate.meta),
+				tokenReservation: (candidate) =>
+					estimateTokenReservation(req, {
+						maxOutputTokens: candidate.meta.maxOutputTokens ?? 0,
+					}),
+				usageQuota: usageQuotaForRequest(c),
 			},
 			(candidate, ctx) => executeImage(candidate.adapter, req, ctx),
 		);
 		log.applyRouting(routing);
+		if (routing.value.kind === "json")
+			fallbackUsage = imageUsageToCore(routing.value.response.usage);
 		const metadata: Record<string, unknown> = {
 			...candidateMetadata(routing.candidate),
 			...(routing.value.kind === "stream"
@@ -130,10 +148,10 @@ async function handleImageRequest(
 			);
 			const response = transformedResponse;
 			const usage = imageUsageToCore(response.usage);
-			await finish(usage);
-			const cost = accountUsage(c, routing.candidate.meta, usage);
+			const cost = computeUsageCost(routing.candidate.meta, usage);
 
 			if (!req.stream) {
+				await finish(usage);
 				await cleanup?.();
 				log.write({
 					status: "success",
@@ -212,7 +230,7 @@ async function handleImageRequest(
 							downstream,
 						);
 				} finally {
-					finishDownstreamWriteObservation(downstream, streamError?.code);
+					await finish(usage, streamError, downstream);
 					await cleanup?.();
 					log.write({
 						status: streamError ? "error" : "success",
@@ -296,7 +314,7 @@ async function handleImageRequest(
 					);
 			} finally {
 				await finish(usage, streamError, downstream);
-				const cost = accountUsage(c, streamRouting.candidate.meta, usage);
+				const cost = computeUsageCost(streamRouting.candidate.meta, usage);
 				await cleanup?.();
 				log.write({
 					status: streamError ? "error" : "success",
@@ -324,7 +342,7 @@ async function handleImageRequest(
 export async function imageGenerationsHandler(
 	c: Context<AppEnv>,
 ): Promise<Response> {
-	const json = await readJsonBody(c);
+	const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 	const data = parseBody(imageGenerationRequestSchema, json);
 	return handleImageRequest(c, generationToCanonical(data), data);
 }

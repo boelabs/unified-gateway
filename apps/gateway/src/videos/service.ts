@@ -5,7 +5,7 @@ import type { AdapterContext } from "#adapters/types.ts";
 import { resolveTransport } from "#router/transport.ts";
 import { getAdapter } from "#adapters/registry.ts";
 import { GatewayError } from "#core/errors.ts";
-import { decryptJson } from "#db/crypto.ts";
+import { decryptRecord } from "#db/crypto.ts";
 import { randomUUID } from "node:crypto";
 import { log } from "#logging/log.ts";
 import { env } from "#config/env.ts";
@@ -141,7 +141,10 @@ async function candidateFromJob(
 	timer.unref?.();
 	const ctx: AdapterContext = {
 		upstreamModel: deployment.upstreamModel,
-		credentials: decryptJson<Record<string, unknown>>(deployment.credentials),
+		credentials: decryptRecord(
+			deployment.credentials,
+			"deployment-credentials",
+		),
 		meta,
 		transport: resolveTransport(candidate, "videos.generations"),
 		requestId: row.id,
@@ -347,17 +350,21 @@ export async function readVideoAsset(
 export async function deleteExpiredVideoAssets(): Promise<number> {
 	const store = getObjectStore();
 	const expired = await listExpiredVideoAssets(new Date(), 100);
+	const deletedIds: string[] = [];
 	for (const asset of expired) {
-		await store.delete(asset.objectKey).catch((err: unknown) => {
+		try {
+			await store.delete(asset.objectKey);
+			deletedIds.push(asset.id);
+		} catch (err) {
 			log.warn("videos", "failed to delete expired video asset object", {
 				err,
 				assetId: asset.id,
 				key: asset.objectKey,
 			});
-		});
+		}
 	}
-	await markVideoAssetsDeleted(expired.map((asset) => asset.id));
-	return expired.length;
+	await markVideoAssetsDeleted(deletedIds);
+	return deletedIds.length;
 }
 
 export async function refreshDueVideoJobs(): Promise<number> {

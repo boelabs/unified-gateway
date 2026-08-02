@@ -35,7 +35,7 @@ Where the contract and model support it, visible reasoning arrives incrementally
 The gateway measures **upstream-only** latency and throughput — time to the last upstream chunk, not to
 when the client finished receiving the relayed response — specifically so a slow client connection
 doesn't get blamed on the model. This is what feeds `latency-based`/`throughput-based`
-[routing](/docs/routing) and the `upstream_ttft_ms` request-log field (see
+[routing](/docs/routing) and the winning attempt's `firstOutputMs` timing (see
 [Observability](/docs/observability)).
 
 ## Not cacheable

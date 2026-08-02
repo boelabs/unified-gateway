@@ -25,7 +25,7 @@ description: "Every request and response header the gateway reads or sets, in on
 Rate-limit headers are per **virtual key**, not per model or deployment — they reflect the key's own
 RPM/TPM/budget configuration (see [Virtual keys](/docs/virtual-keys)). Master-key requests never carry
 them (the master key has no limits). A cache hit is not signaled by any response header — it's only
-visible in the request log's `cacheHit` field via `GET /admin/logs`.
+visible in the operation log's `cacheHit` field via `GET /admin/logs`.
 
 ## `unified_routing` (response body, not a header)
 

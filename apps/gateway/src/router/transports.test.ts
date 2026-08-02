@@ -1,5 +1,6 @@
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
 import { resolveTransport } from "./transport.ts";
+import { encryptJson } from "#db/crypto.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -10,7 +11,7 @@ function candidate(): DeploymentCandidate {
 			publicModel: "image",
 			adapterKey: "fake",
 			upstreamModel: "image",
-			credentials: { v: 1, iv: "", tag: "", ct: "" },
+			credentials: encryptJson({}, "deployment-credentials"),
 			label: null,
 			failureDomain: null,
 			metadata: {},

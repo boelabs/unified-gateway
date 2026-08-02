@@ -5,15 +5,16 @@ description: "Every variable the gateway reads, with its default and what it con
 
 Validated once at startup with a strict schema — a missing or malformed required variable fails the
 process immediately with a clear message, rather than surfacing as a confusing runtime error later.
-Only `MASTER_KEY`, `CREDENTIALS_ENCRYPTION_KEY`, `DATABASE_URL`, and `REDIS_URL` have no default and
+Only `MASTER_KEY`, `ENCRYPTION_KEYRING`, `ACTIVE_ENCRYPTION_KEY_ID`, `DATABASE_URL`, and `REDIS_URL` have no default and
 must be set; everything else ships with a production-ready value.
 
 ## Required
 
 | Variable | Format | Notes |
 |---|---|---|
-| `MASTER_KEY` | String, 8+ chars | Full-access operator key. Generate with `openssl rand -base64 48`. |
-| `CREDENTIALS_ENCRYPTION_KEY` | 64 hex chars (32 bytes) | Encrypts deployment credentials at rest. Generate with `openssl rand -hex 32`. Losing or rotating it makes existing encrypted credentials unreadable — see [Security](/docs/security). |
+| `MASTER_KEY` | String, 32+ chars | Full-access operator key. Generate with `openssl rand -base64 48`. |
+| `ENCRYPTION_KEYRING` | JSON object | Maps key ids to 64-character hex AES keys. Keep old ids during rotation. |
+| `ACTIVE_ENCRYPTION_KEY_ID` | Key id | Must exist in `ENCRYPTION_KEYRING`; encrypts every new envelope. |
 | `DATABASE_URL` | Postgres connection URL | |
 | `REDIS_URL` | Redis connection URL | |
 
@@ -22,6 +23,7 @@ must be set; everything else ships with a production-ready value.
 | Variable | Default | Controls |
 |---|---|---|
 | `PORT` | `4000` | HTTP listen port. |
+| `TRUSTED_PROXY_HOPS` | `0` | Number of rightmost, operator-controlled proxy hops trusted in `X-Forwarded-For`. `0` ignores the header. |
 | `NODE_ENV` | `development` | `development` \| `test` \| `production`. |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error`. |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | Drain budget on `SIGTERM`/`SIGINT` before forcing exit. |
@@ -30,9 +32,7 @@ must be set; everything else ships with a production-ready value.
 
 | Variable | Default | Controls |
 |---|---|---|
-| `MAX_STRING_LENGTH_PROMPT_IN_DB` | `8000` | Legacy `request_logs` truncation during the rollback window. New operation rows never store bodies. |
-| `OBSERVABILITY_ENCRYPTION_KEY` | unset | Optional 64-hex-character root key for forensic payload encryption and HMAC fingerprints. Plaintext fallback is forbidden. |
-| `OBSERVABILITY_SUCCESS_SAMPLE_RATE` | `0.01` | Sampling rate for non-degraded successful operations. Non-success and degraded operations are always sampled when encryption is configured. |
+| `OBSERVABILITY_SUCCESS_SAMPLE_RATE` | `0.01` | Sampling rate for non-degraded successful operations. Non-success and degraded operations are always sampled. |
 | `OBSERVABILITY_PAYLOAD_RETENTION_DAYS` | `7` | Encrypted forensic payload retention. |
 | `OBSERVABILITY_METADATA_RETENTION_DAYS` | `30` | Retention for completed operation and upstream-attempt metadata. |
 | `OBSERVABILITY_PAYLOAD_MAX_BYTES` | `32768` | Maximum size of each request, response, error, and attempt component in an encrypted sample after redaction. |
@@ -44,14 +44,6 @@ must be set; everything else ships with a production-ready value.
 | `RESPONSES_WEBSOCKET_MAX_CONNECTIONS_PER_KEY` | `20` | Maximum live Responses WebSocket connections for one virtual key (the master key has its own scope). |
 | `RESPONSES_WEBSOCKET_MAX_QUEUED_TURNS` | `64` | Maximum queued `response.create` turns per connection; one turn is processed at a time. |
 | `RESPONSE_STATE_GC_INTERVAL_MS` | `3600000` (1h) | How often the in-process job deletes expired response state. |
-
-## Request log partitioning
-
-| Variable | Default | Controls |
-|---|---|---|
-| `REQUEST_LOG_PARTITION_CREATE_DAYS` | `7` | How many future daily partitions stay pre-created. |
-| `REQUEST_LOG_PARTITION_RETENTION_DAYS` | `30` | How many days of partitions are kept before being dropped. |
-| `REQUEST_LOG_PARTITION_JOB_INTERVAL_MS` | `3600000` (1h) | How often the in-process job creates/drops partitions. |
 
 ## Runtime extensions
 

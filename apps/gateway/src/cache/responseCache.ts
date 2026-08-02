@@ -22,6 +22,16 @@ const MAX_TTL = 86_400;
  * worth it (a single embedding, normal chat completions).
  */
 const MAX_VALUE_BYTES = 512 * 1024;
+const CACHE_EPOCH_KEY = "cache:epoch:v1";
+
+/** Global logical generation that makes invalidation safe against concurrent cache writes. */
+export async function responseCacheEpoch(): Promise<string> {
+	return (await redis.get(CACHE_EPOCH_KEY)) ?? "0";
+}
+
+export async function advanceResponseCacheEpoch(): Promise<string> {
+	return String(await redis.incr(CACHE_EPOCH_KEY));
+}
 
 /** Reads the cache config from the x-unified-cache / x-unified-cache-ttl headers. */
 export function cacheConfigFromHeaders(

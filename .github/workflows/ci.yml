@@ -85,8 +85,9 @@ jobs:
           --health-retries 10
     env:
       NODE_ENV: test
-      MASTER_KEY: ci-master-key-please-change
-      CREDENTIALS_ENCRYPTION_KEY: "0000000000000000000000000000000000000000000000000000000000000000"
+      MASTER_KEY: ci-master-key-please-change-32chars
+      ENCRYPTION_KEYRING: '{"ci":"0000000000000000000000000000000000000000000000000000000000000000"}'
+      ACTIVE_ENCRYPTION_KEY_ID: ci
       DATABASE_URL: postgres://gateway:gateway@localhost:5432/unifiedgateway
       REDIS_URL: redis://localhost:6379
     steps:

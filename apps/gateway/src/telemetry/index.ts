@@ -3,7 +3,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { PeriodicExportingMetricReader } from "@opentelemetry/sdk-metrics";
 import { HttpInstrumentation } from "@opentelemetry/instrumentation-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
-import type { RequestLogInput } from "#logging/logger.ts";
+import type { OperationLogInput } from "#logging/logger.ts";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { log } from "#logging/log.ts";
 import { env } from "#config/env.ts";
@@ -233,7 +233,7 @@ export function finishOperationChildTelemetry(
 	handle.span.end();
 }
 
-function baseAttributes(input: RequestLogInput): Attributes {
+function baseAttributes(input: OperationLogInput): Attributes {
 	return {
 		"model.public_name": input.publicModel ?? "unknown",
 		"deployment.id": input.deploymentId ?? "unknown",
@@ -281,7 +281,7 @@ export function startRequestTelemetry(input: {
 
 export function finishRequestTelemetry(
 	handle: RequestTelemetrySpan,
-	input: RequestLogInput,
+	input: OperationLogInput,
 ): void {
 	if (handle.ended) return;
 	handle.ended = true;
@@ -378,7 +378,7 @@ export function finishUpstreamAttemptTelemetry(
 	});
 }
 
-export function recordRequestTelemetry(input: RequestLogInput): void {
+export function recordRequestTelemetry(input: OperationLogInput): void {
 	if (!env.OTEL_ENABLED || !inst) return;
 
 	const attrs = baseAttributes(input);

@@ -9,6 +9,27 @@ const boolString = z.preprocess((value) => {
 	return value;
 }, z.boolean());
 
+const encryptionKeyringString = z.string().refine((raw) => {
+	try {
+		const parsed: unknown = JSON.parse(raw);
+		return (
+			parsed !== null &&
+			typeof parsed === "object" &&
+			!Array.isArray(parsed) &&
+			Object.keys(parsed).length > 0 &&
+			Object.keys(parsed).length <= 32 &&
+			Object.entries(parsed).every(
+				([id, key]) =>
+					/^[A-Za-z0-9_-]{1,64}$/.test(id) &&
+					typeof key === "string" &&
+					/^[0-9a-fA-F]{64}$/.test(key),
+			)
+		);
+	} catch {
+		return false;
+	}
+}, "ENCRYPTION_KEYRING must be a JSON object of key ids to 64-character hex AES keys");
+
 /**
  * Typed environment configuration with @t3-oss/env-core. Validated once on import; if anything is
  * missing or invalid the process fails fast with a clear error. Pure backend: every variable is a
@@ -20,31 +41,22 @@ const boolString = z.preprocess((value) => {
 export const env = createEnv({
 	server: {
 		PORT: z.coerce.number().int().positive().default(4000),
+		/** Number of reverse-proxy hops allowed to append X-Forwarded-For. 0 ignores the header. */
+		TRUSTED_PROXY_HOPS: z.coerce.number().int().min(0).max(16).default(0),
 		NODE_ENV: z
 			.enum(["development", "test", "production"])
 			.default("development"),
 		LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 
-		MASTER_KEY: z.string().min(8, "MASTER_KEY is required and must be strong"),
-		CREDENTIALS_ENCRYPTION_KEY: z
+		MASTER_KEY: z
 			.string()
-			.regex(
-				/^[0-9a-fA-F]{64}$/,
-				"CREDENTIALS_ENCRYPTION_KEY must be 32 bytes in hex (64 chars)",
-			),
+			.min(32, "MASTER_KEY must contain at least 32 characters"),
+		ENCRYPTION_KEYRING: encryptionKeyringString,
+		ACTIVE_ENCRYPTION_KEY_ID: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
 
 		DATABASE_URL: z.url(),
 		REDIS_URL: z.url(),
 
-		MAX_STRING_LENGTH_PROMPT_IN_DB: z.coerce
-			.number()
-			.int()
-			.positive()
-			.default(8000),
-		OBSERVABILITY_ENCRYPTION_KEY: z
-			.string()
-			.regex(/^[0-9a-fA-F]{64}$/)
-			.optional(),
 		OBSERVABILITY_SUCCESS_SAMPLE_RATE: z.coerce
 			.number()
 			.min(0)
@@ -105,21 +117,6 @@ export const env = createEnv({
 			.min(0)
 			.default(5_000),
 
-		REQUEST_LOG_PARTITION_CREATE_DAYS: z.coerce
-			.number()
-			.int()
-			.min(1)
-			.default(7),
-		REQUEST_LOG_PARTITION_RETENTION_DAYS: z.coerce
-			.number()
-			.int()
-			.min(1)
-			.default(30),
-		REQUEST_LOG_PARTITION_JOB_INTERVAL_MS: z.coerce
-			.number()
-			.int()
-			.positive()
-			.default(3_600_000),
 		RESPONSES_STATE_RETENTION_DAYS: z.coerce.number().int().min(1).default(14),
 		/** Interval for the in-app response_states GC job that deletes expired rows. */
 		RESPONSE_STATE_GC_INTERVAL_MS: z.coerce

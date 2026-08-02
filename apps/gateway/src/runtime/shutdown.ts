@@ -56,27 +56,48 @@ export function installGracefulShutdown(
 	const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
 		if (shuttingDown) return;
 		shuttingDown = true;
+		const deadlineAt = Date.now() + env.SHUTDOWN_TIMEOUT_MS;
+		const remainingMs = () => Math.max(0, deadlineAt - Date.now());
 		log.info("shutdown", `received ${signal}; draining server`, { signal });
 
-		for (const stopJob of options.stopJobs ?? []) {
-			await Promise.resolve(stopJob()).catch((err: unknown) => {
-				log.error("shutdown", "job stop failed", { err });
-			});
-		}
+		await runWithTimeout(
+			Promise.all(
+				(options.stopJobs ?? []).map(async (stopJob) => {
+					await Promise.resolve(stopJob()).catch((err: unknown) => {
+						log.error("shutdown", "job stop failed", { err });
+					});
+				}),
+			).then(() => undefined),
+			remainingMs(),
+			() => log.error("shutdown", "job shutdown exceeded the deadline"),
+		);
 
 		server.closeIdleConnections?.();
-		await runWithTimeout(closeServer(server), env.SHUTDOWN_TIMEOUT_MS, () => {
+		await runWithTimeout(closeServer(server), remainingMs(), () => {
 			log.error(
 				"shutdown",
-				`drain timed out after ${env.SHUTDOWN_TIMEOUT_MS}ms; forcing connections`,
+				`drain exceeded the ${env.SHUTDOWN_TIMEOUT_MS}ms shutdown deadline; forcing connections`,
 			);
 			server.closeAllConnections?.();
 		}).catch((err: unknown) => {
 			log.error("shutdown", "server close failed", { err });
 		});
 
-		await flushOperationLogs();
-		await Promise.allSettled([closeRedis(), closeDb(), shutdownTelemetry()]);
+		await runWithTimeout(flushOperationLogs(), remainingMs(), () => {
+			log.error(
+				"shutdown",
+				"operation-log flush exceeded the shutdown deadline",
+			);
+		}).catch((err: unknown) => {
+			log.error("shutdown", "operation-log flush failed", { err });
+		});
+		await runWithTimeout(
+			Promise.allSettled([closeRedis(), closeDb(), shutdownTelemetry()]).then(
+				() => undefined,
+			),
+			remainingMs(),
+			() => log.error("shutdown", "dependency shutdown exceeded the deadline"),
+		);
 		log.info("shutdown", "complete");
 		process.exit(0);
 	};

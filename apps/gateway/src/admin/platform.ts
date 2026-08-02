@@ -1,4 +1,5 @@
 import { ADAPTER_KEY_PATTERN, ADAPTER_KEY_RULE } from "#adapters/key.ts";
+import { ADMIN_JSON_BODY_MAX_BYTES, readJsonBody } from "#http/body.ts";
 import { getAdapter, listAdapters } from "#adapters/registry.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
@@ -37,15 +38,10 @@ import {
 } from "#operations/registry.ts";
 
 async function parseJson<T>(
-	c: import("hono").Context,
+	c: import("hono").Context<AppEnv>,
 	schema: z.ZodType<T>,
 ): Promise<T> {
-	const json = await c.req.json().catch(() => undefined);
-	if (json === undefined)
-		throw new GatewayError({
-			class: "bad_request",
-			message: "Invalid or missing JSON body",
-		});
+	const json = await readJsonBody(c, ADMIN_JSON_BODY_MAX_BYTES);
 	const parsed = schema.safeParse(json);
 	if (!parsed.success) {
 		const first = parsed.error.issues[0];

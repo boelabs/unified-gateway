@@ -1,8 +1,11 @@
 import { assertVideoRequestSupported } from "#gateway/videoRequestValidation.ts";
 import { getObjectStore, type ObjectRange } from "#storage/objectStore.ts";
+import { estimateTokenReservation } from "#router/tokenReservation.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import { route, type RouteResult } from "#router/index.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
+import type { AdapterContext } from "#adapters/types.ts";
+import { log as systemLog } from "#logging/log.ts";
 import { GatewayError } from "#core/errors.ts";
 import { getAuth } from "#auth/middleware.ts";
 import type { AppEnv } from "#auth/types.ts";
@@ -17,6 +20,16 @@ import {
 	readVideoAsset,
 	newVideoId,
 } from "#videos/service.ts";
+
+import {
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	notifyExtensionError,
+	usageQuotaForRequest,
+	toGatewayError,
+	readJsonBody,
+	parseBody,
+	preflight,
+} from "./runtime/pipeline.ts";
 
 import {
 	type CanonicalVideoProviderJob,
@@ -35,15 +48,8 @@ import {
 } from "#contracts/openai/videos.ts";
 
 import {
-	notifyExtensionError,
-	toGatewayError,
-	readJsonBody,
-	parseBody,
-	preflight,
-} from "./runtime/pipeline.ts";
-
-import {
 	markVideoDeletedForScope,
+	markVideoAssetsDeleted,
 	listVideosForScope,
 	createVideoJob,
 } from "#db/repos/videos.ts";
@@ -148,11 +154,13 @@ async function handleVideoCreate(
 		string,
 		unknown
 	>;
-	const log = new RequestLogDraft(c, "videos.generations", {
+	const log = new OperationLogDraft(c, "videos.generations", {
 		publicModel: req.model,
 	});
 	log.requestBody = storedRequest;
 	let routing: RouteResult<CanonicalVideoProviderJob> | null = null;
+	let submissionContext: AdapterContext | null = null;
+	let persisted = false;
 	let finished = false;
 	const finish = async (error?: GatewayError | null): Promise<void> => {
 		if (!routing || finished) return;
@@ -176,13 +184,20 @@ async function handleVideoCreate(
 				operationId: log.operationId,
 				candidateEligibility: (candidate) =>
 					assertVideoRequestSupported(req, candidate.meta),
+				tokenReservation: (candidate) =>
+					estimateTokenReservation(req, {
+						maxOutputTokens: candidate.meta.maxOutputTokens ?? 0,
+					}),
+				usageQuota: usageQuotaForRequest(c),
 			},
-			(candidate, ctx) => candidate.adapter.videoGeneration!.submit(req, ctx),
+			(candidate, ctx) => {
+				submissionContext = ctx;
+				return candidate.adapter.videoGeneration!.submit(req, ctx);
+			},
 		);
 		log.applyRouting(routing);
 		log.upstreamTtftMs = Date.now() - routing.upstreamStartedAt;
 		const usage = videoUsageToCore(routing.value.usage);
-		await finish();
 
 		const row = await createVideoJob({
 			id: newVideoId(),
@@ -210,6 +225,8 @@ async function handleVideoCreate(
 					? null
 					: new Date(Date.now() + 1000),
 		});
+		persisted = true;
+		await finish();
 		const body = toOpenAIVideoObject(videoObjectFromRow(row));
 		log.write({
 			status: "success",
@@ -228,6 +245,28 @@ async function handleVideoCreate(
 	} catch (error) {
 		const ge = toGatewayError(error);
 		log.applyFailedAttempts(ge.attempts);
+		if (routing && !persisted && submissionContext) {
+			await routing.candidate.adapter.videoGeneration
+				?.remove?.(
+					{
+						upstreamJobId: routing.value.upstreamJobId,
+						upstreamGenerationId: routing.value.upstreamGenerationId ?? null,
+						upstreamPollingUrl: routing.value.upstreamPollingUrl ?? null,
+						providerState: routing.value.providerState ?? null,
+					},
+					submissionContext,
+				)
+				.catch((cleanupError: unknown) => {
+					systemLog.warn(
+						"videos",
+						"failed to compensate an unpersisted video job",
+						{
+							err: cleanupError,
+							requestId: log.requestId,
+						},
+					);
+				});
+		}
 		await finish(ge);
 		await notifyExtensionError(c, "videos.generations", log.publicModel, ge);
 		log.writeError(ge);
@@ -238,7 +277,7 @@ async function handleVideoCreate(
 export async function videoCreateHandler(
 	c: Context<AppEnv>,
 ): Promise<Response> {
-	const json = await readJsonBody(c);
+	const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 	const data = parseBody(videoCreateRequestSchema, json);
 	return handleVideoCreate(c, videoCreateToCanonical(data), data);
 }
@@ -282,8 +321,16 @@ export async function videoDeleteHandler(
 		});
 	}
 	const store = getObjectStore();
-	for (const asset of deleted.assets)
-		await store.delete(asset.objectKey).catch(() => {});
+	const deletedAssetIds: string[] = [];
+	for (const asset of deleted.assets) {
+		try {
+			await store.delete(asset.objectKey);
+			deletedAssetIds.push(asset.id);
+		} catch {
+			// The row remains immediately expired so the background GC retries the object deletion.
+		}
+	}
+	await markVideoAssetsDeleted(deletedAssetIds);
 	await removeUpstreamVideo(deleted.row);
 	return c.json(toOpenAIVideoDeleted(id));
 }

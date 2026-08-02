@@ -51,7 +51,7 @@ async function pruneExpiredOccasionally(): Promise<void> {
 
 /**
  * Reliable, traffic-independent GC: deletes expired response_states on a fixed interval (mirrors the
- * request_logs partition job). Runs once on start, then every RESPONSE_STATE_GC_INTERVAL_MS; the
+ * other in-process maintenance jobs). Runs once on start, then every RESPONSE_STATE_GC_INTERVAL_MS;
  * opportunistic prune above still covers the gaps between ticks. Returns a stop function.
  */
 export function startResponseStateGcJob(): () => void {

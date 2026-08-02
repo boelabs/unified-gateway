@@ -61,7 +61,7 @@ For a local machine or a host-level reverse proxy, merge the local override expl
 git clone https://github.com/boelabs/unified-gateway.git && cd unified-gateway
 
 MASTER_KEY=$(openssl rand -base64 48) \
-CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+ENCRYPTION_KEY_HEX=$(openssl rand -hex 32) \
 docker compose -f docker-compose.yml -f compose.local.yaml up -d
 ```
 

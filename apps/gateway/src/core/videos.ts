@@ -202,7 +202,7 @@ function redactedDataUrl(value: string): string {
 
 /**
  * Replaces large base64 data URLs (reference images can be tens of MB) before the request body
- * is persisted to video_jobs.request or the request log.
+ * is persisted to video_jobs.request or operation metadata.
  */
 export function sanitizeVideoRequestBody(value: unknown, depth = 0): unknown {
 	if (typeof value === "string") {

@@ -114,3 +114,35 @@ export function computeCost(
 			: (providerReportedCents ?? calculatedCents),
 	};
 }
+
+/**
+ * Conservative upper bound used for pre-execution budget admission. Every reserved token is priced
+ * at the highest configured token rate across base and context tiers; rerank units are added at their
+ * exact configured unit rate. `null` means pricing is unknown, not free.
+ */
+export function estimateMaximumCostCents(
+	meta: Pick<ResolvedModelMetadata, "pricing">,
+	totalTokens: number,
+	searchUnits = 0,
+): number | null {
+	const pricing = meta.pricing;
+	if (pricing === undefined) return null;
+	const rates = [
+		pricing.inputCentsPerMTokens,
+		pricing.outputCentsPerMTokens,
+		pricing.cacheReadCentsPerMTokens,
+		pricing.cacheWriteCentsPerMTokens,
+		...(pricing.tiers ?? []).flatMap((tier) => [
+			tier.inputCentsPerMTokens,
+			tier.outputCentsPerMTokens,
+			tier.cacheReadCentsPerMTokens,
+			tier.cacheWriteCentsPerMTokens,
+		]),
+	].filter((rate): rate is number => rate !== undefined);
+	if (rates.length === 0 && pricing.searchUnitCents === undefined) return null;
+	const maximumTokenRate = rates.length > 0 ? Math.max(...rates) : 0;
+	return (
+		(Math.max(0, totalTokens) * maximumTokenRate) / 1_000_000 +
+		Math.max(0, searchUnits) * (pricing.searchUnitCents ?? 0)
+	);
+}

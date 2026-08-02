@@ -25,16 +25,15 @@ or deleting the old one.
 
 ## Deployment credentials at rest
 
-Every credential (`apiKey`, `baseUrl`, etc.) is encrypted with **AES-256-GCM** before being stored, keyed
-by `CREDENTIALS_ENCRYPTION_KEY` (32 bytes, hex). Each value gets its own random IV; GCM's auth tag means
+Every credential (`apiKey`, `baseUrl`, etc.) is encrypted with **AES-256-GCM** before being stored. Each
+versioned envelope records a key id and purpose authenticated as AAD, and gets its own random IV. GCM's auth tag means
 tampering with the stored ciphertext makes it fail to decrypt rather than silently returning garbage.
 **No admin API response — `GET`, `POST`, or `PATCH` on `/admin/deployments`— ever includes credentials**,
 encrypted or not; they're stripped before the response is built.
 
-Losing `CREDENTIALS_ENCRYPTION_KEY` makes every stored credential permanently unrecoverable — there is
-no key-recovery mechanism. Treat it like you'd treat a database password: back it up outside the
-database it decrypts, and never commit it. For the rotation procedure for both `MASTER_KEY` and
-`CREDENTIALS_ENCRYPTION_KEY`, and what to do if either leaks, see
+Losing every copy of a keyring entry while envelopes still reference it makes those values permanently
+unrecoverable. Keep the keyring outside the database it decrypts and never commit it. For the online
+rotation procedure for both `MASTER_KEY` and the encryption keyring, see
 [Operations → Secrets](/docs/operations#secrets).
 
 ## What the gateway redacts publicly
@@ -45,12 +44,12 @@ database it decrypts, and never commit it. For the rotation procedure for both `
   id (a truncated hash of the real one) and live metrics, but still never credentials or the upstream
   model id.
 - **Operation logs** (`GET /admin/logs`) persist summaries and HMAC fingerprints, not request or
-  response bodies. The old truncation setting applies only to the legacy rollback table.
+  response bodies.
 
 ## Observability payloads
 
-Optional forensic samples use AEAD encryption under `OBSERVABILITY_ENCRYPTION_KEY`, expire
-automatically, and never fall back to plaintext. Encryption and HMAC use separate derived subkeys.
+Forensic samples use purpose-bound AEAD envelopes under the versioned keyring, expire automatically,
+and never fall back to plaintext. HMAC fingerprints use a separate derived subkey.
 OpenTelemetry never receives payload bodies. See [Environment variables](/docs/reference-environment)
 and [Observability](/docs/observability).
 

@@ -27,8 +27,9 @@ Create `apps/gateway/.env` (see `apps/gateway/.env.example`) with at least:
 ```bash
 PORT=4000
 NODE_ENV=development
-MASTER_KEY=replace-with-a-long-secret
-CREDENTIALS_ENCRYPTION_KEY=64_hex_chars_32_bytes   # openssl rand -hex 32
+MASTER_KEY=replace-with-at-least-32-random-characters
+ENCRYPTION_KEYRING={"primary":"64_hex_chars_32_bytes"}   # value: openssl rand -hex 32
+ACTIVE_ENCRYPTION_KEY_ID=primary
 DATABASE_URL=postgres://gateway:gateway@localhost:5432/unifiedgateway
 REDIS_URL=redis://localhost:6379
 ```
@@ -50,7 +51,7 @@ For the rest of this page:
 
 ```bash
 export BASE=http://localhost:4000
-export MASTER_KEY=replace-with-a-long-secret
+export MASTER_KEY=replace-with-at-least-32-random-characters
 ```
 
 ## 2. Register a deployment

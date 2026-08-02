@@ -17,7 +17,7 @@ models.
 - Provider adapters for OpenAI, OpenAI-compatible APIs, Google AI Studio, Anthropic, Azure OpenAI, Azure Foundry, Vercel AI Gateway, DeepSeek, MiniMax, Moonshot, and ZAI.
 - Public model aliases, weighted pools, cooldowns, retries, dedicated fallbacks, and per-operation transports.
 - Master key plus virtual keys with model scopes, RPM/TPM limits, budgets, and rate-limit headers.
-- Opt-in response cache, request logs, cost accounting, OpenTelemetry metrics/traces, daily Postgres partitions, and graceful shutdown.
+- Opt-in response cache, durable operation logs, cost accounting, OpenTelemetry metrics/traces, and graceful shutdown.
 - Admin API and OpenAPI spec for operating deployments, keys, router settings, logs, usage, and fallbacks.
 - Runtime extensions stored in Postgres and managed through the Admin API for request/response/stream/image hooks without forking the gateway.
 
@@ -56,8 +56,8 @@ bun run --filter @boelabs/unified-gateway db:migrate
 bun run --filter @boelabs/unified-gateway dev
 ```
 
-In `.env`, set at least `MASTER_KEY` (any long secret) and `CREDENTIALS_ENCRYPTION_KEY`
-(`openssl rand -hex 32`). Everything else ships with production-ready defaults — the full environment
+In `.env`, set `MASTER_KEY`, `ENCRYPTION_KEYRING`, and `ACTIVE_ENCRYPTION_KEY_ID`. Generate each
+keyring value with `openssl rand -hex 32`. Everything else ships with production-ready defaults — the full environment
 reference lives in [Setup](apps/docs/content/docs/setup.mdx).
 
 ```bash
@@ -90,7 +90,7 @@ development-only secrets:
 
 ```bash
 MASTER_KEY=$(openssl rand -base64 48) \
-CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+ENCRYPTION_KEY_HEX=$(openssl rand -hex 32) \
 docker compose -f docker-compose.yml -f compose.local.yaml up -d
 ```
 
@@ -129,7 +129,8 @@ The machine-readable API spec is [`apps/gateway/openapi.yaml`](apps/gateway/open
 - **Bun's TLS rejects self-signed Postgres/Redis certificates** (e.g. databases exposed by a raw
   Coolify/Dokploy port). Connect over a private network without TLS, or use a managed provider with a
   public-CA certificate.
-- **The gateway refuses to start** until `MASTER_KEY` and `CREDENTIALS_ENCRYPTION_KEY` are set — the
+- **The gateway refuses to start** until `MASTER_KEY`, `ENCRYPTION_KEYRING`, and
+  `ACTIVE_ENCRYPTION_KEY_ID` are set — the
   production compose base deliberately ships them empty.
 
 Exact symptoms, fixes, and every error code: [Troubleshooting](apps/docs/content/docs/troubleshooting.mdx).

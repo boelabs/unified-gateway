@@ -22,8 +22,9 @@ that you give us a reasonable window to ship a fix before any public disclosure.
 Unified Gateway brokers requests to third-party AI providers and stores provider credentials. Keep the
 following in mind when reporting or operating:
 
-- Provider credentials are encrypted at rest with AES-256-GCM using `CREDENTIALS_ENCRYPTION_KEY` and
-  are never returned by the admin API.
+- Provider credentials, extension sources, and forensic samples are encrypted at rest with
+  purpose-bound AES-256-GCM envelopes. `ENCRYPTION_KEYRING` supports online rotation and old-key
+  retirement; plaintext secrets are never returned by the admin API.
 - The `MASTER_KEY` grants full admin access; treat it as a root credential.
 - Never paste real API keys, `.env` contents, or production `DATABASE_URL`/`REDIS_URL` values into an
   issue or PR. Redact them in any report.

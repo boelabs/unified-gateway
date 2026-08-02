@@ -7,7 +7,7 @@ import type {
 
 const encoder = new TextEncoder();
 
-export function rerankRequestLog(
+export function rerankRequestSummary(
 	request: CanonicalRerankRequest,
 ): Record<string, unknown> {
 	const documentBytes = request.documents.map((document) =>
@@ -27,7 +27,7 @@ export function rerankRequestLog(
 	};
 }
 
-export function rerankResponseLog(
+export function rerankResponseSummary(
 	response: CanonicalRerankResponse,
 	cost: CostBreakdown | null,
 ): Record<string, unknown> {

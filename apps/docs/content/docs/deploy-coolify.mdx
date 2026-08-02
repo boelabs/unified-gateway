@@ -9,9 +9,10 @@ description: "Deploy Unified Gateway on Coolify with Docker Compose."
 
 1. **New Resource → Docker Compose**, and point it at this repository (or paste the
    `docker-compose.yml`).
-2. Set the two secrets as environment variables in the Coolify UI:
-   - `MASTER_KEY` — `openssl rand -base64 48`
-   - `CREDENTIALS_ENCRYPTION_KEY` — `openssl rand -hex 32`
+2. Set the secrets as environment variables in the Coolify UI:
+	- `MASTER_KEY` — `openssl rand -base64 48`
+	- `ENCRYPTION_KEYRING` — e.g. `{"primary":"<openssl rand -hex 32>"}`
+	- `ACTIVE_ENCRYPTION_KEY_ID` — `primary`
 3. Deploy. The bundled `postgres` and `redis` run inside the stack's private network, the `migrate`
    job applies migrations, and the gateway comes up on internal port `4000`.
 4. Configure domains only for long-running HTTP services:

@@ -1,4 +1,3 @@
-import { DbExtensionInstanceSource, EXTENSIONS_CACHE_DIR } from "./source.ts";
 import { getRegistryVersion } from "#db/repos/extensions.ts";
 import type { CallType } from "#core/callType.ts";
 import { GatewayError } from "#core/errors.ts";
@@ -20,6 +19,12 @@ import type {
 	ExtensionLogger,
 	MaybePromise,
 } from "./sdk.ts";
+
+import {
+	DbExtensionInstanceSource,
+	EXTENSIONS_CACHE_DIR,
+	pruneExtensionCache,
+} from "./source.ts";
 
 const EXTENSION_KEY_PATTERN = /^[a-z0-9]+$/;
 const INSTANCE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/;
@@ -166,19 +171,19 @@ async function withHookGuard<R>(
 	const runPromise = (async () => run(combined))();
 	// If the hook keeps running after we lose the race, swallow its late rejection.
 	runPromise.catch(() => {});
+	let rejectAbort: (error: Error) => void = () => {};
+	const onAbort = () => rejectAbort(abortReason(combined));
+	const abortPromise = new Promise<never>((_, reject) => {
+		rejectAbort = reject;
+		combined.addEventListener("abort", onAbort, { once: true });
+		// Abort can happen between the initial check above and listener registration.
+		if (combined.aborted) onAbort();
+	});
 
 	try {
-		return await Promise.race([
-			runPromise,
-			new Promise<never>((_, reject) => {
-				combined.addEventListener(
-					"abort",
-					() => reject(abortReason(combined)),
-					{ once: true },
-				);
-			}),
-		]);
+		return await Promise.race([runPromise, abortPromise]);
 	} finally {
+		combined.removeEventListener("abort", onAbort);
 		if (timer) clearTimeout(timer);
 	}
 }
@@ -280,6 +285,9 @@ function hookError(
 		publicMessage:
 			"An Unified Gateway extension failed while processing the request.",
 		code: "extension_hook_failed",
+		failureKind: "gateway",
+		deploymentHealth: "neutral",
+		routingScope: "request",
 		cause: err,
 	});
 }
@@ -291,6 +299,9 @@ function disabledError(instance: LoadedInstance): GatewayError {
 		message: `Required extension "${instance.definitionKey}" instance "${instance.id}" is disabled: ${instance.disabledReason ?? "unknown reason"}`,
 		publicMessage: "A required Unified Gateway extension is disabled.",
 		code: "extension_disabled",
+		failureKind: "gateway",
+		deploymentHealth: "neutral",
+		routingScope: "request",
 	});
 }
 
@@ -381,6 +392,14 @@ class ExtensionRuntime {
 		const previous = this.definitions;
 		await this.loadFromSource(source, EXTENSIONS_CACHE_DIR);
 		await this.teardownReplaced(previous);
+		const activePaths = new Set(
+			[...this.definitions.values()].map((definition) => definition.modulePath),
+		);
+		const removed = await pruneExtensionCache(activePaths);
+		if (removed > 0)
+			log.info("extensions", "pruned inactive materialized modules", {
+				removed,
+			});
 	}
 
 	private async teardownReplaced(

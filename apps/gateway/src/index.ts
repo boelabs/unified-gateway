@@ -16,7 +16,6 @@ import {
 
 import "./adapters/index.ts"; // registers the adapters (side-effect)
 
-import { startRequestLogPartitionJob } from "./db/requestLogPartitions.ts";
 import { startResponseStateGcJob } from "./db/repos/responseStates.ts";
 import { requestContextMiddleware } from "./http/requestContext.ts";
 import { installGracefulShutdown } from "./runtime/shutdown.ts";
@@ -76,7 +75,7 @@ try {
 	await initializeExtensions();
 } catch (err) {
 	// Never let an extension problem brick the gateway: misconfigured artifacts/instances are already
-	// disabled in-runtime (and surfaced via /health), so the only way here is a transient failure such
+	// disabled in-runtime (and surfaced via readiness), so the only way here is a transient failure such
 	// as the database being unreachable at boot. Log and continue — the reload job retries on its
 	// interval and /health/ready stays degraded until it succeeds.
 	log.error(
@@ -87,7 +86,6 @@ try {
 }
 
 const app = new Hono<AppEnv>();
-const stopPartitions = startRequestLogPartitionJob();
 const stopOperationMaintenance = startOperationMaintenance();
 const stopResponseStateGc = startResponseStateGcJob();
 const stopExtensionReload = startExtensionReloadJob();
@@ -183,18 +181,13 @@ app.get("/health/live", (c) =>
  * READINESS. "Should this instance receive traffic right now?" — checks Postgres, Redis and the
  * extension runtime. Returns 503 + Retry-After when a dependency is down so the load balancer pulls
  * the instance out (WITHOUT restarting it); it rejoins automatically once dependencies recover. Wire
- * this to the readiness probe. `/health` is kept as an alias for backward compatibility.
+ * this to the readiness probe.
  */
 async function readiness(c: Context) {
 	const [database, cache] = await Promise.all([pingDb(), pingRedis()]);
 	const extensions = extensionStatus();
 	const observability = operationPersistenceStatus();
-	const ok =
-		database &&
-		cache &&
-		extensions.healthy &&
-		observability.persistenceFailures === 0 &&
-		observability.persistenceDrops === 0;
+	const ok = database && cache && extensions.healthy && observability.healthy;
 	if (!ok) c.header("retry-after", String(DEPENDENCY_RETRY_AFTER_SECONDS));
 	return c.json(
 		{
@@ -223,7 +216,6 @@ async function readiness(c: Context) {
 }
 
 app.get("/health/ready", readiness);
-app.get("/health", readiness);
 
 // Public model discovery. Intentionally unauthenticated, like public provider model catalogs.
 app.get("/v1/models", listModelsHandler);
@@ -273,7 +265,6 @@ installGracefulShutdown({
 	server,
 	stopJobs: [
 		closeResponsesWebSockets,
-		stopPartitions,
 		stopOperationMaintenance,
 		stopResponseStateGc,
 		stopExtensionReload,

@@ -13,9 +13,9 @@ specific contract.
 
 ## Authentication
 
-- **Inference** (`/v1/*`): master key or virtual key, via `Authorization: Bearer <key>`. Alternatives:
-  the `x-api-key` header, or `?api_key=<key>` in the query string (for `EventSource`, which can't set
-  custom headers). `/v1/models` and `/v1/models/{model}` are the only unauthenticated exceptions — see
+- **Inference** (`/v1/*`): master key or virtual key, via `Authorization: Bearer <key>` or the
+  `x-api-key` header. Query-string credentials are rejected because URLs leak through logs, history,
+  and referrers. `/v1/models` and `/v1/models/{model}` are the only unauthenticated exceptions — see
   [Model discovery](/docs/models-discovery).
 - **Admin** (`/admin/*`): requires the master key.
 

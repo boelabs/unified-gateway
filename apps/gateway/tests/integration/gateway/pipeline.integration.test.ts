@@ -12,6 +12,12 @@ import { GatewayError } from "#core/errors.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+interface TestJsonObject extends Record<string, unknown> {
+	content: [TestJsonObject, ...TestJsonObject[]];
+	output: TestJsonObject[];
+	usage: TestJsonObject;
+}
+
 import {
 	canonicalChunksToResponsesEvents,
 	canonicalToResponsesResponse,
@@ -188,14 +194,14 @@ test("integration: one Gemini upstream feeds all 3 public contracts (json)", asy
 			const resp = canonicalToResponsesResponse(u, {
 				req: { model: "grp" } as never,
 				upstreamModel: "gemini-2.5-flash",
-			}) as Record<string, any>;
+			}) as TestJsonObject;
 			assert.equal(resp.object, "response");
 			assert.equal(resp.output_text, "Hello from Gemini");
 
 			// Render a /v1/messages (Anthropic)
 			const msg = canonicalToMessagesResponse(u, {
 				upstreamModel: "gemini-2.5-flash",
-			}) as Record<string, any>;
+			}) as TestJsonObject;
 			assert.equal(msg.type, "message");
 			assert.equal(msg.content[0].text, "Hello from Gemini");
 			assert.equal(msg.usage.input_tokens, 4);
@@ -216,7 +222,7 @@ test("integration: /v1/responses request served by Google (non-OpenAI) and rende
 			const out = canonicalToResponsesResponse(result.response, {
 				req: responsesRequestSchema.parse({ model: "grp", input: "hello" }),
 				upstreamModel: "gemini-2.5-flash",
-			}) as Record<string, any>;
+			}) as TestJsonObject;
 			assert.equal(out.output_text, "Hello from Gemini");
 			assert.equal(out.usage.input_tokens, 4);
 		},
@@ -239,7 +245,7 @@ test("integration: /v1/messages request served by OpenAI (/responses transport) 
 			if (result.kind !== "json") return;
 			const msg = canonicalToMessagesResponse(result.response, {
 				upstreamModel: "gpt-5.5",
-			}) as Record<string, any>;
+			}) as TestJsonObject;
 			assert.equal(msg.content[0].text, "Hello from OpenAI");
 			assert.equal(msg.stop_reason, "end_turn");
 			assert.equal(msg.usage.output_tokens, 3);
