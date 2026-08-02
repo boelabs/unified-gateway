@@ -39,7 +39,7 @@ The snapping rules:
 
 This means a new model only ever needs to declare which `levels` it supports; the gateway's public
 contract stays exactly the same shape regardless of how sparse or how granular that model's real ladder
-is. Every clamp is recorded in the request log (`requested` vs. `effective` effort, plus a `clamped`
+is. Every clamp is recorded in the operation log (`requested` vs. `effective` effort, plus a `clamped`
 boolean) — the discrepancy is always observable, so a client is never silently charged for more or less
 reasoning than the log shows.
 

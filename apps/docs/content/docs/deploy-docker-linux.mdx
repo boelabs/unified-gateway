@@ -11,7 +11,7 @@ Any Linux host with Docker and the Compose plugin can run the full stack directl
 git clone https://github.com/boelabs/unified-gateway.git && cd unified-gateway
 
 MASTER_KEY=$(openssl rand -base64 48) \
-CREDENTIALS_ENCRYPTION_KEY=$(openssl rand -hex 32) \
+ENCRYPTION_KEY_HEX=$(openssl rand -hex 32) \
 docker compose -f docker-compose.yml -f compose.local.yaml up -d
 ```
 
@@ -24,8 +24,8 @@ plaintext, so there is no TLS and no [Bun TLS issue](/docs/troubleshooting).
 - **Reverse proxy.** Put the gateway behind Caddy, nginx, or Traefik for TLS termination at the
   **public** edge. The local override binds services to loopback, so they are reachable by a proxy on
   the host without listening on every interface.
-- **Secrets.** Set `MASTER_KEY` and `CREDENTIALS_ENCRYPTION_KEY`; the production Compose base leaves
-  them empty and the gateway refuses to start without them. See [Setup → Secrets](/docs/setup#secrets).
+- **Secrets.** Set `MASTER_KEY`, `ENCRYPTION_KEYRING`, and `ACTIVE_ENCRYPTION_KEY_ID`; the production
+  Compose base leaves them empty and the gateway refuses to start without them. See [Setup → Secrets](/docs/setup#secrets).
 - **Migrations.** The `migrate` service runs them automatically on `docker compose up`. For a manual
   run: `docker compose run --rm migrate`.
 - **Backups.** Persist the `pgdata` and `redisdata` named volumes.

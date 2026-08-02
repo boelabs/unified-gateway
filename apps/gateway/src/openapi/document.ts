@@ -41,8 +41,8 @@ export function buildOpenApiDocument() {
 			description:
 				"Provider-agnostic AI gateway with OpenAI/OpenResponses-compatible public contracts. " +
 				"Importable in Postman, Insomnia, Bruno, and similar tools.\n\n" +
-				"AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or " +
-				"?api_key=<key> query parameter (for browser EventSource clients). The master key is " +
+				"AUTHENTICATION: Bearer token (Authorization: Bearer <key>) or x-api-key header. " +
+				"The master key is " +
 				"required for /admin/*.\n\n" +
 				"RESPONSE CONVENTIONS:\n" +
 				"- Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/rerank, " +
@@ -51,7 +51,8 @@ export function buildOpenApiDocument() {
 				'"pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.\n\n' +
 				"RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). " +
 				"Virtual-key inference responses can also include " +
-				"x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.",
+				"x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.\n\n" +
+				"REQUEST LIMITS: public JSON bodies are capped at 72 MiB, admin JSON at 2 MiB, rerank JSON at 16 MiB, and multipart endpoints publish their own aggregate caps. Oversized input returns 413.",
 		},
 		servers: [
 			{
@@ -67,7 +68,7 @@ export function buildOpenApiDocument() {
 					type: "http",
 					scheme: "bearer",
 					description:
-						"Master key or virtual key. Admin requires the master key. Alternative: x-api-key header or ?api_key=.",
+						"Master key or virtual key. Admin requires the master key. Alternative: x-api-key header.",
 				},
 			},
 			parameters: {
@@ -154,19 +155,6 @@ export function buildOpenApiDocument() {
 					},
 				},
 			},
-			"/health": {
-				get: {
-					tags: ["Health"],
-					summary: "Readiness alias (backward compatible)",
-					description:
-						"Alias of /health/ready, kept for backward compatibility.",
-					security: [],
-					responses: {
-						"200": { description: "OK" },
-						"503": { description: "Degraded" },
-					},
-				},
-			},
 			/* --------------------------------------------------------- inference */
 			"/v1/chat/completions": {
 				post: {
@@ -197,6 +185,7 @@ export function buildOpenApiDocument() {
 						"400": errorResponse,
 						"401": errorResponse,
 						"403": errorResponse,
+						"413": errorResponse,
 						"429": errorResponse,
 					},
 				},
@@ -266,6 +255,7 @@ export function buildOpenApiDocument() {
 							},
 						},
 						"400": errorResponse,
+						"413": errorResponse,
 					},
 				},
 			},
@@ -285,6 +275,7 @@ export function buildOpenApiDocument() {
 						},
 						"400": errorResponse,
 						"401": errorResponse,
+						"413": errorResponse,
 						"429": errorResponse,
 					},
 				},
@@ -365,6 +356,10 @@ export function buildOpenApiDocument() {
 						"400": {
 							description: "{ type: 'error', error: {...} } (Anthropic shape)",
 						},
+						"413": {
+							description:
+								"Request body exceeds the public JSON limit (Anthropic error shape)",
+						},
 					},
 				},
 			},
@@ -400,6 +395,37 @@ export function buildOpenApiDocument() {
 						"400": errorResponse,
 						"401": errorResponse,
 						"403": errorResponse,
+						"413": errorResponse,
+						"429": errorResponse,
+					},
+				},
+			},
+			"/v1/audio/transcriptions": {
+				post: {
+					operationId: "createTranscription",
+					tags: ["Inference"],
+					summary: "Transcribe audio (OpenAI-compatible multipart contract)",
+					description:
+						"Accepts one audio file plus transcription controls. JSON and verbose_json return JSON, text/srt/vtt return text, and stream=true returns OpenAI-compatible transcription SSE events.",
+					requestBody: {
+						required: true,
+						content: {
+							"multipart/form-data": { schema: c.AudioTranscriptionRequest },
+						},
+					},
+					responses: {
+						"200": {
+							description: "Transcription JSON, text, subtitles, or SSE stream",
+							content: {
+								"application/json": { schema: c.AudioTranscriptionResponse },
+								"text/plain": { schema: z.string() },
+								"text/event-stream": { schema: z.string() },
+							},
+						},
+						"400": errorResponse,
+						"401": errorResponse,
+						"403": errorResponse,
+						"413": errorResponse,
 						"429": errorResponse,
 					},
 				},
@@ -466,6 +492,7 @@ export function buildOpenApiDocument() {
 						"400": errorResponse,
 						"401": errorResponse,
 						"403": errorResponse,
+						"413": errorResponse,
 						"429": errorResponse,
 					},
 				},
@@ -498,6 +525,7 @@ export function buildOpenApiDocument() {
 						"400": errorResponse,
 						"401": errorResponse,
 						"403": errorResponse,
+						"413": errorResponse,
 						"429": errorResponse,
 					},
 				},
@@ -536,6 +564,7 @@ export function buildOpenApiDocument() {
 						"400": errorResponse,
 						"401": errorResponse,
 						"403": errorResponse,
+						"413": errorResponse,
 						"429": errorResponse,
 						"503": errorResponse,
 					},
@@ -1168,7 +1197,7 @@ export function buildOpenApiDocument() {
 					],
 					responses: {
 						"200": {
-							description: "{ data: [<requestLog>], pagination: {...} }",
+							description: "{ data: [<operation>], pagination: {...} }",
 						},
 						"400": errorResponse,
 					},

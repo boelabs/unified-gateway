@@ -1,10 +1,11 @@
 import { assertEmbeddingsRequestSupported } from "#gateway/embeddingsRequestValidation.ts";
+import { estimateTokenReservation } from "#router/tokenReservation.ts";
 import { candidateMetadata } from "#gateway/candidateMetadata.ts";
 import type { EmbeddingsExecResult } from "#gateway/executor.ts";
 import { embeddingsResponseLog } from "#embeddings/logging.ts";
+import { OperationLogDraft } from "./runtime/operationLog.ts";
 import { embeddingsUsageToCore } from "#core/embeddings.ts";
 import { route, type RouteResult } from "#router/index.ts";
-import { RequestLogDraft } from "./runtime/requestLog.ts";
 import { executeEmbeddings } from "#gateway/executor.ts";
 import type { AppEnv } from "#auth/types.ts";
 import type { Context } from "hono";
@@ -12,10 +13,13 @@ import type { Context } from "hono";
 import {
 	applyCanonicalResponseExtensions,
 	applyCanonicalRequestExtensions,
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	assertFinalModelAllowed,
 	notifyExtensionError,
+	usageQuotaForRequest,
 	openResponseCache,
+	computeUsageCost,
 	toGatewayError,
-	accountUsage,
 	readJsonBody,
 	parseBody,
 	preflight,
@@ -29,30 +33,34 @@ import {
 
 /** POST /v1/embeddings - OpenAI-compatible contract, no-stream, cacheable. */
 export async function embeddingsHandler(c: Context<AppEnv>): Promise<Response> {
-	const log = new RequestLogDraft(c, "embeddings");
+	const log = new OperationLogDraft(c, "embeddings");
 	let routing: RouteResult<EmbeddingsExecResult> | null = null;
+	let fallbackUsage: ReturnType<typeof embeddingsUsageToCore> = null;
 	let finished = false;
 
 	const finish = async (
 		usage: ReturnType<typeof embeddingsUsageToCore>,
+		error?: ReturnType<typeof toGatewayError> | null,
 	): Promise<void> => {
 		if (!routing || finished) return;
 		finished = true;
-		await routing.finish(usage);
+		await routing.finish(usage ?? fallbackUsage, undefined, error);
 	};
 
 	try {
-		const json = await readJsonBody(c);
+		const json = await readJsonBody(c, PUBLIC_JSON_BODY_MAX_BYTES);
 		log.requestBody = json;
 		const parsed = parseBody(embeddingsRequestSchema, json);
 		let canonical = embeddingsRequestToCanonical(parsed);
+		log.publicModel = canonical.model;
+		await preflight(c, canonical.model);
 		canonical = await applyCanonicalRequestExtensions(
 			c,
 			"embeddings",
 			canonical,
 		);
 		log.publicModel = canonical.model;
-		await preflight(c, canonical.model);
+		assertFinalModelAllowed(c, canonical.model);
 
 		const cache = await openResponseCache({
 			c,
@@ -73,10 +81,16 @@ export async function embeddingsHandler(c: Context<AppEnv>): Promise<Response> {
 				operationId: log.operationId,
 				candidateEligibility: (candidate) =>
 					assertEmbeddingsRequestSupported(canonical, candidate.meta),
+				tokenReservation: (candidate) =>
+					estimateTokenReservation(canonical, {
+						maxOutputTokens: candidate.meta.maxOutputTokens ?? 0,
+					}),
+				usageQuota: usageQuotaForRequest(c),
 			},
 			(candidate, ctx) => executeEmbeddings(candidate.adapter, canonical, ctx),
 		);
 		log.applyRouting(routing);
+		fallbackUsage = embeddingsUsageToCore(routing.value.response.usage);
 		log.upstreamTtftMs = Date.now() - routing.upstreamStartedAt;
 
 		const response = await applyCanonicalResponseExtensions(
@@ -87,7 +101,7 @@ export async function embeddingsHandler(c: Context<AppEnv>): Promise<Response> {
 		);
 		const usage = embeddingsUsageToCore(response.usage);
 		await finish(usage);
-		const cost = accountUsage(c, routing.candidate.meta, usage);
+		const cost = computeUsageCost(routing.candidate.meta, usage);
 		const rendered = toOpenAIEmbeddingsResponse(response);
 		if (usage) cache.store(rendered, usage);
 		log.write({
@@ -107,7 +121,7 @@ export async function embeddingsHandler(c: Context<AppEnv>): Promise<Response> {
 	} catch (error) {
 		const ge = toGatewayError(error);
 		log.applyFailedAttempts(ge.attempts);
-		await finish(null);
+		await finish(null, ge);
 		await notifyExtensionError(c, "embeddings", log.publicModel, ge);
 		log.writeError(ge);
 		throw ge;

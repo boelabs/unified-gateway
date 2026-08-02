@@ -10,6 +10,7 @@ import {
 	ilike,
 	count,
 	and,
+	lte,
 	eq,
 	or,
 } from "drizzle-orm";
@@ -205,6 +206,25 @@ export async function resetVirtualKeySpend(
 			updatedAt: new Date(),
 		})
 		.where(eq(virtualKeys.id, id));
+}
+
+/** Lazily advances an expired budget window exactly once across all gateway replicas. */
+export async function resetVirtualKeySpendIfDue(
+	id: string,
+	budgetReset: "hourly" | "daily" | "weekly" | "monthly" | null,
+	now = new Date(),
+): Promise<boolean> {
+	if (budgetReset === null) return false;
+	const rows = await db
+		.update(virtualKeys)
+		.set({
+			spendCents: "0",
+			budgetResetAt: nextResetAt(budgetReset, now),
+			updatedAt: now,
+		})
+		.where(and(eq(virtualKeys.id, id), lte(virtualKeys.budgetResetAt, now)))
+		.returning({ id: virtualKeys.id });
+	return rows.length === 1;
 }
 
 export async function deleteVirtualKey(id: string): Promise<void> {

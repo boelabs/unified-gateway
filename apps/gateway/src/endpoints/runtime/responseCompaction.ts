@@ -1,17 +1,27 @@
-import { decryptJson, encryptJson, type EncEnvelope } from "#db/crypto.ts";
+import {
+	parseEncryptedEnvelope,
+	decryptJson,
+	encryptJson,
+} from "#db/crypto.ts";
 
-const COMPACTION_PREFIX = "ugcmp_1.";
+const COMPACTION_PREFIX = "ugcmp_2.";
+const COMPACTION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 interface CompactionPayload {
-	version: 1;
+	version: 2;
 	summary: string;
+	expiresAt: number;
 }
 
 export function encodeCompactionSummary(summary: string): string {
-	const envelope = encryptJson({
-		version: 1,
-		summary,
-	} satisfies CompactionPayload);
+	const envelope = encryptJson(
+		{
+			version: 2,
+			summary,
+			expiresAt: Date.now() + COMPACTION_TTL_MS,
+		} satisfies CompactionPayload,
+		"response-compaction",
+	);
 	return `${COMPACTION_PREFIX}${Buffer.from(JSON.stringify(envelope)).toString("base64url")}`;
 }
 
@@ -20,12 +30,18 @@ export function decodeCompactionSummary(value: unknown): string | undefined {
 		return undefined;
 	try {
 		const encoded = value.slice(COMPACTION_PREFIX.length);
-		const envelope = JSON.parse(
-			Buffer.from(encoded, "base64url").toString("utf8"),
-		) as EncEnvelope;
-		const payload = decryptJson<CompactionPayload>(envelope);
-		return payload.version === 1 && typeof payload.summary === "string"
-			? payload.summary
+		const envelope = parseEncryptedEnvelope(
+			JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")),
+		);
+		const decoded = decryptJson(envelope, "response-compaction");
+		return decoded !== null &&
+			typeof decoded === "object" &&
+			!Array.isArray(decoded) &&
+			(decoded as Partial<CompactionPayload>).version === 2 &&
+			typeof (decoded as Partial<CompactionPayload>).summary === "string" &&
+			typeof (decoded as Partial<CompactionPayload>).expiresAt === "number" &&
+			(decoded as Partial<CompactionPayload>).expiresAt! > Date.now()
+			? (decoded as CompactionPayload).summary
 			: undefined;
 	} catch {
 		return undefined;

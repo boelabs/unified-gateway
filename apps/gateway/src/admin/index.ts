@@ -1,7 +1,7 @@
 import { authMiddleware, requireMaster, getAuth } from "#auth/middleware.ts";
 import { EXECUTION_POLICY_MAX_TOTAL_MS } from "#core/executionPolicy.ts";
+import { ADMIN_JSON_BODY_MAX_BYTES, readJsonBody } from "#http/body.ts";
 import { invalidateRouterSettingsCache } from "#router/settings.ts";
-import { invalidateResponseCache } from "#cache/responseCache.ts";
 import { invalidateVirtualKey } from "#auth/virtualKeyCache.ts";
 import { clearVirtualKeyBudget } from "#ratelimit/index.ts";
 import { configureFallback } from "#fallbacks/service.ts";
@@ -59,6 +59,11 @@ import {
 	reloadExtensions,
 	extensionStatus,
 } from "#extensions/runtime.ts";
+
+import {
+	advanceResponseCacheEpoch,
+	invalidateResponseCache,
+} from "#cache/responseCache.ts";
 
 import {
 	operationPersistenceStatus,
@@ -197,16 +202,10 @@ function parsePage(c: import("hono").Context): {
 }
 
 async function parseJson<T>(
-	c: import("hono").Context,
+	c: import("hono").Context<AppEnv>,
 	schema: z.ZodType<T>,
 ): Promise<T> {
-	const json = await c.req.json().catch(() => undefined);
-	if (json === undefined) {
-		throw new GatewayError({
-			class: "bad_request",
-			message: "Invalid or missing JSON body",
-		});
-	}
+	const json = await readJsonBody(c, ADMIN_JSON_BODY_MAX_BYTES);
 	const parsed = schema.safeParse(json);
 	if (!parsed.success) {
 		const first = parsed.error.issues[0];
@@ -253,6 +252,22 @@ export const adminApp = new Hono<AppEnv>();
 
 // Every /admin route requires the master key.
 adminApp.use("*", authMiddleware(), requireMaster());
+adminApp.use("*", async (c, next) => {
+	const mutatesConfiguration = ["POST", "PUT", "PATCH", "DELETE"].includes(
+		c.req.method,
+	);
+	const managesCacheDirectly = c.req.path === "/admin/cache";
+	if (mutatesConfiguration && !managesCacheDirectly)
+		await advanceResponseCacheEpoch();
+	await next();
+	if (
+		mutatesConfiguration &&
+		!managesCacheDirectly &&
+		c.res.status >= 200 &&
+		c.res.status < 400
+	)
+		await advanceResponseCacheEpoch();
+});
 // Model CRUD (with inline CatalogEntry for custom models) and adapter introspection.
 adminApp.route("/", platformAdminApp);
 
@@ -609,8 +624,8 @@ adminApp.get("/observability/summary", async (c) => {
 			unverifiedTerminal: Number(summary.totals.unverifiedTerminalOutcomes) > 0,
 			abandonedOrPersistenceLoss:
 				Number(summary.totals.abandoned) > 0 ||
-				persistence.persistenceFailures > 0 ||
-				persistence.persistenceDrops > 0,
+				persistence.failureTotal > 0 ||
+				persistence.dropTotal > 0,
 			stalls: requests >= 20 && rate(Number(summary.totals.stalls)) > 0.02,
 			degraded: requests > 0 && rate(Number(summary.totals.degraded)) > 0.05,
 			firstOutputP95: Number(summary.totals.p95FirstOutputMs ?? 0) > 25_000,
@@ -708,27 +723,14 @@ const routerSettingsSchema = z
 
 adminApp.get("/router-settings", async (c) => {
 	const settings = await getRouterSettings();
-	if (!settings) return ok(c, null);
-	const {
-		numRetries: _numRetries,
-		maxAttemptsPerRequest: _maxAttemptsPerRequest,
-		timeoutSeconds: _timeoutSeconds,
-		...publicSettings
-	} = settings;
-	return ok(c, publicSettings);
+	return ok(c, settings ?? null);
 });
 
 adminApp.put("/router-settings", async (c) => {
 	const patch = await parseJson(c, routerSettingsSchema);
 	const updated = await updateRouterSettings(patch);
 	invalidateRouterSettingsCache();
-	const {
-		numRetries: _numRetries,
-		maxAttemptsPerRequest: _maxAttemptsPerRequest,
-		timeoutSeconds: _timeoutSeconds,
-		...publicSettings
-	} = updated;
-	return ok(c, publicSettings);
+	return ok(c, updated);
 });
 
 /* --------------------------------------------------------------- fallbacks */

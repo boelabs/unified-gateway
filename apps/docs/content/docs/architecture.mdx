@@ -15,28 +15,30 @@ that don't apply to them (parameter policy, response caching).
 2.  logger()                   — structured request/response log line
 3.  authMiddleware()           — resolves Bearer/x-api-key to master or virtual key ("/v1/*" only;
                                  "/admin/*" has its own master-key-only check)
-4.  preflight()                — assertModelAllowed (is this Public Model in the key's scope?),
-                                 then enforceVirtualKey (RPM/TPM/budget check + sets x-ratelimit-*)
-5.  contract -> canonical      — the endpoint parses its public shape into CanonicalChatRequest
+4.  body + contract -> canonical — bounded streaming read, schema validation, then conversion into
+                                   CanonicalChatRequest
+5.  preflight()                — original-model scope and virtual-key RPM/current-balance checks
 6.  onCanonicalRequest hook    — every enabled extension instance, in priority order
-7.  response cache lookup      — virtual-key only, only if eligible (no stream/tools/server-side
+7.  final-model scope check    — prevents an extension rewrite from escaping the key's scope
+8.  response cache lookup      — virtual-key only, only if eligible (no stream/tools/server-side
                                  state) and x-unified-cache was sent; a HIT returns here, skipping
                                  every step below
-8.  parameter-policy eligibility — "error" strategy only: excludes candidates lacking a requested
+9.  parameter-policy eligibility — "error" strategy only: excludes candidates lacking a requested
                                  parameter before routing even starts
-9.  routing                    — pickDeployment (strategy) + pool-wide retries + cooldown;
+10. routing                    — candidate choice, atomic deployment RPM/TPM admission, and atomic
+                                 virtual-key TPM/budget reservation; then retries/cooldowns/fallbacks;
                                  "drop"/"allow" parameter policy applied to the request actually sent
                                  to the CHOSEN deployment, not before
-10. adapter execution           — canonical -> upstream wire format -> canonical response
-11. onCanonicalResponse /       — per full response, or per chunk while streaming
+11. adapter execution           — canonical -> upstream wire format -> canonical response
+12. onCanonicalResponse /       — per full response, or per chunk while streaming
     onStreamEvent hooks
-12. onImageOutput hook          — image endpoints only, after upstream bytes are decoded
-13. cost accounting             — pricing lookup + virtual-key spend/TPM recording (accountUsage)
-14. response cache store        — on a MISS, persists the now-complete response
-15. request log write           — cacheHit, parameterPolicy (dropped params), reasoning
+13. onImageOutput hook          — image endpoints only, after upstream bytes are decoded
+14. quota reconciliation        — reserved TPM/budget becomes provider-reported usage and exact cost
+15. response cache store        — on a MISS, persists the now-complete response
+16. operation log write         — cacheHit, parameterPolicy (dropped params), reasoning
                                  (requested vs. effective effort), routing attempts, cost — all in
                                  one row
-16. onError hook                — only on failure, anywhere above; never replaces the original error
+17. onError hook                — only on failure, anywhere above; never replaces the original error
 ```
 
 ## Why this order, specifically
@@ -57,7 +59,7 @@ that don't apply to them (parameter policy, response caching).
   `onCanonicalResponse` see the same shape regardless of which public endpoint or provider is involved,
   which is what lets one hook (a PII filter, a watermark) work identically across
   `/v1/chat/completions`, `/v1/responses`, and `/v1/messages`. See [Extensions](/docs/extensions).
-- **Cost accounting and the request log run after everything succeeds (or in the error path for
+- **Cost accounting and the operation log run after everything succeeds (or in the error path for
   failures)** — the log is the single place all of the above becomes observable after the fact:
   what was cached, what was dropped, what reasoning effort was actually applied, which deployments were
   tried and in what order.
@@ -65,9 +67,8 @@ that don't apply to them (parameter policy, response caching).
 ## Where this lives in code
 
 `src/index.ts` wires the global middleware (steps 1–3); `src/endpoints/runtime/pipeline.ts` provides
-the shared preflight/cache/extension/cost-accounting helpers every endpoint calls (steps 4, 6–8, 12–14);
-`src/endpoints/runtime/parameterPolicy.ts` and `src/router/index.ts` implement steps 8–9;
-`src/extensions/runtime.ts` implements the hook dispatch for steps 6, 11, 12, and 16.
+the shared preflight/cache/extension/quota helpers every endpoint calls; `src/router/index.ts` owns
+atomic admission and exact settlement; `src/extensions/runtime.ts` implements hook dispatch.
 
 ## What to read next
 

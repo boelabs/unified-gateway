@@ -28,6 +28,17 @@ import {
 } from "./circuit.ts";
 
 import {
+	onAttemptGatewayFinish,
+	type CooldownCause,
+	type AttemptLease,
+	onAttemptFailure,
+	onAttemptCancel,
+	onSuccessFinish,
+	onAttemptStart,
+	fetchMetrics,
+} from "./state.ts";
+
+import {
 	finishUpstreamAttemptTelemetry,
 	finishOperationChildTelemetry,
 	startUpstreamAttemptTelemetry,
@@ -39,15 +50,6 @@ import {
 	listDeploymentCandidates,
 	type DeploymentCandidate,
 } from "#gateway/deploymentCandidates.ts";
-
-import {
-	type CooldownCause,
-	onAttemptFailure,
-	onAttemptCancel,
-	onSuccessFinish,
-	onAttemptStart,
-	fetchMetrics,
-} from "./state.ts";
 
 import {
 	finishDownstreamWriteObservation,
@@ -76,6 +78,23 @@ export interface RouteOptions {
 	operationId?: string;
 	/** Offset used when a pre-output coordinator re-enters the router. */
 	attemptOrdinalOffset?: number;
+	/** Conservative upper bound reserved against a deployment TPM limit before execution. */
+	tokenReservation?: (candidate: DeploymentCandidate) => number;
+	/** Optional public-key quota admission, kept provider-independent through this lifecycle contract. */
+	usageQuota?: UsageQuota;
+}
+
+export interface UsageQuotaLease {
+	settle(usage: Usage): Promise<void>;
+	release(): Promise<void>;
+}
+
+export interface UsageQuota {
+	assertCandidate(candidate: DeploymentCandidate): void;
+	reserve(
+		candidate: DeploymentCandidate,
+		reservedTokens: number,
+	): Promise<UsageQuotaLease>;
 }
 
 /** Executes the upstream call for a candidate; throws GatewayError on failure. */
@@ -322,19 +341,21 @@ export async function route<T>(
 			const listed =
 				preloaded ??
 				(await listDeploymentCandidates(candidatePublicModel, callType));
-			const eligibleCandidates = opts.candidateEligibility
-				? listed.filter((candidate) => {
-						try {
-							opts.candidateEligibility?.(candidate);
-							return true;
-						} catch (error) {
-							if (!GatewayError.is(error) || error.class !== "bad_request")
-								throw error;
-							eligibilityError ??= error;
-							return false;
-						}
-					})
-				: listed;
+			const eligibleCandidates =
+				opts.candidateEligibility || opts.usageQuota
+					? listed.filter((candidate) => {
+							try {
+								opts.candidateEligibility?.(candidate);
+								opts.usageQuota?.assertCandidate(candidate);
+								return true;
+							} catch (error) {
+								if (!GatewayError.is(error) || error.class !== "bad_request")
+									throw error;
+								eligibilityError ??= error;
+								return false;
+							}
+						})
+					: listed;
 			const freshCandidates = opts.previousDeploymentIds
 				? eligibleCandidates.filter(
 						(candidate) => !opts.previousDeploymentIds?.has(candidate.row.id),
@@ -352,6 +373,7 @@ export async function route<T>(
 
 			const blockedDeployments = new Set<string>();
 			const blockedCapacity = new Set<string>();
+			const rateLimitedDeployments = new Set<string>();
 			const failureReasons = new Set<FallbackReason>();
 			const maxAttemptsPerPool = Math.max(
 				0,
@@ -420,6 +442,7 @@ export async function route<T>(
 						(attemptsByDeployment.get(candidate.row.id) ?? 0) <
 							maxAttemptsPerDeployment &&
 						!blockedDeployments.has(candidate.row.id) &&
+						!rateLimitedDeployments.has(candidate.row.id) &&
 						!blockedCapacity.has(capacity.id)
 					);
 				});
@@ -434,31 +457,23 @@ export async function route<T>(
 						minRequestAttempts,
 				);
 				if (withAttemptsLeft.length === 0) {
-					if (blockedDeployments.size > 0) reason = "cooldown";
-					else if (blockedCapacity.size > 0) reason = "rate_limited";
+					if (rateLimitedDeployments.size > 0 || blockedCapacity.size > 0)
+						reason = "rate_limited";
+					else if (blockedDeployments.size > 0) reason = "cooldown";
 					break;
 				}
 
-				// Exclude deployments that exceed their own RPM/TPM limit.
+				// Metrics guide balancing only. The authoritative RPM/TPM decision is an atomic reservation
+				// after circuit admission, eliminating the read-then-increment race between replicas.
 				const metrics = await fetchMetrics(
 					withAttemptsLeft.map((c) => c.row.id),
 				);
-				const available = withAttemptsLeft.filter((c) => {
-					const m = metrics.get(c.row.id);
-					if (!m) return true;
-					if (c.row.rpmLimit != null && m.rpm >= c.row.rpmLimit) return false;
-					if (c.row.tpmLimit != null && m.tpm >= c.row.tpmLimit) return false;
-					return true;
-				});
-				if (available.length === 0) {
-					reason = "rate_limited";
-					break;
-				}
 
 				const chosen =
-					available.find(
+					withAttemptsLeft.find(
 						(candidate) => candidate.row.id === opts.preferredDeploymentId,
-					) ?? pickDeployment(settings.routingStrategy, available, metrics);
+					) ??
+					pickDeployment(settings.routingStrategy, withAttemptsLeft, metrics);
 				const transport = resolveTransport(
 					chosen,
 					callType,
@@ -487,32 +502,77 @@ export async function route<T>(
 					continue;
 				}
 				const permit = permitResult.permit;
+				let attemptLease: AttemptLease | null = null;
+				let usageQuotaLease: UsageQuotaLease | undefined;
+				const reservedTokens = opts.tokenReservation?.(chosen) ?? 0;
+				try {
+					usageQuotaLease = await opts.usageQuota?.reserve(
+						chosen,
+						reservedTokens,
+					);
+					const admission = await onAttemptStart(chosen.row.id, {
+						rpmLimit: chosen.row.rpmLimit,
+						tpmLimit: chosen.row.tpmLimit,
+						reservedTokens,
+					});
+					if (!admission.accepted) {
+						await usageQuotaLease?.release();
+						await releaseCircuitPermit(permit);
+						rateLimitedDeployments.add(chosen.row.id);
+						reason = "rate_limited";
+						continue;
+					}
+					attemptLease = admission.lease;
+				} catch (error) {
+					await usageQuotaLease?.release();
+					if (attemptLease)
+						await onAttemptCancel(chosen.row.id, permit, attemptLease);
+					else await releaseCircuitPermit(permit);
+					if (
+						GatewayError.is(error) &&
+						(error.code === "budget_exceeded" ||
+							error.code === "rate_limit_exceeded")
+					) {
+						neutralCandidateError ??= error;
+						rateLimitedDeployments.add(chosen.row.id);
+						reason = "rate_limited";
+						continue;
+					}
+					throw error;
+				}
+				const activeAttemptLease = attemptLease;
+				if (!activeAttemptLease)
+					throw new Error(
+						"Deployment admission completed without an attempt lease",
+					);
 
 				attemptsByDeployment.set(
 					chosen.row.id,
 					(attemptsByDeployment.get(chosen.row.id) ?? 0) + 1,
 				);
 				attempts += 1;
-				try {
-					await onAttemptStart(chosen.row.id);
-				} catch (error) {
-					await releaseCircuitPermit(permit);
-					throw error;
-				}
 				const startedAt = Date.now();
 				const attemptOrdinal = (opts.attemptOrdinalOffset ?? 0) + attempts;
-				if (opts.operationId) {
-					await beginUpstreamAttempt({
-						operationId: opts.operationId,
-						ordinal: attemptOrdinal,
-						deploymentId: chosen.row.id,
-						deploymentLabel: chosen.row.label ?? null,
-						adapterKey: chosen.adapter.key,
-						transport,
-						upstreamModel: chosen.upstreamModel,
-						startedAt: new Date(startedAt),
-						requestId: opts.requestId,
-					});
+				try {
+					if (opts.operationId) {
+						await beginUpstreamAttempt({
+							operationId: opts.operationId,
+							ordinal: attemptOrdinal,
+							deploymentId: chosen.row.id,
+							deploymentLabel: chosen.row.label ?? null,
+							adapterKey: chosen.adapter.key,
+							transport,
+							upstreamModel: chosen.upstreamModel,
+							startedAt: new Date(startedAt),
+							requestId: opts.requestId,
+						});
+					}
+				} catch (error) {
+					await settleSideEffects(opts.requestId, [
+						usageQuotaLease?.release() ?? Promise.resolve(),
+						onAttemptCancel(chosen.row.id, permit, activeAttemptLease),
+					]);
+					throw error;
 				}
 				const attemptTelemetry = startUpstreamAttemptTelemetry({
 					requestId: opts.requestId,
@@ -612,6 +672,13 @@ export async function route<T>(
 											).observation
 										: undefined;
 								attemptRecord.usage = usage ?? observation?.usage ?? null;
+								if (usageQuotaLease) {
+									await settleSideEffects(opts.requestId, [
+										attemptRecord.usage
+											? usageQuotaLease.settle(attemptRecord.usage)
+											: usageQuotaLease.release(),
+									]);
+								}
 								if (downstream)
 									attemptRecord.downstreamBlockedMs = downstream.maxBlockedMs;
 								if (downstream)
@@ -681,6 +748,7 @@ export async function route<T>(
 												durationMs: endedAt - startedAt,
 											},
 											permit,
+											activeAttemptLease,
 										),
 									]);
 									finishUpstreamAttemptTelemetry(attemptTelemetry, {
@@ -711,7 +779,7 @@ export async function route<T>(
 									attemptRecord.failureKind = "request";
 									attemptRecord.deploymentHealth = "neutral";
 									await settleSideEffects(opts.requestId, [
-										onAttemptCancel(chosen.row.id, permit),
+										onAttemptCancel(chosen.row.id, permit, activeAttemptLease),
 									]);
 									finishUpstreamAttemptTelemetry(attemptTelemetry, {
 										endedAt,
@@ -738,11 +806,19 @@ export async function route<T>(
 											opts.requestId,
 											streamError.deploymentHealth === "neutral"
 												? [
-														onAttemptFailure(chosen.row.id, false),
+														onAttemptFailure(
+															chosen.row.id,
+															false,
+															activeAttemptLease,
+														),
 														closeCircuits(permit),
 													]
 												: [
-														onAttemptFailure(chosen.row.id, true),
+														onAttemptFailure(
+															chosen.row.id,
+															true,
+															activeAttemptLease,
+														),
 														recordTransientFailure(
 															permit,
 															circuitSettings,
@@ -753,7 +829,7 @@ export async function route<T>(
 										break;
 									case "configuration":
 										await settleSideEffects(opts.requestId, [
-											onAttemptFailure(chosen.row.id, true),
+											onAttemptFailure(chosen.row.id, true, activeAttemptLease),
 											recordConfigurationFailure(
 												permit,
 												circuitSettings,
@@ -764,7 +840,11 @@ export async function route<T>(
 										break;
 									case "throttle":
 										await settleSideEffects(opts.requestId, [
-											onAttemptFailure(chosen.row.id, false),
+											onAttemptFailure(
+												chosen.row.id,
+												false,
+												activeAttemptLease,
+											),
 											recordThrottleFailure(
 												permit,
 												circuitSettings,
@@ -778,13 +858,22 @@ export async function route<T>(
 										break;
 									case "request":
 										await settleSideEffects(opts.requestId, [
-											onAttemptFailure(chosen.row.id, false),
+											onAttemptFailure(
+												chosen.row.id,
+												false,
+												activeAttemptLease,
+											),
 											closeCircuits(permit),
 										]);
 										break;
 									case "gateway":
 										await settleSideEffects(opts.requestId, [
-											onAttemptCancel(chosen.row.id, permit),
+											onAttemptGatewayFinish(
+												chosen.row.id,
+												attemptRecord.usage?.totalTokens ?? 0,
+												permit,
+												activeAttemptLease,
+											),
 										]);
 										break;
 								}
@@ -799,6 +888,10 @@ export async function route<T>(
 					};
 				} catch (err) {
 					cleanupContext();
+					if (usageQuotaLease)
+						await settleSideEffects(opts.requestId, [
+							usageQuotaLease.release(),
+						]);
 					// If the CLIENT cancelled (not an upstream timeout), it is NOT the deployment's fault:
 					// release the inflight, do not count toward allowed_fails/cooldown, and do not retry.
 					// Prevents quickly cancelling requests from putting the deployment pool into cooldown.
@@ -809,7 +902,7 @@ export async function route<T>(
 							terminalVerified: false,
 							errorCode: "client_closed_request",
 						});
-						await onAttemptCancel(chosen.row.id, permit);
+						await onAttemptCancel(chosen.row.id, permit, activeAttemptLease);
 						attemptLog.push({
 							deploymentId: chosen.row.id,
 							...(chosen.row.label != null ? { label: chosen.row.label } : {}),
@@ -860,7 +953,7 @@ export async function route<T>(
 						errorCode: ge.code,
 					});
 					if (ge.routingScope === "request") {
-						await onAttemptCancel(chosen.row.id, permit);
+						await onAttemptCancel(chosen.row.id, permit, activeAttemptLease);
 						attemptLog.push({
 							deploymentId: chosen.row.id,
 							...(chosen.row.label != null ? { label: chosen.row.label } : {}),
@@ -902,12 +995,16 @@ export async function route<T>(
 					switch (ge.failureKind) {
 						case "transient": {
 							if (ge.deploymentHealth === "neutral") {
-								await onAttemptFailure(chosen.row.id, false);
+								await onAttemptFailure(
+									chosen.row.id,
+									false,
+									activeAttemptLease,
+								);
 								await closeCircuits(permit);
 								neutralCandidateError ??= ge;
 								break;
 							}
-							await onAttemptFailure(chosen.row.id, true);
+							await onAttemptFailure(chosen.row.id, true, activeAttemptLease);
 							const firstSignal =
 								!countedTransientDeployments.has(chosen.row.id) ||
 								permit.deploymentMode === "half_open";
@@ -919,7 +1016,7 @@ export async function route<T>(
 							break;
 						}
 						case "configuration":
-							await onAttemptFailure(chosen.row.id, true);
+							await onAttemptFailure(chosen.row.id, true, activeAttemptLease);
 							await recordConfigurationFailure(
 								permit,
 								circuitSettings,
@@ -929,7 +1026,7 @@ export async function route<T>(
 							deploymentFailureCount += 1;
 							break;
 						case "throttle": {
-							await onAttemptFailure(chosen.row.id, false);
+							await onAttemptFailure(chosen.row.id, false, activeAttemptLease);
 							const throttleMs = Math.max(
 								ge.retryAfterMs ?? 0,
 								settings.throttleCooldownSeconds * 1000,
@@ -948,13 +1045,13 @@ export async function route<T>(
 							break;
 						}
 						case "request":
-							await onAttemptFailure(chosen.row.id, false);
+							await onAttemptFailure(chosen.row.id, false, activeAttemptLease);
 							// A deterministic request rejection still proves a half-open upstream is alive.
 							await closeCircuits(permit);
 							neutralCandidateError ??= ge;
 							break;
 						case "gateway":
-							await onAttemptCancel(chosen.row.id, permit);
+							await onAttemptCancel(chosen.row.id, permit, activeAttemptLease);
 							neutralCandidateError ??= ge;
 							break;
 					}
@@ -1149,13 +1246,13 @@ export async function route<T>(
 			retryRound += 1;
 		}
 
-		if (attempts === 0 && eligibilityError) {
-			eligibilityError.attempts = attemptLog;
-			throw eligibilityError;
-		}
 		if (deploymentFailureCount === 0 && neutralCandidateError) {
 			neutralCandidateError.attempts = attemptLog;
 			throw neutralCandidateError;
+		}
+		if (attempts === 0 && eligibilityError) {
+			eligibilityError.attempts = attemptLog;
+			throw eligibilityError;
 		}
 
 		// Stored redacted causes explain a zero-attempt circuit cut without changing the public error.

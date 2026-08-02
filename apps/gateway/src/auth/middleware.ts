@@ -4,12 +4,7 @@ import { GatewayError } from "#core/errors.ts";
 import type { AppEnv, Auth } from "./types.ts";
 import { env } from "#config/env.ts";
 
-/**
- * Extracts the key from: Authorization: Bearer <key>, x-api-key, or ?api_key= (query).
- * The query param is for clients that cannot set headers, like browser EventSource. The hono logger
- * records the path without the query, so the key does not leak to logs; still, prefer the header
- * whenever possible.
- */
+/** Extracts an API key only from headers, which do not leak through URLs, history, or referrers. */
 function extractKey(c: Context): string | undefined {
 	const auth = c.req.header("authorization");
 	if (auth) {
@@ -18,9 +13,7 @@ function extractKey(c: Context): string | undefined {
 		return auth.trim();
 	}
 	const x = c.req.header("x-api-key");
-	if (x) return x.trim();
-	const q = c.req.query("api_key");
-	return q ? q.trim() : undefined;
+	return x ? x.trim() : undefined;
 }
 
 /** Resolves and revalidates request credentials. WebSocket sessions call this before every turn. */

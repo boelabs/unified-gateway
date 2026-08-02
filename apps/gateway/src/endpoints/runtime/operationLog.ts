@@ -1,4 +1,4 @@
-import { logRequest, type RequestLogInput } from "#logging/logger.ts";
+import { logOperation, type OperationLogInput } from "#logging/logger.ts";
 import { getRequestId } from "#http/requestContext.ts";
 import type { GatewayError } from "#core/errors.ts";
 import { clientIp } from "#endpoints/shared.ts";
@@ -23,7 +23,7 @@ import {
 
 /** Fields the endpoint fills in when closing the request lifecycle (success or error). */
 export type LogOutcome = Pick<
-	RequestLogInput,
+	OperationLogInput,
 	| "status"
 	| "httpStatus"
 	| "usage"
@@ -48,14 +48,14 @@ interface AttemptLike {
 }
 
 /**
- * Mutable accumulator of the request_log during a request's lifecycle. Centralizes the draft that
+ * Mutable accumulator of the durable operation record during a request's lifecycle. Centralizes the draft that
  * each endpoint used to repeat as a dozen loose `let`s plus a `writeLog` closure: built on entry,
  * progressively filled (model, routing, TTFT), and emits a single log on close.
  *
  * `applyRouting` fills in the winning attempt's fields; `applyFailedAttempts` reconstructs what is
  * known from the attempt log when `route()` fails before choosing a deployment.
  */
-export class RequestLogDraft {
+export class OperationLogDraft {
 	/** Epoch (ms) of handler entry. Public for computing relative TTFTs. */
 	readonly startedAt = Date.now();
 	private readonly startTime = new Date(this.startedAt);
@@ -189,7 +189,7 @@ export class RequestLogDraft {
 	}
 
 	/** Always-present log fields, resolved at write time. */
-	private base(): Omit<RequestLogInput, keyof LogOutcome | "cacheHit"> {
+	private base(): Omit<OperationLogInput, keyof LogOutcome | "cacheHit"> {
 		const now = Date.now();
 		return {
 			operationId: this.operationId,
@@ -230,7 +230,7 @@ export class RequestLogDraft {
 					}
 				: outcome;
 		const input = { ...this.base(), cacheHit: false, ...effectiveOutcome };
-		logRequest(input);
+		logOperation(input);
 		completeOperation(this.operationId, this.operationStarted, input);
 		finishRequestTelemetry(this.telemetrySpan, input);
 	}
@@ -257,7 +257,7 @@ export class RequestLogDraft {
 	): void {
 		if (this.closed) return;
 		this.closed = true;
-		const input: RequestLogInput = {
+		const input: OperationLogInput = {
 			...this.base(),
 			cacheHit: true,
 			status: "success",
@@ -272,7 +272,7 @@ export class RequestLogDraft {
 			},
 			error: null,
 		};
-		logRequest(input);
+		logOperation(input);
 		completeOperation(this.operationId, this.operationStarted, input);
 		finishRequestTelemetry(this.telemetrySpan, input);
 	}

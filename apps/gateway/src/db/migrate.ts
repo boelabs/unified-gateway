@@ -5,8 +5,8 @@ import { join } from "node:path";
 /**
  * Applies pending Drizzle migrations from ./migrations, tracked by Drizzle's own metadata table
  * (`drizzle.__drizzle_migrations`). Idempotent: re-running only applies what is pending. Migrations
- * are generated from `schema.ts` with `bun run db:generate` — see `drizzle.config.ts`. The baseline
- * `0000_init.sql` is hand-tuned for `request_logs` partitioning and the `router_settings` seed.
+ * are generated from `schema.ts` with `bun run db:generate` — see `drizzle.config.ts`. Historical
+ * migrations are immutable even when they describe structures removed by later migrations.
  */
 const MIGRATIONS_DIR = join(import.meta.dirname, "migrations");
 

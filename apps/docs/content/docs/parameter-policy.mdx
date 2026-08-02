@@ -51,7 +51,7 @@ least one deployment can.
 ## Seeing what happened
 
 - **`drop`**: the response includes `unified_routing.unsupported_parameter_strategy` (when
-  `x-unified-routing-metadata` is requested — see [Headers](/docs/headers)); the request log's
+  `x-unified-routing-metadata` is requested — see [Headers](/docs/headers)); the operation log's
   `parameterPolicy` field records exactly which parameter names were dropped for that request, so
   dropped-silently is still auditable after the fact.
 - **`error`**: the client either gets a normal response (routed around the gap) or a `400` naming the

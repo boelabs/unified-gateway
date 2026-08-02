@@ -34,7 +34,7 @@ Monorepo — Turborepo on Bun workspaces:
 
 Gateway-only scripts run with `bun run --filter @boelabs/unified-gateway <script>`: `dev`, `start`,
 `db:generate`, `db:migrate`, `db:studio`, `test:integration`, `test:all`, `catalog:validate`,
-`catalog:sync[:verify]`, `catalog:sync:vercel[:write|:verify]`, `openapi:generate`.
+`catalog:sync[:verify]`, `catalog:sync:vercel[:write|:verify]`, `encryption:rotate`, `openapi:generate`.
 
 **Before you finish a change**, run `bun run check`, `bun run typecheck`, and `bun run test`. If you
 touched the database, router, rate limiting, or admin endpoints, also run `test:integration` (needs a
@@ -97,9 +97,8 @@ bun run --filter @boelabs/unified-gateway db:migrate    # Drizzle migrator, appl
 
 Gotchas:
 
-- `request_logs` is range-partitioned and `router_settings` carries a seed row — drizzle-kit can't
-  express either, so both are **hand-tuned in the baseline `migrations/0000_init.sql`**. The drizzle
-  snapshot intentionally treats `request_logs` as a plain table.
+- Historical migrations contain hand-tuned DDL. They remain immutable even after a later migration
+  removes the corresponding structure; generated snapshots describe the schema at each point in time.
 - `pgEnum`s must be **`export const`** or drizzle-kit won't emit their `CREATE TYPE`.
 - `src/db/migrations/**` is excluded from Biome (drizzle owns its formatting).
 - Migrations are forward-only — **never edit an applied migration**; add a new one.
@@ -161,9 +160,8 @@ pricing separately.
 - **Bun's TLS rejects self-signed Postgres/Redis certificates** (e.g. databases exposed by a raw
   Coolify/Dokploy port). Connect over a private network without TLS, or use a managed provider with a
   public-CA certificate. See [Troubleshooting](apps/docs/content/docs/troubleshooting.mdx).
-- **Background jobs run in-process**, not via cron: `request_logs` partition maintenance (drains the
-  default partition, creates/drops daily partitions; guarded by a Postgres advisory lock so only one
-  replica runs it per cycle) and `response_states` GC.
+- **Background jobs run in-process**, not via cron: operation retention/reconciliation,
+  `response_states` GC, extension reloads, and video polling/asset GC.
 - **Integration tests** (`*.integration.test.ts` under `apps/gateway/tests/integration`) need a real
   Postgres + Redis. They are run **one process per file** via `scripts/run-integration.ts` because they
   assume per-file isolation; a single shared `bun test` process leaks connections between files. They

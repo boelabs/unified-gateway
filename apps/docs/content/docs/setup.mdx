@@ -25,8 +25,9 @@ Create `apps/gateway/.env` (copy `apps/gateway/.env.example`). The minimum:
 ```bash
 PORT=4000
 NODE_ENV=production
-MASTER_KEY=replace-with-a-long-secret
-CREDENTIALS_ENCRYPTION_KEY=64_hex_chars_32_bytes
+MASTER_KEY=replace-with-at-least-32-random-characters
+ENCRYPTION_KEYRING={"primary":"64_hex_chars_32_bytes"}
+ACTIVE_ENCRYPTION_KEY_ID=primary
 DATABASE_URL=postgres://user:pass@host:5432/unifiedgateway
 REDIS_URL=redis://host:6379
 ```
@@ -35,10 +36,8 @@ Everything else ships with production-ready defaults — override only what you 
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `OBSERVABILITY_ENCRYPTION_KEY` | unset | Optional 32-byte hex key for encrypted forensic samples. |
 | `SHUTDOWN_TIMEOUT_MS` | `10000` | Drain budget on `SIGTERM`/`SIGINT`. |
-| `REQUEST_LOG_PARTITION_CREATE_DAYS` | `7` | Future daily `request_logs` partitions kept ahead. |
-| `REQUEST_LOG_PARTITION_RETENTION_DAYS` | `30` | Daily partitions retained before being dropped. |
+| `TRUSTED_PROXY_HOPS` | `0` | Trusted rightmost proxy hops used to resolve the client IP. |
 | `OTEL_ENABLED` | `false` | Set with `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces/metrics. |
 | `UNIFIED_GATEWAY_EXTENSIONS_RELOAD_INTERVAL_MS` | `15000` | How often each replica polls for [extension](/docs/extensions) changes to hot-reload. |
 | `UNIFIED_GATEWAY_EXTENSIONS_MAX_CODE_BYTES` | `1000000` | Maximum size of an uploaded [extension](/docs/extensions) module (bytes). |
@@ -48,16 +47,17 @@ Full list of every variable, including OpenTelemetry and response-state retentio
 
 ## Secrets
 
-Two secrets are critical. Store them in your secret manager — never in git or the image:
+Store the root credential and encryption keyring in your secret manager — never in git or the image:
 
 | Secret | Purpose | Format |
 |---|---|---|
-| `MASTER_KEY` | Operator credential; full access to `/admin/*`. | Strong random string (≥ 8 chars; longer is better). |
-| `CREDENTIALS_ENCRYPTION_KEY` | Encrypts provider credentials at rest (AES-256-GCM). | 32 bytes in hex (64 chars). |
+| `MASTER_KEY` | Operator credential; full access to `/admin/*`. | Strong random string, at least 32 characters. |
+| `ENCRYPTION_KEYRING` | Encrypts credentials, extension source, compaction capsules, and forensic samples. | JSON key-id to 64-hex-key map. |
+| `ACTIVE_ENCRYPTION_KEY_ID` | Selects the key used for new envelopes. | An id present in the keyring. |
 
 ```bash
 openssl rand -base64 48   # MASTER_KEY
-openssl rand -hex 32      # CREDENTIALS_ENCRYPTION_KEY
+openssl rand -hex 32      # one ENCRYPTION_KEYRING value
 ```
 
 Rotation procedures live in [Operations → Secrets](/docs/operations#secrets).

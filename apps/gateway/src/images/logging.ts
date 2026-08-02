@@ -1,6 +1,6 @@
 import type { CanonicalImageResponse } from "#core/images.ts";
 
-/** Safe summary for request_logs: never includes the image bytes/base64. */
+/** Safe operation summary: never includes image bytes or base64 payloads. */
 export function imageResponseLog(
 	response: CanonicalImageResponse,
 ): Record<string, unknown> {

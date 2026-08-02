@@ -30,7 +30,7 @@ Authorization: Bearer $MASTER_KEY
 | `catalogEntry` | custom only | Inline catalog entry for a model **not** present in the catalog. Uses the same shape as `catalog.json`; for catalog models it **must be omitted**. |
 | `pricing` | no | `{ inputCentsPerMTokens?, outputCentsPerMTokens?, cacheReadCentsPerMTokens?, cacheWriteCentsPerMTokens?, searchUnitCents? }`. |
 | `transportOverrides` | no | Per-operation transport override. Defaults are inferred from the adapter. |
-| `label` | no | Human identifier to tell deployments of the same `publicModel` apart (e.g. which API key). Snapshotted into each request log so you can see *which* deployment served a request. `null` clears it. |
+| `label` | no | Human identifier to tell deployments of the same `publicModel` apart (e.g. which API key). Snapshotted into each operation log so you can see *which* deployment served a request. `null` clears it. |
 | `metadata` | no | Free-form operator annotations (`team`, `environment`, key alias, rotation date, notes…). A JSON object up to 16 KiB; stored and returned verbatim. |
 | `enabled`, `weight`, `tpmLimit`, `rpmLimit` | no | Deployment state and limits. |
 | `failureDomain` | no | Shared provider account/quota identity. Rows with the same value share upstream `429` circuit state. |
@@ -85,7 +85,7 @@ curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "
 
 The client then calls `POST /v1/chat/completions` (or `/v1/responses`, `/v1/messages`) with
 `"model": "gpt-5.4"`. The optional `label` and `metadata` just help you identify the deployment;
-the `label` also appears in each request log (`metadata.deploymentLabel`, and per attempt under
+the `label` also appears in each operation log (`metadata.deploymentLabel`, and per attempt under
 `attempts[].label`) so you can see which key served — or failed — a request.
 
 ### 2) Image — catalog model

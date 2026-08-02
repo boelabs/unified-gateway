@@ -8,8 +8,9 @@ application.
 
 1. **Create → Compose**, and point it at this repository (or paste the `docker-compose.yml`).
 2. Set the secrets in the application's environment settings:
-   - `MASTER_KEY` — `openssl rand -base64 48`
-   - `CREDENTIALS_ENCRYPTION_KEY` — `openssl rand -hex 32`
+	- `MASTER_KEY` — `openssl rand -base64 48`
+	- `ENCRYPTION_KEYRING` — e.g. `{"primary":"<openssl rand -hex 32>"}`
+	- `ACTIVE_ENCRYPTION_KEY_ID` — `primary`
 3. Deploy. The bundled Postgres/Redis and the `migrate` job run inside the application's network.
 4. In **Domains**, add only long-running HTTP services:
    - **gateway**, container port `4000`

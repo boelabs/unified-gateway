@@ -28,6 +28,20 @@ function parse(body: unknown) {
 	return responsesRequestSchema.parse(body);
 }
 
+interface TestJsonObject extends Record<string, unknown> {
+	type: string;
+	id: string;
+	call_id: string;
+	content: [TestJsonObject, ...TestJsonObject[]];
+	summary: [TestJsonObject, ...TestJsonObject[]];
+	output: [TestJsonObject, TestJsonObject, ...TestJsonObject[]];
+	usage: TestJsonObject;
+	output_tokens_details: TestJsonObject;
+	item: TestJsonObject;
+	response: TestJsonObject;
+	delta: TestJsonObject;
+}
+
 test("request->canonical: instructions->system, input string->user", () => {
 	const u = responsesRequestToCanonical(
 		parse({
@@ -511,10 +525,10 @@ test("canonical->response: message item, usage, and output_text", () => {
 			reasoningTokens: 1,
 		},
 	};
-	const out = canonicalToResponsesResponse(resp, renderOpts()) as Record<
-		string,
-		any
-	>;
+	const out = canonicalToResponsesResponse(
+		resp,
+		renderOpts(),
+	) as TestJsonObject;
 	assert.equal(out.object, "response");
 	assert.equal(out.status, "completed");
 	assert.equal(out.output[0].type, "reasoning");
@@ -550,7 +564,7 @@ test("canonical->response: echoes previous_response_id and store", () => {
 			store: true,
 		}),
 		upstreamModel: "gpt-x",
-	}) as Record<string, any>;
+	}) as TestJsonObject;
 	assert.equal(out.previous_response_id, "resp_prev");
 	assert.equal(out.store, true);
 });
@@ -583,11 +597,11 @@ test("canonical->response: tool calls -> function_call items", () => {
 		],
 		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 	};
-	const out = canonicalToResponsesResponse(resp, renderOpts()) as Record<
-		string,
-		any
-	>;
-	const fc = out.output.find((o: any) => o.type === "function_call");
+	const out = canonicalToResponsesResponse(
+		resp,
+		renderOpts(),
+	) as TestJsonObject;
+	const fc = out.output.find((item) => item.type === "function_call");
 	assert.ok(fc);
 	assert.equal(fc.name, "get_weather");
 	assert.equal(fc.call_id, `call_1__thought__${signature}`);
@@ -669,17 +683,18 @@ test("stream->events: function_call items include opaque extra_content in the co
 			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 		};
 	}
-	let completed: any;
+	let completed: TestJsonObject | undefined;
 	for await (const ev of canonicalChunksToResponsesEvents(
 		chunks(),
 		renderOpts(),
 	)) {
 		if (ev.event === "response.completed")
-			completed = JSON.parse(ev.data).response;
+			completed = (JSON.parse(ev.data) as { response: TestJsonObject })
+				.response;
 	}
-	const fc = completed.output.find(
-		(item: any) => item.type === "function_call",
-	);
+	assert.ok(completed);
+	const fc = completed.output.find((item) => item.type === "function_call");
+	assert.ok(fc);
 	assert.ok(fc.id.startsWith("fc_"));
 	assert.equal(fc.call_id, "call_123__thought__sig-a");
 	assert.deepEqual(fc.extra_content, {
@@ -716,14 +731,16 @@ test("stream->events: OpenResponses sequence for text", async () => {
 		};
 	}
 	const types: string[] = [];
-	let completedUsage: any;
+	let completedUsage: TestJsonObject | undefined;
 	for await (const ev of canonicalChunksToResponsesEvents(
 		chunks(),
 		renderOpts(),
 	)) {
 		types.push(ev.event!);
 		if (ev.event === "response.completed")
-			completedUsage = JSON.parse(ev.data).response.usage;
+			completedUsage = (
+				JSON.parse(ev.data) as { response: { usage: TestJsonObject } }
+			).response.usage;
 	}
 	assert.deepEqual(types, [
 		"response.created",
@@ -737,6 +754,7 @@ test("stream->events: OpenResponses sequence for text", async () => {
 		"response.output_item.done",
 		"response.completed",
 	]);
+	assert.ok(completedUsage);
 	assert.equal(completedUsage.total_tokens, 3);
 });
 
@@ -773,12 +791,15 @@ test("stream->events: reasoning summary streams as its own item before the messa
 			},
 		};
 	}
-	const events: { type: string; data: any }[] = [];
+	const events: { type: string; data: TestJsonObject }[] = [];
 	for await (const ev of canonicalChunksToResponsesEvents(
 		chunks(),
 		renderOpts(),
 	)) {
-		events.push({ type: ev.event!, data: JSON.parse(ev.data) });
+		events.push({
+			type: ev.event!,
+			data: JSON.parse(ev.data) as TestJsonObject,
+		});
 	}
 	assert.deepEqual(
 		events.map((e) => e.type),
@@ -892,22 +913,24 @@ test("canonical->response: encrypted reasoning state renders as native reasoning
 		],
 		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 	};
-	const out = canonicalToResponsesResponse(resp, renderOpts()) as Record<
-		string,
-		any
-	>;
-	const rs = out.output.filter((o: any) => o.type === "reasoning");
+	const out = canonicalToResponsesResponse(
+		resp,
+		renderOpts(),
+	) as TestJsonObject;
+	const rs = out.output.filter((item) => item.type === "reasoning");
 	assert.equal(rs.length, 1);
-	assert.equal(rs[0].id, "rs_1");
-	assert.equal(rs[0].encrypted_content, "enc-1");
+	const reasoning = rs[0];
+	assert.ok(reasoning);
+	assert.equal(reasoning.id, "rs_1");
+	assert.equal(reasoning.encrypted_content, "enc-1");
 	// The visible summary folds into the state item instead of a second reasoning item.
-	assert.deepEqual(rs[0].summary, [
+	assert.deepEqual(reasoning.summary, [
 		{ type: "summary_text", text: "visible summary" },
 	]);
 	// State precedes the function_call item.
 	assert.ok(
-		out.output.findIndex((o: any) => o.type === "reasoning") <
-			out.output.findIndex((o: any) => o.type === "function_call"),
+		out.output.findIndex((item) => item.type === "reasoning") <
+			out.output.findIndex((item) => item.type === "function_call"),
 	);
 });
 
@@ -932,10 +955,10 @@ test("responses surface: encrypted reasoning round trip (render -> replay -> can
 		],
 		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 	};
-	const rendered = canonicalToResponsesResponse(resp, renderOpts()) as Record<
-		string,
-		any
-	>;
+	const rendered = canonicalToResponsesResponse(
+		resp,
+		renderOpts(),
+	) as TestJsonObject;
 	// A replay client echoes the output items and appends the tool result.
 	const u = responsesRequestToCanonical(
 		parse({
@@ -944,8 +967,9 @@ test("responses surface: encrypted reasoning round trip (render -> replay -> can
 				...rendered.output,
 				{
 					type: "function_call_output",
-					call_id: rendered.output.find((o: any) => o.type === "function_call")
-						.call_id,
+					call_id: rendered.output.find(
+						(item) => item.type === "function_call",
+					)!.call_id,
 					output: "ok",
 				},
 			],
@@ -995,7 +1019,7 @@ test("stream->events: accumulated encrypted reasoning emits trailing items befor
 			],
 		};
 	}
-	let completed: any;
+	let completed: TestJsonObject | undefined;
 	const order: string[] = [];
 	for await (const ev of canonicalChunksToResponsesEvents(
 		chunks(),
@@ -1004,10 +1028,13 @@ test("stream->events: accumulated encrypted reasoning emits trailing items befor
 		if (ev.event === "response.output_item.done")
 			order.push(JSON.parse(ev.data).item.type);
 		if (ev.event === "response.completed")
-			completed = JSON.parse(ev.data).response;
+			completed = (JSON.parse(ev.data) as { response: TestJsonObject })
+				.response;
 	}
 	assert.deepEqual(order, ["reasoning", "function_call"]);
-	const rs = completed.output.find((o: any) => o.type === "reasoning");
+	assert.ok(completed);
+	const rs = completed.output.find((item) => item.type === "reasoning");
+	assert.ok(rs);
 	assert.equal(rs.encrypted_content, "enc-1");
 	assert.equal(rs.id, "rs_1");
 });
@@ -1058,12 +1085,15 @@ test("response include: encrypted reasoning is exposed only when requested", () 
 		],
 	};
 	const hidden = responseForClient(internal, undefined);
-	assert.equal("encrypted_content" in (hidden.output as any[])[0], false);
+	assert.equal(
+		"encrypted_content" in (hidden.output as TestJsonObject[])[0]!,
+		false,
+	);
 	assert.equal(
 		(
 			responseForClient(internal, ["reasoning.encrypted_content"])
-				.output as any[]
-		)[0].encrypted_content,
+				.output as TestJsonObject[]
+		)[0]!.encrypted_content,
 		"opaque",
 	);
 	const event = responseEventForClient(

@@ -1,4 +1,4 @@
-/** Safe summary for request_logs: never includes the full vectors. */
+/** Safe operation summary: never includes the full vectors. */
 export function embeddingsResponseLog(body: unknown): Record<string, unknown> {
 	const response = (body ?? {}) as Record<string, unknown>;
 	const data = Array.isArray(response.data) ? response.data : [];

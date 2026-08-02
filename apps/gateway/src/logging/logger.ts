@@ -3,7 +3,7 @@ import type { CostBreakdown } from "./cost.ts";
 import type { Usage } from "#core/usage.ts";
 import { log } from "./log.ts";
 
-export interface RequestLogInput {
+export interface OperationLogInput {
 	operationId: string;
 	requestId: string;
 	virtualKeyId: string | null;
@@ -36,7 +36,7 @@ export interface RequestLogInput {
 }
 
 /** Emits low-cardinality telemetry; durable persistence is owned by logging/operations.ts. */
-export function logRequest(input: RequestLogInput): void {
+export function logOperation(input: OperationLogInput): void {
 	log.info("operation", "operation completed", {
 		operationId: input.operationId,
 		requestId: input.requestId,

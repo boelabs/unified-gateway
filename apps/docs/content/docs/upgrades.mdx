@@ -39,13 +39,21 @@ releases. Before upgrading in production:
    rather than inheriting it silently — see [Routing](/docs/routing) and
    [Parameter policy](/docs/parameter-policy).
 
+### Encryption-keyring baseline
+
+The keyring release is an intentional pre-1.0 reset, not a rolling-compatible encryption migration.
+Its forward migration removes v1-encrypted deployments, extension artifacts/instances, and retained
+payload samples; pending video jobs are expired so asset GC can finish cleanup. Back up the deployment
+and extension configuration before upgrading, configure `ENCRYPTION_KEYRING` and
+`ACTIVE_ENCRYPTION_KEY_ID`, then recreate those resources through the admin API. After this one-time
+baseline, ordinary key rotations are online and non-destructive through `encryption:rotate`.
+
 ## Rolling back an image
 
-Since schema changes are additive and forward-only, redeploying a previous image tag is normally safe
-as long as that older code doesn't reference a column/enum value a *newer* migration added (which it
-won't, by construction — old code simply doesn't know about new columns). What it can **not** undo is
-data written under new semantics (e.g. rows using a new enum value); if you must revert behavior as
-well as code, ship a forward migration or a config change rather than relying on the rollback alone.
+Redeploying a previous image is safe only when the release notes say its forward migrations remain
+compatible. Destructive pre-1.0 baselines, including the encryption-keyring reset, cannot be rolled
+back by changing the image tag. Restore a pre-upgrade database backup or ship a new forward migration;
+never rely on an image rollback to reverse data semantics.
 
 ## What to read next
 

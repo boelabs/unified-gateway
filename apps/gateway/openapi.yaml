@@ -7,13 +7,15 @@ info:
   description: |-
     Provider-agnostic AI gateway with OpenAI/OpenResponses-compatible public contracts. Importable in Postman, Insomnia, Bruno, and similar tools.
 
-    AUTHENTICATION: Bearer token (Authorization: Bearer <key>), x-api-key header, or ?api_key=<key> query parameter (for browser EventSource clients). The master key is required for /admin/*.
+    AUTHENTICATION: Bearer token (Authorization: Bearer <key>) or x-api-key header. The master key is required for /admin/*.
 
     RESPONSE CONVENTIONS:
     - Inference (/v1/chat/completions, /v1/responses, /v1/images/*, /v1/videos*, /v1/embeddings, /v1/rerank, /v1/models): documented OpenAI/OpenResponses-compatible contracts with explicit native-only features.
     - Management (/admin/*): envelope { "data": <object|array> }; lists: { "data": [...], "pagination": {...} }; delete: 204 with no body; error: { "error": {...} }.
 
     RESPONSE HEADERS: x-request-id (all responses; echoed if sent on the request). Virtual-key inference responses can also include x-ratelimit-{limit,remaining,reset}-{requests,tokens,budget}.
+
+    REQUEST LIMITS: public JSON bodies are capped at 72 MiB, admin JSON at 2 MiB, rerank JSON at 16 MiB, and multipart endpoints publish their own aggregate caps. Oversized input returns 413.
 servers:
   - url: "{baseUrl}"
     variables:
@@ -48,18 +50,6 @@ paths:
           description: Ready to serve traffic
         "503":
           description: Not ready (a dependency is down)
-  /health:
-    get:
-      tags:
-        - Health
-      summary: Readiness alias (backward compatible)
-      description: Alias of /health/ready, kept for backward compatibility.
-      security: []
-      responses:
-        "200":
-          description: OK
-        "503":
-          description: Degraded
   /v1/chat/completions:
     post:
       tags:
@@ -99,6 +89,7 @@ paths:
           $ref: "#/components/responses/Error"
         "401": *a1
         "403": *a1
+        "413": *a1
         "429": *a1
   /v1/responses:
     get:
@@ -161,6 +152,7 @@ paths:
               schema:
                 type: string
         "400": *a1
+        "413": *a1
   /v1/responses/compact:
     post:
       tags:
@@ -182,6 +174,7 @@ paths:
                 $ref: "#/components/schemas/CompactResponseObject"
         "400": *a1
         "401": *a1
+        "413": *a1
         "429": *a1
   /v1/responses/{id}:
     get:
@@ -254,6 +247,8 @@ paths:
           description: "message (or SSE stream: message_start, content_block_*, message_delta, message_stop)"
         "400":
           description: "{ type: 'error', error: {...} } (Anthropic shape)"
+        "413":
+          description: Request body exceeds the public JSON limit (Anthropic error shape)
   /v1/embeddings:
     post:
       operationId: createEmbedding
@@ -293,6 +288,38 @@ paths:
         "400": *a1
         "401": *a1
         "403": *a1
+        "413": *a1
+        "429": *a1
+  /v1/audio/transcriptions:
+    post:
+      operationId: createTranscription
+      tags:
+        - Inference
+      summary: Transcribe audio (OpenAI-compatible multipart contract)
+      description: Accepts one audio file plus transcription controls. JSON and verbose_json return JSON, text/srt/vtt return text, and stream=true returns OpenAI-compatible transcription SSE events.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/AudioTranscriptionRequest"
+      responses:
+        "200":
+          description: Transcription JSON, text, subtitles, or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AudioTranscriptionResponse"
+            text/plain:
+              schema:
+                type: string
+            text/event-stream:
+              schema:
+                type: string
+        "400": *a1
+        "401": *a1
+        "403": *a1
+        "413": *a1
         "429": *a1
   /v1/rerank:
     post:
@@ -362,6 +389,7 @@ paths:
         "400": *a1
         "401": *a1
         "403": *a1
+        "413": *a1
         "429": *a1
   /v1/images/edits:
     post:
@@ -391,6 +419,7 @@ paths:
         "400": *a1
         "401": *a1
         "403": *a1
+        "413": *a1
         "429": *a1
   /v1/videos:
     post:
@@ -429,6 +458,7 @@ paths:
         "400": *a1
         "401": *a1
         "403": *a1
+        "413": *a1
         "429": *a1
         "503": *a1
     get:
@@ -1127,7 +1157,7 @@ paths:
           description: start_time <=
       responses:
         "200":
-          description: "{ data: [<requestLog>], pagination: {...} }"
+          description: "{ data: [<operation>], pagination: {...} }"
         "400": *a1
   /admin/logs/{id}:
     get:
@@ -1824,6 +1854,55 @@ components:
       required:
         - model
         - input
+    AudioTranscriptionRequest:
+      type: object
+      properties:
+        model:
+          type: string
+          minLength: 1
+        language:
+          type: string
+        prompt:
+          type: string
+        temperature:
+          type: number
+          minimum: 0
+          maximum: 1
+        response_format:
+          default: json
+          type: string
+          enum:
+            - json
+            - text
+            - srt
+            - verbose_json
+            - vtt
+        timestamp_granularities:
+          type: array
+          items:
+            type: string
+            enum:
+              - word
+              - segment
+        include:
+          type: array
+          items:
+            type: string
+        stream:
+          type: boolean
+        extra_body:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+        file:
+          type: string
+          format: binary
+          contentEncoding: binary
+      required:
+        - model
+        - file
+      additionalProperties: false
     RerankRequest:
       type: object
       properties:
@@ -2529,7 +2608,7 @@ components:
           additionalProperties: {}
           description: Inline provider credentials. Required keys are exposed by GET /admin/operations under adapter.credentials.required. Encrypted; never returned.
         label:
-          description: Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into request logs (metadata.deploymentLabel, attempts[].label).
+          description: Human identifier to tell deployments of the same publicModel apart (e.g. which API key). Snapshotted into operation metadata and attempt records.
           anyOf:
             - type: string
             - type: "null"
@@ -3711,6 +3790,37 @@ components:
         - embedding
         - index
       additionalProperties: false
+    AudioTranscriptionResponse:
+      type: object
+      properties:
+        text:
+          type: string
+        language:
+          type: string
+        duration:
+          type: number
+        words:
+          type: array
+          items:
+            type: object
+            propertyNames:
+              type: string
+            additionalProperties: {}
+        segments:
+          type: array
+          items:
+            type: object
+            propertyNames:
+              type: string
+            additionalProperties: {}
+        usage:
+          type: object
+          propertyNames:
+            type: string
+          additionalProperties: {}
+      required:
+        - text
+      additionalProperties: true
     RerankResponse:
       type: object
       properties:
@@ -4077,4 +4187,4 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: "Master key or virtual key. Admin requires the master key. Alternative: x-api-key header or ?api_key=."
+      description: "Master key or virtual key. Admin requires the master key. Alternative: x-api-key header."

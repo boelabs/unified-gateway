@@ -1,4 +1,3 @@
-import { cacheGet, invalidateResponseCache } from "#cache/responseCache.ts";
 import { redisAvailable, pgAvailable } from "#test-support/infra.ts";
 import { makeOpenAIContractTestApp } from "#test-support/app.ts";
 import { buildCacheKey, cachePayload } from "#cache/cacheKey.ts";
@@ -24,6 +23,12 @@ import {
 } from "#db/repos/virtualKeys.ts";
 
 import {
+	invalidateResponseCache,
+	responseCacheEpoch,
+	cacheGet,
+} from "#cache/responseCache.ts";
+
+import {
 	listOperationsPage,
 	getOperationDetail,
 } from "#db/repos/operations.ts";
@@ -42,7 +47,8 @@ async function waitForOperation(requestId: string) {
 				requestId,
 			});
 			const operation = page.rows[0];
-			return operation ? getOperationDetail(operation.id) : null;
+			const detail = operation ? await getOperationDetail(operation.id) : null;
+			return detail?.lifecycleState === "finished" ? detail : null;
 		},
 		{ description: `gateway_operation ${requestId}` },
 	);
@@ -144,16 +150,15 @@ test("POST /v1/embeddings routes, caches, and logs without storing vectors", {
 					dimensions: 3,
 				});
 
-				const cacheKey = buildCacheKey(
-					"embeddings",
-					activeVirtualKey.row.id,
-					cachePayload(
+				const cacheKey = buildCacheKey("embeddings", activeVirtualKey.row.id, {
+					epoch: await responseCacheEpoch(),
+					payload: cachePayload(
 						embeddingsRequestToCanonical(payload) as unknown as Record<
 							string,
 							unknown
 						>,
 					),
-				);
+				});
 				await waitForCacheEntry(cacheKey);
 
 				const secondRequestId = randomUUID();

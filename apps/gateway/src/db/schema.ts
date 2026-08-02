@@ -11,7 +11,6 @@ import { sql } from "drizzle-orm";
 
 import {
 	uniqueIndex,
-	primaryKey,
 	timestamp,
 	smallint,
 	pgTable,
@@ -187,7 +186,7 @@ export const modelDeployments = pgTable(
 			.$type<Record<string, unknown>>()
 			.notNull()
 			.default({}),
-		/** Encrypted credentials (AES-256-GCM) as an envelope { v, iv, tag, ct }. */
+		/** Purpose-bound, key-versioned AES-256-GCM credentials envelope. */
 		credentials: jsonb("credentials").$type<EncEnvelope>().notNull(),
 		/** Inline CatalogEntry for custom models. NULL = the model is in the built-in catalog. */
 		catalogEntry: jsonb("catalog_entry").$type<CatalogEntry>(),
@@ -245,13 +244,6 @@ export const routerSettings = pgTable(
 		throttleCooldownSeconds: integer("throttle_cooldown_seconds")
 			.notNull()
 			.default(5),
-		/** Retries for one Public Model pool, on top of the initial attempt. */
-		numRetries: integer("num_retries").notNull().default(3),
-		/** Hard retry-amplification bound across the primary and full fallback chain. */
-		maxAttemptsPerRequest: integer("max_attempts_per_request")
-			.notNull()
-			.default(6),
-		timeoutSeconds: integer("timeout_seconds").notNull().default(600),
 		executionPolicies: jsonb("execution_policies")
 			.$type<ExecutionPolicies>()
 			.notNull()
@@ -292,15 +284,6 @@ export const routerSettings = pgTable(
 		check(
 			"router_settings_throttle_cooldown_seconds_valid",
 			sql`${t.throttleCooldownSeconds} > 0`,
-		),
-		check("router_settings_num_retries_valid", sql`${t.numRetries} >= 0`),
-		check(
-			"router_settings_max_attempts_per_request_valid",
-			sql`${t.maxAttemptsPerRequest} >= ${t.numRetries} + 1`,
-		),
-		check(
-			"router_settings_timeout_seconds_valid",
-			sql`${t.timeoutSeconds} > 0`,
 		),
 		check(
 			"router_settings_retry_after_seconds_valid",
@@ -375,67 +358,11 @@ export const virtualKeys = pgTable(
 	(t) => [uniqueIndex("virtual_keys_key_hash_idx").on(t.keyHash)],
 );
 
-/* ----------------------------------------------------------- request_logs */
-
-/**
- * Request logs. Range-partitioned on start_time (DDL in the migration).
- * Composite PK (id, start_time) because PG requires the partition column in the PK.
- */
-export const requestLogs = pgTable(
-	"request_logs",
-	{
-		id: uuid("id").defaultRandom().notNull(),
-		requestId: text("request_id").notNull(),
-		virtualKeyId: uuid("virtual_key_id"),
-		publicModel: text("public_model"),
-		deploymentId: uuid("deployment_id"),
-		adapterKey: text("adapter_key"),
-		callType: text("call_type").notNull(),
-		status: text("status").notNull(),
-		httpStatus: integer("http_status"),
-		promptTokens: integer("prompt_tokens"),
-		completionTokens: integer("completion_tokens"),
-		totalTokens: integer("total_tokens"),
-		searchUnits: integer("search_units"),
-		costCents: numeric("cost_cents", { precision: 20, scale: 10 }),
-		durationMs: integer("duration_ms"),
-		ttftMs: integer("ttft_ms"),
-		/** TTFT of the winning upstream (ms): fetch dispatch -> first token, isolated from gateway overhead. */
-		upstreamTtftMs: integer("upstream_ttft_ms"),
-		cacheHit: boolean("cache_hit").notNull().default(false),
-		retries: integer("retries").notNull().default(0),
-		fallbackUsed: boolean("fallback_used").notNull().default(false),
-		ip: text("ip"),
-		userAgent: text("user_agent"),
-		startTime: timestamp("start_time", { withTimezone: true })
-			.notNull()
-			.defaultNow(),
-		endTime: timestamp("end_time", { withTimezone: true }),
-		requestBody: jsonb("request_body"),
-		responseBody: jsonb("response_body"),
-		metadata: jsonb("metadata").notNull().default({}),
-		error: jsonb("error"),
-		/** Per-attempt router detail (array of AttemptRecord). */
-		attempts: jsonb("attempts").$type<unknown[]>(),
-	},
-	(t) => [
-		primaryKey({ columns: [t.id, t.startTime] }),
-		index("request_logs_start_time_idx").on(t.startTime),
-		index("request_logs_virtual_key_idx").on(t.virtualKeyId),
-		index("request_logs_public_model_idx").on(t.publicModel),
-		index("request_logs_request_id_idx").on(t.requestId),
-		check(
-			"request_logs_adapter_key_format",
-			sql`${t.adapterKey} IS NULL OR ${t.adapterKey} ~ '^[a-z0-9]+$'`,
-		),
-	],
-);
-
 /* ------------------------------------------------------ gateway_operations */
 
 /**
- * Provider-agnostic lifecycle projection. Unlike legacy request_logs, a row exists while work is
- * in flight and success requires verified semantic termination.
+ * Provider-agnostic lifecycle projection. A row exists while work is in flight and success requires
+ * verified semantic termination.
  */
 export const gatewayOperations = pgTable(
 	"gateway_operations",
@@ -451,7 +378,6 @@ export const gatewayOperations = pgTable(
 		outcome: operationOutcomeEnum("outcome"),
 		degraded: boolean("degraded").notNull().default(false),
 		terminalVerified: boolean("terminal_verified").notNull().default(false),
-		legacy: boolean("legacy").notNull().default(false),
 		stream: boolean("stream").notNull().default(false),
 		cacheHit: boolean("cache_hit").notNull().default(false),
 		httpStatus: integer("http_status"),
@@ -725,8 +651,8 @@ export const videoAssets = pgTable(
 /* ------------------------------------------------------ extension_artifacts */
 
 /**
- * Versioned, immutable extension code. The ESM module source is encrypted at rest (AES-256-GCM,
- * same envelope as model credentials) and integrity-checked on every materialization via
+ * Versioned, immutable extension code. The ESM module source uses a purpose-bound, key-versioned
+ * AES-256-GCM envelope and is integrity-checked on every materialization via
  * `content_hash` (sha256 of the plaintext source). Exactly one row per `key` is `active`; uploading
  * a new version archives the previous one, and activating an older version performs a rollback.
  */
@@ -741,7 +667,7 @@ export const extensionArtifacts = pgTable(
 		/** SHA-256 (hex) of the plaintext module source. */
 		contentHash: text("content_hash").notNull(),
 		sizeBytes: integer("size_bytes").notNull(),
-		/** Encrypted module source (AES-256-GCM) as an envelope { v, iv, tag, ct }. */
+		/** Purpose-bound, key-versioned AES-256-GCM module-source envelope. */
 		code: jsonb("code").$type<EncEnvelope>().notNull(),
 		status: extensionArtifactStatusEnum("status").notNull().default("active"),
 		/** Auth principal that uploaded it (currently always the master key). */
@@ -761,7 +687,7 @@ export const extensionArtifacts = pgTable(
 
 /**
  * Configuration that binds a definition (by `definition_key`) to a `match`, `config`, `priority`, and
- * failure policy. This is the database form of what used to live in the file manifest's `instances`.
+ * failure policy.
  */
 export const extensionInstances = pgTable(
 	"extension_instances",

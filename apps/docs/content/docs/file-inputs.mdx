@@ -96,7 +96,7 @@ application checks complement egress controls rather than replace them.
 
 Requests containing image, audio, or file inputs bypass the response cache: URL contents can change
 while the URL stays the same, and large base64 payloads are poor cache keys. Resolution activity is
-recorded in request-log `contentInputs` metadata (native/parsed/materialized counts by content kind)
+recorded in the operation's `metadata.contentInputs` field (native/parsed/materialized counts by content kind)
 without logging extracted content.
 
 ## Why there is no gateway Files API yet

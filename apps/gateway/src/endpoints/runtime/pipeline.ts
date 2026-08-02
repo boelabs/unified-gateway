@@ -1,11 +1,11 @@
-import { enforceVirtualKey, recordVirtualKeyUsage } from "#ratelimit/index.ts";
-import { computeCost, type CostBreakdown } from "#logging/cost.ts";
+import { reserveVirtualKeyUsage, enforceVirtualKey } from "#ratelimit/index.ts";
 import { getRequestId, setHeaders } from "#http/requestContext.ts";
 import { buildCacheKey, cachePayload } from "#cache/cacheKey.ts";
 import type { ResolvedModelMetadata } from "#catalog/types.ts";
+import type { OperationLogDraft } from "./operationLog.ts";
 import { extensionRuntime } from "#extensions/runtime.ts";
-import type { RequestLogDraft } from "./requestLog.ts";
 import { assertModelAllowed } from "#auth/scope.ts";
+import type { UsageQuota } from "#router/index.ts";
 import type { CallType } from "#core/callType.ts";
 import { GatewayError } from "#core/errors.ts";
 import { getAuth } from "#auth/middleware.ts";
@@ -13,6 +13,17 @@ import type { AppEnv } from "#auth/types.ts";
 import type { Usage } from "#core/usage.ts";
 import type { Context } from "hono";
 import type * as z from "zod/v4";
+
+import {
+	estimateMaximumCostCents,
+	type CostBreakdown,
+	computeCost,
+} from "#logging/cost.ts";
+
+export {
+	PUBLIC_JSON_BODY_MAX_BYTES,
+	readJsonBody,
+} from "#http/body.ts";
 
 import type {
 	ExtensionCanonicalResponse,
@@ -23,6 +34,7 @@ import type {
 } from "#extensions/sdk.ts";
 
 import {
+	responseCacheEpoch,
 	cacheConfigFromHeaders,
 	cacheGet,
 	cacheSet,
@@ -35,7 +47,14 @@ export function toGatewayError(
 ): GatewayError {
 	return GatewayError.is(err)
 		? err
-		: new GatewayError({ class: "server", message, cause: err });
+		: new GatewayError({
+				class: "server",
+				message,
+				cause: err,
+				failureKind: "gateway",
+				deploymentHealth: "neutral",
+				routingScope: "request",
+			});
 }
 
 /** Translates a zod validation error to the `bad_request` GatewayError, with the issue detail. */
@@ -52,50 +71,6 @@ function zodToGatewayError(error: z.ZodError): GatewayError {
 			.join("; "),
 		param: first ? first.path.join(".") : null,
 	});
-}
-
-/** Reads the JSON body; throws `bad_request` if missing or not valid JSON. */
-export async function readJsonBody(
-	c: Context<AppEnv>,
-	maxBytes?: number,
-): Promise<unknown> {
-	let json: unknown;
-	if (maxBytes === undefined) {
-		json = await c.req.json().catch(() => undefined);
-	} else {
-		const declaredLength = Number(c.req.header("content-length"));
-		if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
-			throw new GatewayError({
-				class: "bad_request",
-				status: 413,
-				code: "request_body_too_large",
-				message: `Request body exceeds ${maxBytes} bytes`,
-				publicMessage: `Request body exceeds the ${maxBytes} byte limit.`,
-			});
-		}
-		const body = new Uint8Array(await c.req.raw.arrayBuffer());
-		if (body.byteLength > maxBytes) {
-			throw new GatewayError({
-				class: "bad_request",
-				status: 413,
-				code: "request_body_too_large",
-				message: `Request body exceeds ${maxBytes} bytes`,
-				publicMessage: `Request body exceeds the ${maxBytes} byte limit.`,
-			});
-		}
-		try {
-			json = JSON.parse(new TextDecoder().decode(body)) as unknown;
-		} catch {
-			json = undefined;
-		}
-	}
-	if (json === undefined) {
-		throw new GatewayError({
-			class: "bad_request",
-			message: "Invalid or missing JSON body",
-		});
-	}
-	return json;
 }
 
 /** Validates `json` against a zod schema; throws `bad_request` with the detail if it does not pass. */
@@ -121,6 +96,66 @@ export async function preflight(
 		const limited = await enforceVirtualKey(auth.key);
 		if (options?.writeHeaders !== false) setHeaders(c, limited.headers);
 	}
+}
+
+/** Re-checks model scope after trusted request extensions are allowed to rewrite the public model. */
+export function assertFinalModelAllowed(
+	c: Context<AppEnv>,
+	model: string,
+): void {
+	assertModelAllowed(getAuth(c), model);
+}
+
+/** Builds a routed quota lifecycle for virtual keys; master-key requests need no reservation. */
+export function usageQuotaForRequest(
+	c: Context<AppEnv>,
+	options: { searchUnits?: number } = {},
+): UsageQuota {
+	const auth = getAuth(c);
+	if (auth.type !== "virtual") {
+		return {
+			assertCandidate: () => {},
+			reserve: async () => ({
+				settle: async () => {},
+				release: async () => {},
+			}),
+		};
+	}
+	return {
+		assertCandidate: (candidate) => {
+			if (
+				auth.key.maxBudgetCents != null &&
+				estimateMaximumCostCents(candidate.meta, 0, options.searchUnits) ===
+					null
+			) {
+				throw new GatewayError({
+					class: "bad_request",
+					code: "budget_pricing_unavailable",
+					message: `Cannot enforce this API key's budget because deployment ${candidate.row.id} has no configured pricing`,
+				});
+			}
+		},
+		reserve: async (candidate, reservedTokens) => {
+			const reservedCost =
+				estimateMaximumCostCents(
+					candidate.meta,
+					reservedTokens,
+					options.searchUnits,
+				) ?? 0;
+			const lease = await reserveVirtualKeyUsage(
+				auth.key,
+				reservedTokens,
+				reservedCost,
+			);
+			return {
+				settle: async (usage) => {
+					const cost = computeCost(candidate.meta, usage);
+					await lease.settle(usage.totalTokens, cost.totalCents);
+				},
+				release: () => lease.release(),
+			};
+		},
+	};
 }
 
 export function extensionScope(
@@ -208,19 +243,15 @@ export async function notifyExtensionError(
 }
 
 /**
- * Computes the consumption cost and, if the key is virtual, accounts for it (TPM/budget/spend).
- * Returns the cost breakdown, or null if there was no usage to charge.
+ * Computes the exact cost for logging/rendering. Routed virtual-key quota settlement already uses
+ * the same pricing function, so this helper has no independent side effect.
  */
-export function accountUsage(
-	c: Context<AppEnv>,
+export function computeUsageCost(
 	meta: Pick<ResolvedModelMetadata, "pricing">,
 	usage: Usage | null,
 ): CostBreakdown | null {
 	if (!usage) return null;
 	const cost = computeCost(meta, usage);
-	const auth = getAuth(c);
-	if (auth.type === "virtual")
-		recordVirtualKeyUsage(auth.key, usage.totalTokens, cost.totalCents);
 	return cost;
 }
 
@@ -242,7 +273,7 @@ const NO_CACHE: CacheSlot = { hit: false, body: null, store: () => {} };
  */
 export async function openResponseCache(opts: {
 	c: Context<AppEnv>;
-	draft: RequestLogDraft;
+	draft: OperationLogDraft;
 	namespace: string;
 	payload: Record<string, unknown>;
 	eligible: boolean;
@@ -253,11 +284,11 @@ export async function openResponseCache(opts: {
 	if (auth.type !== "virtual" || !cfg.enabled || !opts.eligible)
 		return NO_CACHE;
 
-	const key = buildCacheKey(
-		opts.namespace,
-		auth.key.id,
-		cachePayload(opts.payload),
-	);
+	const epoch = await responseCacheEpoch();
+	const key = buildCacheKey(opts.namespace, auth.key.id, {
+		epoch,
+		payload: cachePayload(opts.payload),
+	});
 	const cached = await cacheGet(key);
 	if (cached) {
 		opts.draft.writeCacheHit(

@@ -74,11 +74,12 @@ it only for trusted operator tooling, not for client-facing keys.
 
 ## Budgets and limits
 
-- **Budget:** every billed request adds its cost (from catalog [pricing](/docs/model-catalog), or a
-  deployment's `pricing` override) to `spendCents`. When it would exceed `maxBudgetCents`, the request
-  is rejected until the window resets. Models without pricing bill as zero.
-- **RPM/TPM:** sliding per-minute counters in Redis. Exceeding either returns `429` with code
-  `rate_limit_exceeded`.
+- **Budget:** before upstream execution, the gateway atomically reserves a conservative maximum cost
+  from catalog [pricing](/docs/model-catalog) or the deployment override. Settlement replaces the
+  reservation with exact provider-reported usage. A budget-limited key cannot use a deployment whose
+  pricing is unknown, because a hard cap would otherwise be impossible to guarantee.
+- **RPM/TPM:** RPM admission and conservative TPM reservations are atomic in Redis across replicas.
+  Exact tokens reconcile at settlement; exceeding either returns `429` with code `rate_limit_exceeded`.
   Rerank search units contribute to spend and budgets but never synthesize tokens for TPM; RPM still
   counts each rerank request.
 - **Headers:** when a key carries any limit, responses include the matching

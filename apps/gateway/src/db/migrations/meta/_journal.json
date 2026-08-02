@@ -85,6 +85,13 @@
       "when": 1785636768370,
       "tag": "0011_sturdy_roulette",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1785656276739,
+      "tag": "0012_mature_caretaker",
+      "breakpoints": true
     }
   ]
 }

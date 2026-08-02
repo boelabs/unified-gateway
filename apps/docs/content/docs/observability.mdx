@@ -41,16 +41,15 @@ attempts and included in `/admin/usage` aggregates.
 ## Payload privacy
 
 Ordinary rows contain summaries and HMAC fingerprints, never request or response bodies. IP addresses
-and user agents are fingerprinted rather than stored verbatim. If `OBSERVABILITY_ENCRYPTION_KEY` is
-configured, the gateway captures 1% of healthy successes by default and every degraded, incomplete,
-blocked, failed, or cancelled operation. Encryption and fingerprinting use separate HKDF-derived
+and user agents are fingerprinted rather than stored verbatim. The versioned encryption keyring
+encrypts 1% of healthy successes by default and every degraded, incomplete, blocked, failed, or
+cancelled operation. Encryption and fingerprinting use separate, purpose-bound derived
 subkeys; request, response, error, and attempt components are each capped at 32 KiB after recursive
 secret-field redaction.
 
 `GET /admin/logs/{operationId}/payload` is master-only. Every lookup writes a durable audit row and
 emits a structured audit log, including missing samples and failed decryptions; successful retrievals
-also update the sample access timestamp. If the key is absent, metadata remains available and the
-gateway never falls back to plaintext.
+also update the sample access timestamp. The gateway never falls back to plaintext.
 
 ## OpenTelemetry
 
@@ -64,7 +63,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
 The gateway exports the ingress-to-close operation span with routing, upstream-attempt, stream,
 render, and persistence children, plus low-cardinality counters, histograms, active gauges, queue
 depth, and persistence-loss metrics. Payload bodies are never emitted to OpenTelemetry. PostgreSQL,
-`/health`, the observability summary, and structured JSON logs remain sufficient for the initial
+`/health/ready`, the observability summary, and structured JSON logs remain sufficient for the initial
 operating model.
 
 Rerank usage also increments `unifiedgateway_search_units_total`; it remains independent from

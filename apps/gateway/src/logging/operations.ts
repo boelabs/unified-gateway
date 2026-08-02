@@ -1,8 +1,11 @@
+import { deriveActiveKey, decryptJson, encryptJson } from "#db/crypto.ts";
 import { EXECUTION_POLICY_MAX_TOTAL_MS } from "#core/executionPolicy.ts";
 import { and, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+import { PersistenceHealthTracker } from "./persistenceHealth.ts";
 import type { AdapterDiagnostics } from "#adapters/types.ts";
-import type { RequestLogInput } from "./logger.ts";
+import type { OperationLogInput } from "./logger.ts";
 import { randomUUID } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { redis } from "#cache/redis.ts";
 import { env } from "#config/env.ts";
 import { db } from "#db/client.ts";
@@ -22,17 +25,8 @@ import {
 	payloadSamples,
 } from "#db/schema.ts";
 
-import {
-	createDecipheriv,
-	createCipheriv,
-	randomBytes,
-	createHmac,
-	hkdfSync,
-} from "node:crypto";
-
 const pending = new Set<Promise<void>>();
-let persistenceFailures = 0;
-let persistenceDrops = 0;
+const persistenceHealth = new PersistenceHealthTracker();
 const FINALIZATION_QUEUE_LIMIT = 10_000;
 const FINALIZATION_BATCH_SIZE = 100;
 const finalizationQueue: Array<{
@@ -74,7 +68,7 @@ function enqueueFinalization(
 	requestId: string,
 ): Promise<void> {
 	if (finalizationQueue.length >= FINALIZATION_QUEUE_LIMIT) {
-		persistenceDrops += 1;
+		persistenceHealth.recordDrop();
 		recordPersistenceLoss("dropped");
 		log.error("operation-log", "finalization queue is full", {
 			requestId,
@@ -104,10 +98,11 @@ async function retry(
 			await new Promise<void>((resolve) => setTimeout(resolve, delay));
 		try {
 			await task();
+			persistenceHealth.recordSuccess();
 			return;
 		} catch (err) {
 			if (delay === 1_000) {
-				persistenceFailures += 1;
+				persistenceHealth.recordFailure();
 				recordPersistenceLoss("failed");
 				log.error("operation-log", "persistence failed after retries", {
 					requestId,
@@ -207,26 +202,6 @@ function redact(value: unknown): unknown {
 	);
 }
 
-function key(): Buffer | null {
-	return env.OBSERVABILITY_ENCRYPTION_KEY
-		? Buffer.from(env.OBSERVABILITY_ENCRYPTION_KEY, "hex")
-		: null;
-}
-
-function derivedKey(purpose: "encryption" | "fingerprint"): Buffer | null {
-	const root = key();
-	if (!root) return null;
-	return Buffer.from(
-		hkdfSync(
-			"sha256",
-			root,
-			Buffer.from("unified-gateway-observability-v1"),
-			Buffer.from(purpose),
-			32,
-		),
-	);
-}
-
 function boundedPayloadComponent(value: unknown): unknown {
 	let redacted: string;
 	try {
@@ -247,48 +222,14 @@ function boundedPayloadComponent(value: unknown): unknown {
 	return JSON.parse(serialized) as unknown;
 }
 
-function encrypt(
-	value: unknown,
-): { v: 1; iv: string; tag: string; ct: string } | null {
-	const encryptionKey = derivedKey("encryption");
-	if (!encryptionKey) return null;
-	const plaintext = Buffer.from(JSON.stringify(value) ?? "null", "utf8");
-	const iv = randomBytes(12);
-	const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv);
-	const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
-	return {
-		v: 1,
-		iv: iv.toString("base64"),
-		tag: cipher.getAuthTag().toString("base64"),
-		ct: ct.toString("base64"),
-	};
+export function decryptPayload(
+	envelope: Parameters<typeof decryptJson>[0],
+): unknown {
+	return decryptJson(envelope, "observability-payload");
 }
 
-export function decryptPayload(envelope: {
-	v: 1;
-	iv: string;
-	tag: string;
-	ct: string;
-}): unknown {
-	const encryptionKey = derivedKey("encryption");
-	if (!encryptionKey)
-		throw new Error("Observability payload encryption is not configured");
-	const decipher = createDecipheriv(
-		"aes-256-gcm",
-		encryptionKey,
-		Buffer.from(envelope.iv, "base64"),
-	);
-	decipher.setAuthTag(Buffer.from(envelope.tag, "base64"));
-	const plaintext = Buffer.concat([
-		decipher.update(Buffer.from(envelope.ct, "base64")),
-		decipher.final(),
-	]);
-	return JSON.parse(plaintext.toString("utf8"));
-}
-
-export function payloadFingerprint(value: unknown): string | null {
-	const fingerprintKey = derivedKey("fingerprint");
-	if (!fingerprintKey) return null;
+export function payloadFingerprint(value: unknown): string {
+	const fingerprintKey = deriveActiveKey("observability-fingerprint");
 	let serialized: string;
 	try {
 		serialized = JSON.stringify(value) ?? "";
@@ -366,7 +307,7 @@ export async function beginUpstreamAttempt(input: {
 	}, input.requestId);
 }
 
-type LegacyAttempt = {
+type OperationAttemptInput = {
 	deploymentId?: string;
 	label?: string;
 	adapterKey?: string;
@@ -401,12 +342,12 @@ type LegacyAttempt = {
 	toolFrames?: number;
 	mediaFrames?: number;
 	usageFrames?: number;
-	usage?: RequestLogInput["usage"];
+	usage?: OperationLogInput["usage"];
 	estimatedCostCents?: number;
 	diagnostics?: AdapterDiagnostics;
 };
 
-function failureOwner(attempt: LegacyAttempt): string | null {
+function failureOwner(attempt: OperationAttemptInput): string | null {
 	if (attempt.ok) return null;
 	if (
 		attempt.errorCode === "client_closed_request" ||
@@ -422,7 +363,7 @@ function failureOwner(attempt: LegacyAttempt): string | null {
 	return "provider";
 }
 
-function normalizedFailurePhase(attempt: LegacyAttempt): string | null {
+function normalizedFailurePhase(attempt: OperationAttemptInput): string | null {
 	if (attempt.ok) return null;
 	if (attempt.errorCode === "downstream_backpressure") return "rendering";
 	if (attempt.errorCode?.includes("first_output")) return "first_progress";
@@ -432,7 +373,7 @@ function normalizedFailurePhase(attempt: LegacyAttempt): string | null {
 	return "headers";
 }
 
-function normalizedFailureKind(attempt: LegacyAttempt): string | null {
+function normalizedFailureKind(attempt: OperationAttemptInput): string | null {
 	if (attempt.ok) return null;
 	if (attempt.errorCode === "client_closed_request") return "cancelled";
 	if (attempt.errorCode?.includes("protocol")) return "protocol";
@@ -449,7 +390,7 @@ function normalizedFailureKind(attempt: LegacyAttempt): string | null {
 export function completeOperation(
 	operationId: string,
 	started: Promise<void>,
-	input: RequestLogInput,
+	input: OperationLogInput,
 ): void {
 	const lifecycle = input.metadata.streamLifecycle as
 		| {
@@ -492,7 +433,7 @@ export function completeOperation(
 		!terminalVerified ||
 		outcome === "incomplete" ||
 		outcome === "blocked";
-	const attempts = (input.attempts ?? []) as LegacyAttempt[];
+	const attempts = (input.attempts ?? []) as OperationAttemptInput[];
 	const knownUpstreamCost = attempts.reduce(
 		(total, attempt) =>
 			total +
@@ -739,12 +680,15 @@ export function completeOperation(
 						degraded ||
 						Math.random() < env.OBSERVABILITY_SUCCESS_SAMPLE_RATE;
 					const envelope = shouldCapture
-						? encrypt({
-								request: boundedPayloadComponent(input.requestBody),
-								response: boundedPayloadComponent(input.responseBody),
-								error: boundedPayloadComponent(input.error),
-								attempts: boundedPayloadComponent(input.attempts),
-							})
+						? encryptJson(
+								{
+									request: boundedPayloadComponent(input.requestBody),
+									response: boundedPayloadComponent(input.responseBody),
+									error: boundedPayloadComponent(input.error),
+									attempts: boundedPayloadComponent(input.attempts),
+								},
+								"observability-payload",
+							)
 						: null;
 					if (envelope) {
 						await db
@@ -816,18 +760,12 @@ export async function flushOperationLogs(): Promise<void> {
 }
 
 export function operationPersistenceStatus() {
-	const encryptedSampling = key() !== null;
-	return {
-		status:
-			persistenceFailures > 0 || persistenceDrops > 0 || !encryptedSampling
-				? "degraded"
-				: "ready",
+	return persistenceHealth.status({
 		pending: pending.size,
 		queueDepth: finalizationQueue.length,
-		persistenceFailures,
-		persistenceDrops,
-		encryptedSampling,
-	};
+		queueCapacity: FINALIZATION_QUEUE_LIMIT,
+		encryptedSampling: true,
+	});
 }
 
 export async function reconcileAbandonedOperations(
@@ -916,10 +854,6 @@ export async function getPayloadSample(
 }
 
 export function startOperationMaintenance(): () => void {
-	if (!key())
-		log.warn("operation-log", "encrypted payload sampling is disabled", {
-			reason: "OBSERVABILITY_ENCRYPTION_KEY is not configured",
-		});
 	const run = async () => {
 		const abandoned = await reconcileAbandonedOperations();
 		if (abandoned > 0)

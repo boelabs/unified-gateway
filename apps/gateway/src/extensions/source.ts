@@ -1,14 +1,24 @@
 import { listActiveArtifactsWithCode } from "#db/repos/extensions.ts";
 import type { ExtensionInstanceSource } from "./runtime.ts";
-import { mkdir, rename, writeFile } from "node:fs/promises";
 import { listInstances } from "#db/repos/extensions.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
+import { existsSync, type Dirent } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { log } from "#logging/log.ts";
-import { existsSync } from "node:fs";
+
+import {
+	writeFile,
+	readdir,
+	rename,
+	unlink,
+	mkdir,
+	stat,
+} from "node:fs/promises";
 
 const EXTENSION_KEY_PATTERN = /^[a-z0-9]+$/;
+const MATERIALIZED_MODULE_PATTERN = /^[a-z0-9]+-[a-f0-9]{64}\.mjs$/;
+const STALE_TEMP_FILE_MS = 5 * 60_000;
 
 /**
  * On-disk cache for materialized extension modules. It MUST live inside the gateway package so the
@@ -25,6 +35,50 @@ export const EXTENSIONS_CACHE_DIR = resolve(
 
 export function sha256Hex(source: string): string {
 	return createHash("sha256").update(source, "utf8").digest("hex");
+}
+
+function isMissingFile(error: unknown): boolean {
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		(error as { code?: unknown }).code === "ENOENT"
+	);
+}
+
+/** Removes inactive materializations and abandoned atomic-write files from this replica. */
+export async function pruneExtensionCache(
+	activeModulePaths: ReadonlySet<string>,
+	cacheDir = EXTENSIONS_CACHE_DIR,
+): Promise<number> {
+	let entries: Dirent[];
+	try {
+		entries = await readdir(cacheDir, { withFileTypes: true });
+	} catch (error) {
+		if (isMissingFile(error)) return 0;
+		throw error;
+	}
+	let removed = 0;
+	for (const entry of entries) {
+		if (!entry.isFile()) continue;
+		const path = join(cacheDir, entry.name);
+		if (MATERIALIZED_MODULE_PATTERN.test(entry.name)) {
+			if (activeModulePaths.has(path)) continue;
+		} else if (entry.name.endsWith(".tmp")) {
+			const info = await stat(path).catch(() => null);
+			if (info === null || Date.now() - info.mtimeMs < STALE_TEMP_FILE_MS)
+				continue;
+		} else {
+			continue;
+		}
+		try {
+			await unlink(path);
+			removed += 1;
+		} catch (error) {
+			if (!isMissingFile(error)) throw error;
+		}
+	}
+	return removed;
 }
 
 function cacheFileFor(key: string, contentHash: string): string {
@@ -44,8 +98,20 @@ async function materialize(
 	if (existsSync(file)) return file;
 	await mkdir(dirname(file), { recursive: true });
 	const tmp = `${file}.${randomUUID()}.tmp`;
-	await writeFile(tmp, code, "utf8");
-	await rename(tmp, file);
+	try {
+		await writeFile(tmp, code, "utf8");
+		try {
+			await rename(tmp, file);
+		} catch (error) {
+			// Concurrent reloads may materialize the same content-addressed module. The winner's
+			// identical file is authoritative; every other rename may safely converge on it.
+			if (!existsSync(file)) throw error;
+		}
+	} finally {
+		await unlink(tmp).catch((error: unknown) => {
+			if (!isMissingFile(error)) throw error;
+		});
+	}
 	return file;
 }
 

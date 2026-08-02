@@ -1,9 +1,11 @@
 /** Candidate-aware normalization for canonical file and image inputs. */
 
+import { fetchPinnedHttps, type ResolvedAddress } from "./pinnedHttpsFetch.ts";
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
 import type { ContentPartInputSupport } from "#adapters/types.ts";
 import type { UpstreamTransport } from "#core/transport.ts";
 import { GatewayError } from "#core/errors.ts";
+import { Worker } from "node:worker_threads";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -17,7 +19,7 @@ import type {
 
 const MAX_INLINE_INPUT_BYTES = 50_000_000;
 const MAX_MATERIALIZED_INPUT_BYTES = 20_000_000;
-const MAX_TOTAL_BYTES = 50_000_000;
+export const MAX_PORTABLE_CONTENT_INPUT_BYTES = 50_000_000;
 const MAX_TEXT_CHARACTERS = 2_000_000;
 const MAX_PDF_PAGES = 200;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -96,10 +98,21 @@ const PORTABLE_APPLICATION_MIME_TYPES = new Set([
 
 type ResolveHostname = (
 	hostname: string,
-) => Promise<readonly { address: string; family: number }[]>;
+) => Promise<readonly ResolvedAddress[]>;
+
+type ResolvedFetch = (
+	url: URL,
+	options: {
+		method: "GET";
+		redirect: "manual";
+		signal: AbortSignal;
+		headers: Record<string, string>;
+	},
+	addresses: readonly ResolvedAddress[],
+) => Promise<Response>;
 
 interface ResolverDependencies {
-	fetch: typeof fetch;
+	fetch: ResolvedFetch;
 	resolveHostname: ResolveHostname;
 }
 
@@ -132,8 +145,12 @@ export interface ResolvedContentInputRequest {
 }
 
 const DEFAULT_DEPENDENCIES: ResolverDependencies = {
-	fetch: ((...args: Parameters<typeof fetch>) =>
-		globalThis.fetch(...args)) as typeof fetch,
+	fetch: (url, options, addresses) =>
+		fetchPinnedHttps(url, addresses, {
+			method: options.method,
+			headers: options.headers,
+			signal: options.signal,
+		}),
 	resolveHostname: async (hostname) =>
 		lookup(hostname, { all: true, verbatim: true }),
 };
@@ -369,12 +386,19 @@ function isBlockedIpv6(address: string): boolean {
 	return (
 		(allZeroPrefix && (words[7] === 0 || words[7] === 1)) ||
 		(words.slice(0, 5).every((word) => word === 0) && words[5] === 0xffff) ||
+		// Only conventional global unicast is accepted. This deliberately excludes translation
+		// prefixes such as NAT64, which could otherwise reach a blocked IPv4 destination.
+		(first & 0xe000) !== 0x2000 ||
 		(first & 0xfe00) === 0xfc00 ||
 		(first & 0xffc0) === 0xfe80 ||
 		(first & 0xffc0) === 0xfec0 ||
 		(first & 0xff00) === 0xff00 ||
+		(first === 0x2001 && words[1] === 0) ||
 		(first === 0x2001 && words[1] === 0x0db8) ||
-		(first === 0x2001 && (words[1]! & 0xfff0) === 0x0010)
+		(first === 0x2001 && (words[1]! & 0xfff0) === 0x0010) ||
+		(first === 0x2001 && (words[1]! & 0xfff0) === 0x0020) ||
+		first === 0x2002 ||
+		(first === 0x3fff && (words[1]! & 0xfff0) === 0)
 	);
 }
 
@@ -392,7 +416,7 @@ async function assertPublicUrl(
 	value: string,
 	resolveHostname: ResolveHostname,
 	kind: RemoteInputKind,
-): Promise<URL> {
+): Promise<{ url: URL; addresses: readonly ResolvedAddress[] }> {
 	const url = parseSafeHttpsUrl(value, kind);
 	const param = kind === "file" ? "file_url" : "image_url";
 
@@ -420,7 +444,7 @@ async function assertPublicUrl(
 			`${param} must resolve only to public network addresses.`,
 		);
 	}
-	return url;
+	return { url, addresses };
 }
 
 function filenameFromUrl(url: URL): string | undefined {
@@ -531,27 +555,32 @@ async function fetchInput(
 ): Promise<MaterializedInput> {
 	let current = value;
 	for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-		const url = await assertPublicUrl(
+		const validated = await assertPublicUrl(
 			current,
 			dependencies.resolveHostname,
 			kind,
 		);
+		const { url, addresses } = validated;
 		let response: Response;
 		try {
-			response = await dependencies.fetch(url, {
-				method: "GET",
-				redirect: "manual",
-				signal: AbortSignal.any([
-					signal,
-					AbortSignal.timeout(FETCH_TIMEOUT_MS),
-				]),
-				headers: {
-					accept:
-						kind === "image"
-							? "image/*, */*;q=0.1"
-							: "application/pdf, text/*, application/json, */*;q=0.1",
+			response = await dependencies.fetch(
+				url,
+				{
+					method: "GET",
+					redirect: "manual",
+					signal: AbortSignal.any([
+						signal,
+						AbortSignal.timeout(FETCH_TIMEOUT_MS),
+					]),
+					headers: {
+						accept:
+							kind === "image"
+								? "image/*, */*;q=0.1"
+								: "application/pdf, text/*, application/json, */*;q=0.1",
+					},
 				},
-			});
+				addresses,
+			);
 		} catch (cause) {
 			throw candidateInputError(
 				`Could not fetch ${kind} URL ${url.href}: ${String(cause)}`,
@@ -785,7 +814,11 @@ function assertImageContent(image: MaterializedInput): void {
 	}
 }
 
-async function extractPortableText(file: MaterializedInput): Promise<string> {
+async function extractPortableText(
+	file: MaterializedInput,
+	signal: AbortSignal,
+): Promise<string> {
+	signal.throwIfAborted();
 	if (file.bytes.byteLength > MAX_MATERIALIZED_INPUT_BYTES) {
 		throw candidateInputError(
 			`File contains ${file.bytes.byteLength} bytes, above the ${MAX_MATERIALIZED_INPUT_BYTES} byte parser limit`,
@@ -796,26 +829,22 @@ async function extractPortableText(file: MaterializedInput): Promise<string> {
 	assertPdfSignature(file);
 	let text: string;
 	if (file.mimeType === "application/pdf") {
-		let result: { totalPages: number; text: string };
-		try {
-			const { getDocumentProxy, extractText } = await import("unpdf");
-			const document = await getDocumentProxy(file.bytes);
-			try {
-				if (document.numPages > MAX_PDF_PAGES) {
-					throw candidateInputError(
-						`PDF has ${document.numPages} pages, above the ${MAX_PDF_PAGES} page parser limit`,
-						"file_too_large",
-						"The PDF has too many pages for portable text extraction.",
-					);
-				}
-				result = await extractText(document, { mergePages: true });
-			} finally {
-				await document.loadingTask.destroy().catch(() => undefined);
+		const result = await extractPdfText(file.bytes, signal);
+		if (!result.ok) {
+			if (
+				result.code === "too_many_pages" ||
+				result.code === "too_many_characters"
+			) {
+				throw candidateInputError(
+					result.code === "too_many_pages"
+						? `${result.message}, above the ${MAX_PDF_PAGES} page parser limit`
+						: result.message,
+					"file_too_large",
+					"The PDF is too large for portable text extraction.",
+				);
 			}
-		} catch (cause) {
-			if (GatewayError.is(cause)) throw cause;
 			throw candidateInputError(
-				`PDF text extraction failed: ${String(cause)}`,
+				`PDF text extraction failed: ${result.message}`,
 				"file_parser_failed",
 				"The PDF could not be parsed as text. Use a native document-capable model for this file.",
 			);
@@ -852,7 +881,69 @@ async function extractPortableText(file: MaterializedInput): Promise<string> {
 			"The extracted file text is too large for portable processing.",
 		);
 	}
+	signal.throwIfAborted();
 	return text;
+}
+
+type PdfTextResult =
+	| { ok: true; text: string; totalPages: number }
+	| {
+			ok: false;
+			code: "too_many_characters" | "too_many_pages" | "parse_failed";
+			message: string;
+	  };
+
+/** Runs PDF parsing off the event loop and terminates it immediately when the request is aborted. */
+async function extractPdfText(
+	bytes: Uint8Array,
+	signal: AbortSignal,
+): Promise<PdfTextResult> {
+	signal.throwIfAborted();
+	const worker = new Worker(new URL("./pdfTextWorker.ts", import.meta.url));
+	const transferred = bytes.slice().buffer;
+	return new Promise<PdfTextResult>((resolve, reject) => {
+		let settled = false;
+		const cleanup = () => {
+			signal.removeEventListener("abort", onAbort);
+			void worker.terminate();
+		};
+		const finish = (result: PdfTextResult) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			resolve(result);
+		};
+		const onAbort = () => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(signal.reason);
+		};
+		worker.once("message", (result: PdfTextResult) => finish(result));
+		worker.once("error", (error: Error) =>
+			finish({ ok: false, code: "parse_failed", message: error.message }),
+		);
+		worker.once("exit", (code) => {
+			finish({
+				ok: false,
+				code: "parse_failed",
+				message: `PDF parser worker exited before replying (code ${code})`,
+			});
+		});
+		signal.addEventListener("abort", onAbort, { once: true });
+		if (signal.aborted) {
+			onAbort();
+			return;
+		}
+		worker.postMessage(
+			{
+				bytes: transferred,
+				maxCharacters: MAX_TEXT_CHARACTERS,
+				maxPages: MAX_PDF_PAGES,
+			},
+			[transferred],
+		);
+	});
 }
 
 function portableTextPart(
@@ -934,6 +1025,15 @@ export class ContentInputResolver {
 		return this.#parts.length > 0;
 	}
 
+	/** True when the request references content whose tokenized size is not represented in its JSON. */
+	get hasOpaqueInputs(): boolean {
+		return this.#parts.some((part) => {
+			const source =
+				part.type === "file" ? fileSource(part) : imageSource(part);
+			return source.kind !== "data_url";
+		});
+	}
+
 	assertCandidate(
 		candidate: DeploymentCandidate,
 		transport: UpstreamTransport,
@@ -1012,9 +1112,9 @@ export class ContentInputResolver {
 		if (!this.#accounted.has(part)) {
 			this.#accounted.add(part);
 			this.#totalBytes += file.bytes.byteLength;
-			if (this.#totalBytes > MAX_TOTAL_BYTES) {
+			if (this.#totalBytes > MAX_PORTABLE_CONTENT_INPUT_BYTES) {
 				throw requestError(
-					`Materialized content inputs contain ${this.#totalBytes} bytes, above the ${MAX_TOTAL_BYTES} byte request limit`,
+					`Materialized content inputs contain ${this.#totalBytes} bytes, above the ${MAX_PORTABLE_CONTENT_INPUT_BYTES} byte request limit`,
 					"content_inputs_too_large",
 					"The combined content inputs are too large for portable processing.",
 				);
@@ -1026,7 +1126,7 @@ export class ContentInputResolver {
 	async #text(file: MaterializedInput): Promise<string> {
 		let pending = this.#parsedText.get(file);
 		if (pending === undefined) {
-			pending = extractPortableText(file);
+			pending = extractPortableText(file, this.#signal);
 			this.#parsedText.set(file, pending);
 		}
 		return pending;

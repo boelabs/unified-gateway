@@ -1,5 +1,5 @@
+import { computeCost, estimateMaximumCostCents } from "./cost.ts";
 import assert from "node:assert/strict";
-import { computeCost } from "./cost.ts";
 import { test } from "node:test";
 
 test("input/output cost with pricing per 1M tokens", () => {
@@ -176,5 +176,25 @@ test("provider-reported cost is the fallback only when pricing is absent", () =>
 	assert.equal(
 		computeCost({ pricing: { searchUnitCents: 0.2 } }, usage).totalCents,
 		0.2,
+	);
+});
+
+test("maximum cost reservation uses the highest tier and rejects unknown pricing", () => {
+	assert.equal(estimateMaximumCostCents({}, 1_000), null);
+	assert.equal(estimateMaximumCostCents({ pricing: {} }, 1_000), null);
+	assert.equal(
+		estimateMaximumCostCents(
+			{
+				pricing: {
+					inputCentsPerMTokens: 100,
+					outputCentsPerMTokens: 200,
+					searchUnitCents: 0.5,
+					tiers: [{ aboveInputTokens: 10, outputCentsPerMTokens: 400 }],
+				},
+			},
+			1_000,
+			2,
+		),
+		1.4,
 	);
 });

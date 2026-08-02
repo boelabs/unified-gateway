@@ -7,7 +7,7 @@ A condensed checklist. Each item links to the page with the full explanation.
 
 ## Secrets
 
-- [ ] `MASTER_KEY` and `CREDENTIALS_ENCRYPTION_KEY` are strong, unique per environment, and live in a
+- [ ] `MASTER_KEY` and every `ENCRYPTION_KEYRING` value are strong, unique per environment, and live in a
   secret manager — not in the image, not in git, not in the Compose file's defaults.
   `compose.local.yaml`'s secrets are development-only; the production `docker-compose.yml` base ships
   both empty and refuses to start until you set them. See [Security](/docs/security).
@@ -29,16 +29,15 @@ A condensed checklist. Each item links to the page with the full explanation.
 - [ ] Readiness probe → `GET /health/ready` (pulls an unhealthy instance from the load balancer without
   restarting it).
 - [ ] Your orchestrator gives the container at least `SHUTDOWN_TIMEOUT_MS` to drain on `SIGTERM`.
-- [ ] Replicas are safe to scale horizontally: background jobs (partition maintenance, response-state
-  GC) use a Postgres advisory lock, so only one replica runs each per cycle — no coordination needed on
-  your end. See [Operations](/docs/operations).
+- [ ] Replicas are safe to scale horizontally; shared quotas/circuits are in Redis and maintenance work
+  is idempotent or transactionally claimed. See [Operations](/docs/operations).
 
 ## Data lifecycle
 
 - [ ] `db:migrate` runs as a one-off step before rolling out new instances (the Compose stack does this
   automatically via its migration job).
-- [ ] `REQUEST_LOG_PARTITION_RETENTION_DAYS` and `RESPONSES_STATE_RETENTION_DAYS` match your actual
-  compliance/storage requirements, not just the defaults.
+- [ ] `OBSERVABILITY_METADATA_RETENTION_DAYS`, `OBSERVABILITY_PAYLOAD_RETENTION_DAYS`, and
+  `RESPONSES_STATE_RETENTION_DAYS` match your actual compliance/storage requirements.
 - [ ] You have a Postgres backup schedule. Redis needs none (fully rebuildable ephemeral state). See
   [Operations → Backups](/docs/operations#backups).
 
@@ -46,8 +45,8 @@ A condensed checklist. Each item links to the page with the full explanation.
 
 - [ ] `OTEL_ENABLED=true` with a real `OTEL_EXPORTER_OTLP_ENDPOINT` if you want traces/metrics —
   disabled by default.
-- [ ] `OBSERVABILITY_ENCRYPTION_KEY` is configured if encrypted forensic samples are required; the
-  gateway never emits payload bodies to OTel. See [Security](/docs/security#observability-payloads).
+- [ ] The encryption keyring is backed up and its rotation procedure is rehearsed; the gateway never
+  emits payload bodies to OTel. See [Security](/docs/security#observability-payloads).
 - [ ] Logs (structured JSON on stdout) are shipped to a collector.
 
 ## Routing and resilience

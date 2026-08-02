@@ -13,6 +13,16 @@ import { spawnSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
+// Every child process must receive a complete deterministic application environment. Preserve
+// explicitly configured infrastructure URLs so developers and CI can point the suite at real test
+// services, while keeping cryptographic test material isolated from ignored local `.env` files.
+process.env.NODE_ENV = "test";
+process.env.MASTER_KEY ??= "integration-test-master-key-32-chars";
+process.env.ENCRYPTION_KEYRING ??= JSON.stringify({
+	integration: "1".repeat(64),
+});
+process.env.ACTIVE_ENCRYPTION_KEY_ID ??= "integration";
+
 function findIntegrationFiles(dir: string, out: string[] = []): string[] {
 	for (const entry of readdirSync(dir, { withFileTypes: true })) {
 		const full = join(dir, entry.name);
@@ -29,7 +39,7 @@ function cleanup(label: string): void {
 	const result = spawnSync(
 		process.execPath,
 		["scripts/cleanup-integration.ts", label],
-		{ stdio: "inherit" },
+		{ env: process.env, stdio: "inherit" },
 	);
 	if (result.status !== 0) {
 		failed += 1;
@@ -53,7 +63,7 @@ for (const file of files) {
 			"30000",
 			file,
 		],
-		{ stdio: "inherit" },
+		{ env: process.env, stdio: "inherit" },
 	);
 	if (result.status !== 0) failed += 1;
 	cleanup(`after ${file}`);

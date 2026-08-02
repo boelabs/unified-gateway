@@ -49,6 +49,7 @@ function request(
 
 test("file resolver materializes a PDF URL once for Gemini inlineData", async () => {
 	let fetches = 0;
+	let pinnedAddresses: readonly { address: string; family: number }[] = [];
 	const resolver = createContentInputResolver(
 		request({
 			type: "file",
@@ -58,12 +59,13 @@ test("file resolver materializes a PDF URL once for Gemini inlineData", async ()
 		new AbortController().signal,
 		{
 			resolveHostname: async () => [{ address: "93.184.216.34", family: 4 }],
-			fetch: (async () => {
+			fetch: async (_url, _options, addresses) => {
 				fetches += 1;
+				pinnedAddresses = addresses;
 				return new Response(new Uint8Array(Buffer.from(PDF_BASE64, "base64")), {
 					headers: { "content-type": "application/pdf" },
 				});
-			}) as typeof fetch,
+			},
 		},
 	);
 	const google = candidate(googleAdapter);
@@ -72,6 +74,7 @@ test("file resolver materializes a PDF URL once for Gemini inlineData", async ()
 	const first = await resolver.resolveForCandidate(google, "generate_content");
 	const second = await resolver.resolveForCandidate(google, "generate_content");
 	assert.equal(fetches, 1);
+	assert.deepEqual(pinnedAddresses, [{ address: "93.184.216.34", family: 4 }]);
 	assert.deepEqual(first.metadata, {
 		pdfEngine: "auto",
 		materializedFiles: 1,
@@ -326,4 +329,56 @@ test("remote image materialization rejects private network targets", () => {
 		(error: unknown) =>
 			(error as { code?: string }).code === "unsafe_image_url",
 	);
+});
+
+test("remote inputs reject IPv6 transition ranges that can reach blocked networks", () => {
+	for (const address of [
+		"64:ff9b::7f00:1",
+		"2001:0000:4136:e378:8000:63bf:3fff:fdd2",
+		"2002:7f00:1::",
+	]) {
+		assert.throws(
+			() =>
+				createContentInputResolver(
+					request({
+						type: "file",
+						fileUrl: `https://[${address}]/document.pdf`,
+					}),
+					new AbortController().signal,
+				),
+			(error: unknown) =>
+				(error as { code?: string }).code === "unsafe_file_url",
+		);
+	}
+});
+
+test("remote inputs accept conventional public IPv6 literals", () => {
+	assert.doesNotThrow(() =>
+		createContentInputResolver(
+			request({
+				type: "file",
+				fileUrl: "https://[2606:4700:4700::1111]/document.pdf",
+			}),
+			new AbortController().signal,
+		),
+	);
+});
+
+test("only opaque content sources require an additional token reservation", () => {
+	const inline = createContentInputResolver(
+		request({
+			type: "file",
+			fileData: "data:text/plain;base64,aGVsbG8=",
+		}),
+		new AbortController().signal,
+	);
+	const remote = createContentInputResolver(
+		request({
+			type: "file",
+			fileUrl: "https://example.com/document.pdf",
+		}),
+		new AbortController().signal,
+	);
+	assert.equal(inline.hasOpaqueInputs, false);
+	assert.equal(remote.hasOpaqueInputs, true);
 });

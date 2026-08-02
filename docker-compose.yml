@@ -38,7 +38,11 @@ services:
     command: ["bun", "src/db/migrate.ts"]
     environment:
       NODE_ENV: production
+      MASTER_KEY: ${MASTER_KEY:-}
+      ENCRYPTION_KEYRING: ${ENCRYPTION_KEYRING:-}
+      ACTIVE_ENCRYPTION_KEY_ID: ${ACTIVE_ENCRYPTION_KEY_ID:-}
       DATABASE_URL: ${DATABASE_URL:-postgres://gateway:gateway@postgres:5432/unifiedgateway}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,9 +57,10 @@ services:
       NODE_ENV: production
       PORT: 4000
       # Required at deployment; intentionally empty instead of falling back to known credentials.
-      # MASTER_KEY needs >= 8 chars; CREDENTIALS_ENCRYPTION_KEY must be 32 bytes hex (64 chars).
+      # MASTER_KEY needs >= 32 chars. ENCRYPTION_KEYRING is a JSON id-to-64-hex-key object.
       MASTER_KEY: ${MASTER_KEY:-}
-      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:-}
+      ENCRYPTION_KEYRING: ${ENCRYPTION_KEYRING:-}
+      ACTIVE_ENCRYPTION_KEY_ID: ${ACTIVE_ENCRYPTION_KEY_ID:-}
       DATABASE_URL: ${DATABASE_URL:-postgres://gateway:gateway@postgres:5432/unifiedgateway}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
     expose:

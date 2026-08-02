@@ -256,7 +256,7 @@ export function resolveBodyFieldReasoning(
 	return { param: cfg.param, value };
 }
 
-/** Request-log observability: what the client asked for vs what actually ran after snapping. */
+/** Operation observability: what the client asked for vs what actually ran after snapping. */
 export interface ReasoningLogInfo {
 	/** Effort the client explicitly requested. */
 	requested: ReasoningEffort | null;
@@ -269,7 +269,7 @@ export interface ReasoningLogInfo {
 }
 
 /**
- * Builds the reasoning entry for the request log. Because the gateway clamps instead of rejecting, the
+ * Builds the reasoning entry for operation metadata. Because the gateway clamps instead of rejecting, the
  * effective effort can differ from what the client asked for (e.g. "none" -> "minimal" on a Gemini
  * flash, or "max" -> "xhigh"); surfacing both makes that adjustment observable (no surprise costs).
  * An omitted effort is still reported for reasoning models because their model floor is an effective

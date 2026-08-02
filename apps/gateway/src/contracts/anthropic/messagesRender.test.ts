@@ -16,6 +16,11 @@ import type {
 const parse = (b: unknown) => messagesRequestSchema.parse(b);
 const opts = { upstreamModel: "claude-x" };
 
+interface TestJsonObject extends Record<string, unknown> {
+	content: [TestJsonObject, TestJsonObject, ...TestJsonObject[]];
+	usage: TestJsonObject;
+}
+
 test("request->canonical: system, string content, max_tokens", () => {
 	const u = messagesRequestToCanonical(
 		parse({
@@ -353,7 +358,7 @@ test("canonical->response: content blocks + stop_reason + usage", () => {
 		],
 		usage: { promptTokens: 5, completionTokens: 3, totalTokens: 8 },
 	};
-	const out = canonicalToMessagesResponse(resp, opts) as Record<string, any>;
+	const out = canonicalToMessagesResponse(resp, opts) as TestJsonObject;
 	assert.equal(out.type, "message");
 	assert.equal(out.role, "assistant");
 	assert.equal(out.content[0].type, "thinking");
@@ -390,7 +395,7 @@ test("canonical->response: reconstructs Anthropic disjoint input buckets", () =>
 			cacheWriteTokens: 3,
 		},
 	};
-	const out = canonicalToMessagesResponse(resp, opts) as Record<string, any>;
+	const out = canonicalToMessagesResponse(resp, opts) as TestJsonObject;
 	assert.equal(out.usage.input_tokens, 10); // 15 - 2 - 3
 	assert.equal(out.usage.cache_read_input_tokens, 2);
 	assert.equal(out.usage.cache_creation_input_tokens, 3);
@@ -424,9 +429,10 @@ test("canonical->response: tool_calls -> tool_use; finish tool_calls -> tool_use
 		],
 		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 	};
-	const out = canonicalToMessagesResponse(resp, opts) as Record<string, any>;
+	const out = canonicalToMessagesResponse(resp, opts) as TestJsonObject;
 	assert.equal(out.stop_reason, "tool_use");
-	const tu = out.content.find((b: any) => b.type === "tool_use");
+	const tu = out.content.find((block) => block.type === "tool_use");
+	assert.ok(tu);
 	assert.equal(tu.name, "f");
 	assert.deepEqual(tu.input, { x: 1 });
 	assert.deepEqual(tu.provider_specific_fields, {
@@ -457,10 +463,11 @@ test("stream->events: Anthropic sequence for text", async () => {
 		};
 	}
 	const types: string[] = [];
-	let deltaUsage: any;
+	let deltaUsage: TestJsonObject | undefined;
 	for await (const ev of canonicalChunksToMessagesEvents(chunks(), opts)) {
 		types.push(ev.event!);
-		if (ev.event === "message_delta") deltaUsage = JSON.parse(ev.data).usage;
+		if (ev.event === "message_delta")
+			deltaUsage = (JSON.parse(ev.data) as { usage: TestJsonObject }).usage;
 	}
 	assert.deepEqual(types, [
 		"message_start",
@@ -472,6 +479,7 @@ test("stream->events: Anthropic sequence for text", async () => {
 		"message_delta",
 		"message_stop",
 	]);
+	assert.ok(deltaUsage);
 	assert.equal(deltaUsage.output_tokens, 1);
 	assert.equal(deltaUsage.input_tokens, undefined); // message_delta only carries output_tokens
 });
@@ -505,13 +513,14 @@ test("stream->events: Anthropic tool_use includes provider_specific_fields", asy
 			usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 		};
 	}
-	let toolUse: any;
+	let toolUse: TestJsonObject | undefined;
 	for await (const ev of canonicalChunksToMessagesEvents(chunks(), opts)) {
 		if (ev.event === "content_block_start") {
-			const data = JSON.parse(ev.data);
+			const data = JSON.parse(ev.data) as { content_block: TestJsonObject };
 			if (data.content_block.type === "tool_use") toolUse = data.content_block;
 		}
 	}
+	assert.ok(toolUse);
 	assert.deepEqual(toolUse.provider_specific_fields, {
 		thought_signature: "sig-a",
 	});
@@ -579,8 +588,9 @@ test("canonical->response: tool_use id carries the embedded signature", () => {
 		],
 		usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
 	};
-	const out = canonicalToMessagesResponse(resp, opts) as Record<string, any>;
-	const toolUse = out.content.find((b: any) => b.type === "tool_use");
+	const out = canonicalToMessagesResponse(resp, opts) as TestJsonObject;
+	const toolUse = out.content.find((block) => block.type === "tool_use");
+	assert.ok(toolUse);
 	assert.equal(toolUse.id, "toolu_1__thought__sig-a");
 	assert.deepEqual(toolUse.provider_specific_fields, {
 		thought_signature: "sig-a",
@@ -613,13 +623,14 @@ test("stream->events: content_block_start tool_use id carries the embedded signa
 			],
 		};
 	}
-	let started: any;
+	let started: TestJsonObject | undefined;
 	for await (const ev of canonicalChunksToMessagesEvents(chunks(), opts)) {
 		if (ev.event === "content_block_start") {
-			const d = JSON.parse(ev.data);
+			const d = JSON.parse(ev.data) as { content_block?: TestJsonObject };
 			if (d.content_block?.type === "tool_use") started = d.content_block;
 		}
 	}
+	assert.ok(started);
 	assert.equal(started.id, "toolu_1__thought__sig-a");
 });
 
@@ -704,7 +715,7 @@ test("stream->events: native thinking emits its real signature delta", async () 
 			],
 		};
 	}
-	const deltas: any[] = [];
+	const deltas: unknown[] = [];
 	for await (const event of canonicalChunksToMessagesEvents(chunks(), opts)) {
 		if (event.event === "content_block_delta")
 			deltas.push(JSON.parse(event.data).delta);

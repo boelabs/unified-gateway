@@ -4,7 +4,7 @@ description: "Health probes, secrets, data lifecycle, backups, and shutdown."
 ---
 
 Operational runbook for running Unified Gateway in production: health probes, rotating secrets,
-managing operation retention, legacy partitions, backups, and graceful shutdown. If you are still getting the
+managing operation retention, backups, and graceful shutdown. If you are still getting the
 gateway running locally, start with the [Quickstart](/docs/quickstart) instead — this page assumes a
 real deployment. For observability (logs, telemetry, request/usage queries) see
 [Observability](/docs/observability); for pricing and spend, see [Cost accounting](/docs/cost-accounting).
@@ -30,7 +30,6 @@ edit an already-applied migration. See [Upgrades](/docs/upgrades) for the full r
   healthy; otherwise `503` with `Retry-After`. Use it for the readiness probe so an unhealthy instance
   is pulled from the load balancer **without** being restarted, and rejoins automatically once
   dependencies recover.
-- `GET /health` — alias of `/health/ready`, kept for backward compatibility.
 - During a dependency outage, in-flight inference requests return `503` + `Retry-After` (not an opaque
   `500`), so well-behaved clients back off and retry.
 
@@ -38,18 +37,18 @@ edit an already-applied migration. See [Upgrades](/docs/upgrades) for the full r
 flushes the bounded operation-finalization queue, then closes Redis/Postgres and finally OpenTelemetry.
 Give the container at least `SHUTDOWN_TIMEOUT_MS` to drain.
 
-**Scaling** — replicas are safe to run concurrently: the partition-maintenance and response-state GC
-background jobs below use a Postgres advisory lock, so only one replica executes each per cycle.
+**Scaling** — replicas are safe to run concurrently. Maintenance deletes are idempotent, due work is
+claimed transactionally, and shared router/rate-limit state lives in Redis rather than process memory.
 
 ## Secrets
 
-Two secrets are critical. Store them in your secret manager (not in the image, not in git):
+Store the root credential and encryption keyring in your secret manager (not in the image or git):
 
 | Secret | Purpose | Format |
 |---|---|---|
-| `MASTER_KEY` | Root admin credential; grants full access to `/admin/*`. | Strong random string (≥ 8 chars; use much longer). |
-| `CREDENTIALS_ENCRYPTION_KEY` | Encrypts provider credentials at rest (AES-256-GCM). | 32 bytes in hex (64 chars). |
-| `OBSERVABILITY_ENCRYPTION_KEY` | Encrypts forensic samples and derives separate HMAC fingerprint keys. | Independent 32-byte hex value (64 chars). |
+| `MASTER_KEY` | Root admin credential; grants full access to `/admin/*`. | Strong random string, at least 32 characters. |
+| `ENCRYPTION_KEYRING` | Keys accepted for purpose-bound AES-256-GCM envelopes. | JSON object mapping stable key ids to 64-character hex keys. |
+| `ACTIVE_ENCRYPTION_KEY_ID` | Key id used for every new encrypted value. | A key present in `ENCRYPTION_KEYRING`. |
 
 Generate values:
 
@@ -57,10 +56,7 @@ Generate values:
 # MASTER_KEY
 openssl rand -base64 48
 
-# CREDENTIALS_ENCRYPTION_KEY (32 bytes hex)
-openssl rand -hex 32
-
-# OBSERVABILITY_ENCRYPTION_KEY (independent 32 bytes hex)
+# Generate one value for each ENCRYPTION_KEYRING entry
 openssl rand -hex 32
 ```
 
@@ -78,22 +74,20 @@ so rotation is a deploy-time operation:
 
 Virtual keys are unaffected — they live in the database and are not derived from the master key.
 
-### Rotating `CREDENTIALS_ENCRYPTION_KEY`
+### Rotating the encryption keyring
 
-Provider credentials are encrypted with this key, so it **cannot** be swapped by simply changing the
-env var — existing ciphertext would no longer decrypt. Rotate by re-encrypting:
+Every envelope records its key id and purpose; new writes always use `ACTIVE_ENCRYPTION_KEY_ID` while
+reads accept every id in `ENCRYPTION_KEYRING`. Rotation therefore requires no plaintext credential
+export and no downtime:
 
-1. Keep the **current** `CREDENTIALS_ENCRYPTION_KEY` in place.
-2. For each deployment, re-submit its credentials via `PATCH /admin/deployments/:id` with the plaintext
-   API key. The gateway re-encrypts on write, so this is also the moment to switch keys if you
-   maintain a key-versioning wrapper.
-3. Because credentials are write-only (the admin API never returns them), rotation requires having the
-   plaintext provider keys on hand. Keep them in your secret manager so you can re-submit.
-4. Once every deployment has been re-encrypted, retire the old key.
-
-> If you operate at scale, prefer storing provider credentials in an external secret manager and
-> giving the gateway short-lived access, so encryption-key rotation never requires re-submitting every
-> credential by hand.
+1. Add a new random id/value to `ENCRYPTION_KEYRING`, leaving the current active id in place, and roll
+   every replica so all can read both keys.
+2. Set `ACTIVE_ENCRYPTION_KEY_ID` to the new id and roll the replicas again.
+3. Run `bun run --filter @boelabs/unified-gateway encryption:rotate`. It re-encrypts deployments,
+   extension artifacts, and retained payload samples in bounded batches and reports row counts.
+4. Run it again; every reported count must be zero.
+5. Keep the old key for at least 14 days so stateless Responses compaction capsules issued before the
+   rotation remain readable, then remove it and roll once more.
 
 ### Leaked-secret response
 
@@ -102,33 +96,13 @@ audit logs, and admin access. If a
 **provider** API key leaks, revoke it at the provider and `PATCH` the affected deployments with a new
 key.
 
-## Operation retention and legacy rollback
+## Operation retention
 
 `gateway_operations` and `upstream_attempts` are the current operational source and expire after
 `OBSERVABILITY_METADATA_RETENTION_DAYS`. Encrypted `payload_samples` expire after
 `OBSERVABILITY_PAYLOAD_RETENTION_DAYS`; an in-process maintenance job
-also reconciles stale in-progress operations and attempts as `abandoned`. Run
-`bun run --filter @boelabs/unified-gateway db:backfill-observability -- --cutoff=<cutover-iso-timestamp>` after the application cutover to
-copy historical counts, usage, and costs as `outcome=unknown`, `terminalVerified=false`, and
-`legacy=true`, without copying bodies.
-
-Keep `request_logs` inaccessible through the API for the seven-day rollback window, verify counts and
-cost totals, and remove it in a later forward-only migration.
-
-### Legacy `request_logs` partitioning
-
-`request_logs` is partitioned by day. A background job runs every
-`REQUEST_LOG_PARTITION_JOB_INTERVAL_MS` and:
-
-- **Drains the `DEFAULT` partition** into daily partitions. Rows can land in `DEFAULT` before their
-  day's partition exists (e.g. the first requests after a cold start); left there they are never
-  cleaned by retention, and they also block creation of that day's partition. The drain is a no-op
-  when `DEFAULT` is empty.
-- Creates partitions for today plus `REQUEST_LOG_PARTITION_CREATE_DAYS` days ahead.
-- Drops partitions older than `REQUEST_LOG_PARTITION_RETENTION_DAYS`.
-
-This is fully automatic. Across replicas a Postgres advisory lock ensures only one instance runs
-maintenance per cycle (the drain's `DETACH`/`ATTACH` must not run concurrently).
+also reconciles stale in-progress operations and attempts as `abandoned`. Operation metadata never
+stores full request or response bodies; bounded forensic samples are separately encrypted and expired.
 
 ## `response_states` GC
 
@@ -140,7 +114,7 @@ gets stored and how to retrieve or delete it early.
 ## Backups
 
 **Back up Postgres; Redis is disposable.** Postgres is the source of truth — deployments, virtual
-keys, request logs, response states, and router settings. Redis only holds ephemeral runtime state
+keys, operation logs, response states, extension artifacts, and router settings. Redis only holds ephemeral runtime state
 (cooldowns, in-flight counters, rate-limit windows, the response cache), which rebuilds itself, so it
 needs no backup.
 

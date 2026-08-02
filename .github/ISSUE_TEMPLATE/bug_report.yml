@@ -42,5 +42,5 @@ body:
     id: logs
     attributes:
       label: Relevant logs
-      description: Structured logs or `request_logs` rows (redacted). Include `x-request-id` if available.
+      description: Structured logs or operation details (redacted). Include `x-request-id` if available.
       render: shell

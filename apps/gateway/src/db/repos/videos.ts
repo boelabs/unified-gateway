@@ -296,7 +296,9 @@ export async function markVideoDeletedForScope(
 		if (!row) return { row: undefined, assets: [] };
 		const assets = await tx
 			.update(videoAssets)
-			.set({ deletedAt: now })
+			// Make every object immediately eligible for the retrying GC. The endpoint marks only
+			// successfully removed objects as deleted, so a storage outage cannot orphan data forever.
+			.set({ expiresAt: now })
 			.where(and(eq(videoAssets.videoId, id), isNull(videoAssets.deletedAt)))
 			.returning();
 		return { row, assets };

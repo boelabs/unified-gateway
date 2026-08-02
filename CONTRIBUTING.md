@@ -31,12 +31,12 @@ Postgres/Redis certificates — see the docs' Known errors page.
 ```bash
 bun install
 docker compose -f docker-compose.yml -f compose.local.yaml up -d postgres redis
-cp apps/gateway/.env.example apps/gateway/.env    # then fill in MASTER_KEY and CREDENTIALS_ENCRYPTION_KEY
+cp apps/gateway/.env.example apps/gateway/.env    # then fill in the master key and encryption keyring
 bun run --filter @boelabs/unified-gateway db:migrate
 bun run --filter @boelabs/unified-gateway dev
 ```
 
-Generate a 32-byte hex `CREDENTIALS_ENCRYPTION_KEY` with:
+Generate a 32-byte hex value for each `ENCRYPTION_KEYRING` entry with:
 
 ```bash
 openssl rand -hex 32
@@ -77,9 +77,8 @@ bun run --filter @boelabs/unified-gateway test:integration
   `apps/gateway/tests/integration`.
 - **Database migrations:** the schema is `apps/gateway/src/db/schema.ts`. Run `bun run db:generate`
   (drizzle-kit) to emit a migration after changing it, then `bun run db:migrate` to apply (Drizzle's
-  migrator). Migrations are forward-only — never edit an already-applied migration. One exception:
-  `request_logs` is range-partitioned and `router_settings` is seeded, which drizzle-kit cannot
-  express, so those are hand-tuned in the baseline `0000_init.sql`. See `drizzle.config.ts`.
+	  migrator). Migrations are forward-only — never edit an already-applied migration. Historical
+	  hand-tuned DDL remains immutable even after later migrations remove those structures.
 
 ## Adding a provider adapter
 

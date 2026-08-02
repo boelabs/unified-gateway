@@ -102,7 +102,8 @@ async function deployment(
 async function cleanupState(deployments: DeploymentRow[]): Promise<void> {
 	const bucket = Math.floor(Date.now() / 60_000);
 	const keys = deployments.flatMap((item) => [
-		`rt:inflight:${item.id}`,
+		`rt:v2:inflight:${item.id}`,
+		`rt:v2:inflight-leases:${item.id}`,
 		`rt:fails:${item.id}`,
 		`rt:failures:${item.id}`,
 		`rt:successes:${item.id}`,
@@ -339,7 +340,7 @@ test("router: candidate input incompatibilities do not affect deployment health"
 		);
 		const [inflight, circuitFailures, healthFailures, cooldown] =
 			await redis.mget(
-				`rt:inflight:${deployed.id}`,
+				`rt:v2:inflight:${deployed.id}`,
 				`rt:circuit:deployment:${deployed.id}:failures`,
 				`rt:failures:${deployed.id}`,
 				`rt:circuit:deployment:${deployed.id}:cooldown`,

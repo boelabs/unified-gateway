@@ -34,7 +34,7 @@ const PUBLIC_MODEL_PREFIXES = [
 
 const PUBLIC_MODEL_PATTERN = `^(${PUBLIC_MODEL_PREFIXES.join("|")})-${UUID_PATTERN}$`;
 const RESPONSE_STATE_PATTERN = `^resp_itest_${UUID_PATTERN}$`;
-const VIRTUAL_KEY_NAME_PATTERN = `^embeddings-e2e-${UUID_PATTERN}$`;
+const VIRTUAL_KEY_NAME_PATTERN = `^(embeddings-e2e|budget-reset)-${UUID_PATTERN}$`;
 
 interface IdRow {
 	id: string;
@@ -47,7 +47,6 @@ interface DeploymentStateRow extends IdRow {
 export interface IntegrationCleanupSummary {
 	deployments: number;
 	fallbackPolicies: number;
-	requestLogs: number;
 	responseStates: number;
 	virtualKeys: number;
 	redisKeys: number;
@@ -57,7 +56,6 @@ function emptySummary(): IntegrationCleanupSummary {
 	return {
 		deployments: 0,
 		fallbackPolicies: 0,
-		requestLogs: 0,
 		responseStates: 0,
 		virtualKeys: 0,
 		redisKeys: 0,
@@ -92,16 +90,19 @@ async function cleanupRedis(
 		if (virtualKeyIds.length > 0) {
 			for (const id of virtualKeyIds) {
 				deleted += await invalidateResponseCache({ namespace: id });
+				deleted += await deleteRedisPatterns([`ratelimit:v2:*:${id}*`]);
 			}
 		}
 		const patterns = deployments.flatMap((deployment) => [
-			`rt:inflight:${deployment.id}`,
+			`rt:v2:inflight:${deployment.id}`,
+			`rt:v2:inflight-leases:${deployment.id}`,
 			`rt:failures:${deployment.id}`,
 			`rt:successes:${deployment.id}`,
 			`rt:latency_ms:${deployment.id}`,
 			`rt:throughput_tps:${deployment.id}`,
 			`rt:rpm:${deployment.id}:*`,
 			`rt:tpm:${deployment.id}:*`,
+			`rt:tpm-reserved:${deployment.id}:*`,
 			`rt:circuit:deployment:${deployment.id}:*`,
 			`rt:circuit:capacity:${capacitySubject(deployment.id, deployment.failureDomain).id}:*`,
 		]);
@@ -134,25 +135,6 @@ export async function cleanupIntegrationArtifacts(): Promise<IntegrationCleanupS
 		deploymentRows,
 		virtualKeyRows.map((row) => row.id),
 	);
-
-	const requestLogRows = await sql<IdRow[]>`
-		delete from request_logs
-		where public_model ~ ${PUBLIC_MODEL_PATTERN}
-			or deployment_id in (
-				select id from model_deployments where public_model ~ ${PUBLIC_MODEL_PATTERN}
-			)
-			or virtual_key_id in (
-				select id from virtual_keys
-				where name ~ ${VIRTUAL_KEY_NAME_PATTERN}
-					or exists (
-						select 1
-						from unnest(allowed_models) as allowed_model
-						where allowed_model ~ ${PUBLIC_MODEL_PATTERN}
-					)
-			)
-		returning id::text as id
-	`;
-	summary.requestLogs = requestLogRows.length;
 
 	const responseStateRows = await sql<IdRow[]>`
 		delete from response_states

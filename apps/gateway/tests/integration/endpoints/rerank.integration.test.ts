@@ -91,7 +91,7 @@ test("POST /v1/rerank routes OpenRouter preferences, falls back across adapters,
 			allowedModels: [publicModel],
 			maxBudgetCents: 10,
 			rpm: 20,
-			tpm: 1,
+			tpm: 10_000,
 		});
 		deniedKey = await createVirtualKey({
 			name: `rerank-denied-${randomUUID()}`,

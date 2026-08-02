@@ -1,8 +1,8 @@
 import { eq, and, or, ilike, count, sql, type SQL } from "drizzle-orm";
 import { fallbackPolicies, modelDeployments } from "#db/schema.ts";
 import type { TransportOverrides } from "#profiles/types.ts";
+import { decryptRecord, encryptJson } from "#db/crypto.ts";
 import type { RuntimeModelMetadata } from "#db/schema.ts";
-import { decryptJson, encryptJson } from "#db/crypto.ts";
 import type { CatalogEntry } from "#catalog/types.ts";
 import { db } from "#db/client.ts";
 
@@ -103,7 +103,7 @@ export async function createDeployment(
 				publicModel: input.publicModel,
 				adapterKey: input.adapterKey,
 				upstreamModel: input.upstreamModel,
-				credentials: encryptJson(input.credentials),
+				credentials: encryptJson(input.credentials, "deployment-credentials"),
 				label: input.label ?? null,
 				failureDomain: input.failureDomain ?? null,
 				metadata: input.metadata ?? {},
@@ -151,7 +151,7 @@ export async function updateDeployment(
 	if (input.upstreamModel !== undefined)
 		set.upstreamModel = input.upstreamModel;
 	if (input.credentials !== undefined)
-		set.credentials = encryptJson(input.credentials);
+		set.credentials = encryptJson(input.credentials, "deployment-credentials");
 	if (input.label !== undefined) set.label = input.label;
 	if (input.failureDomain !== undefined)
 		set.failureDomain = input.failureDomain;
@@ -274,7 +274,7 @@ export async function getDeploymentCredentials(
 ): Promise<Record<string, unknown> | undefined> {
 	const row = await getDeploymentById(id);
 	if (!row) return undefined;
-	return decryptJson<Record<string, unknown>>(row.credentials);
+	return decryptRecord(row.credentials, "deployment-credentials");
 }
 
 export async function deleteDeployment(id: string): Promise<void> {

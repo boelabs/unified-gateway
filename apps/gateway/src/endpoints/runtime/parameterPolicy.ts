@@ -1,4 +1,5 @@
 import type { DeploymentCandidate } from "#gateway/deploymentCandidates.ts";
+import { estimateTokenReservation } from "#router/tokenReservation.ts";
 import type { RouteOptions, RouteResult } from "#router/index.ts";
 import { nativeTransportForPublicWire } from "#core/transport.ts";
 import { chatChunkSemantic } from "#gateway/streamLifecycle.ts";
@@ -7,6 +8,7 @@ import type { EffectiveSettings } from "#router/settings.ts";
 import type { ChatExecResult } from "#gateway/executor.ts";
 import type { AdapterContext } from "#adapters/types.ts";
 import { resolveTransport } from "#router/transport.ts";
+import { usageQuotaForRequest } from "./pipeline.ts";
 import { executeChat } from "#gateway/executor.ts";
 import { GatewayError } from "#core/errors.ts";
 import type { AppEnv } from "#auth/types.ts";
@@ -22,6 +24,7 @@ import {
 
 import {
 	type ContentInputResolutionMetadata,
+	MAX_PORTABLE_CONTENT_INPUT_BYTES,
 	createContentInputResolver,
 } from "#files/requestContentInputs.ts";
 
@@ -75,9 +78,18 @@ export async function routeChat(
 }> {
 	let parameterPolicy: ParameterPolicyResult | null = null;
 	let contentInputResolution: ContentInputResolutionMetadata | null = null;
+	const policy =
+		settings.executionPolicies.chat[canonical.stream ? "stream" : "json"];
+	const startedAt = Date.now();
+	const preOutputDeadlineAt = startedAt + policy.preCommitMs;
+	const totalDeadlineAt = startedAt + policy.totalMs;
+	const clientSignal = options?.signal ?? c.req.raw.signal;
 	const contentInputResolver = createContentInputResolver(
 		canonical,
-		options?.signal ?? c.req.raw.signal,
+		AbortSignal.any([
+			clientSignal,
+			AbortSignal.timeout(Math.max(1, totalDeadlineAt - Date.now())),
+		]),
 	);
 	const eligibility = parameterEligibility(
 		canonical,
@@ -112,10 +124,6 @@ export async function routeChat(
 					);
 				}
 			: undefined;
-	const policy =
-		settings.executionPolicies.chat[canonical.stream ? "stream" : "json"];
-	const preOutputDeadlineAt = Date.now() + policy.preCommitMs;
-	const totalDeadlineAt = Date.now() + policy.totalMs;
 	const previouslyFailed = new Set<string>();
 	let remainingAttempts = policy.maxAttempts;
 	const failedAttemptLog: RouteResult<ChatExecResult>["attemptLog"] = [];
@@ -126,7 +134,7 @@ export async function routeChat(
 			canonical.model,
 			"chat",
 			{
-				clientSignal: options?.signal ?? c.req.raw.signal,
+				clientSignal,
 				requestId,
 				executionMode: canonical.stream ? "stream" : "json",
 				preferredTransport,
@@ -140,6 +148,16 @@ export async function routeChat(
 					? { preferredDeploymentId: options.preferredDeploymentId }
 					: {}),
 				...(candidateEligibility ? { candidateEligibility } : {}),
+				tokenReservation: (candidate) =>
+					estimateTokenReservation(canonical, {
+						maxOutputTokens:
+							canonical.maxTokens ?? candidate.meta.maxOutputTokens ?? 0,
+						additionalInputTokens: contentInputResolver.hasOpaqueInputs
+							? (candidate.meta.maxInputTokens ??
+								MAX_PORTABLE_CONTENT_INPUT_BYTES)
+							: 0,
+					}),
+				usageQuota: usageQuotaForRequest(c),
 			},
 			async (cand, ctx) => {
 				const resolved = await contentInputResolver.resolveForCandidate(

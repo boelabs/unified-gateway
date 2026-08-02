@@ -50,13 +50,15 @@ async function cleanup(
 ): Promise<void> {
 	const bucket = Math.floor(Date.now() / 60_000);
 	const keys = ids.flatMap((id) => [
-		`rt:inflight:${id}`,
+		`rt:v2:inflight:${id}`,
+		`rt:v2:inflight-leases:${id}`,
 		`rt:failures:${id}`,
 		`rt:successes:${id}`,
 		`rt:latency_ms:${id}`,
 		`rt:throughput_tps:${id}`,
 		`rt:rpm:${id}:${bucket}`,
 		`rt:tpm:${id}:${bucket}`,
+		`rt:tpm-reserved:${id}:${bucket}`,
 	]);
 	for (const prefix of circuitPrefixes) {
 		for (const suffix of ["cooldown", "cause", "failures", "history", "probe"])
@@ -74,26 +76,176 @@ test("inflight/rpm: start counts, success/cancel release without penalty", {
 }, async () => {
 	const id = randomUUID();
 	try {
-		await onAttemptStart(id);
-		await onAttemptStart(id);
+		const first = await onAttemptStart(id);
+		const second = await onAttemptStart(id);
+		assert.equal(first.accepted, true);
+		assert.equal(second.accepted, true);
+		if (!first.accepted || !second.accepted) return;
 		let metrics = (await fetchMetrics([id])).get(id)!;
 		assert.equal(metrics.inflight, 2);
 		assert.equal(metrics.rpm, 2);
 
-		await onAttemptCancel(id);
+		await onAttemptCancel(id, undefined, first.lease);
 		metrics = (await fetchMetrics([id])).get(id)!;
 		assert.equal(metrics.inflight, 1);
 		assert.equal(metrics.failures, 0);
 
-		await onSuccessFinish(id, {
-			totalTokens: 100,
-			completionTokens: 25,
-			durationMs: 1000,
-		});
+		await onSuccessFinish(
+			id,
+			{
+				totalTokens: 100,
+				completionTokens: 25,
+				durationMs: 1000,
+			},
+			undefined,
+			second.lease,
+		);
 		metrics = (await fetchMetrics([id])).get(id)!;
 		assert.equal(metrics.inflight, 0);
 		assert.equal(metrics.tpm, 100);
 		assert.equal(metrics.throughputTps, 25);
+	} finally {
+		await cleanup([id]);
+	}
+});
+
+test("deployment admission enforces RPM atomically under concurrency", {
+	skip,
+}, async () => {
+	const id = randomUUID();
+	try {
+		const admissions = await Promise.all(
+			Array.from({ length: 20 }, () =>
+				onAttemptStart(id, {
+					rpmLimit: 3,
+					tpmLimit: null,
+					reservedTokens: 0,
+				}),
+			),
+		);
+		const accepted = admissions.flatMap((result) =>
+			result.accepted ? [result.lease] : [],
+		);
+		assert.equal(accepted.length, 3);
+		await Promise.all(
+			accepted.map((lease) => onAttemptCancel(id, undefined, lease)),
+		);
+		const metrics = (await fetchMetrics([id])).get(id)!;
+		assert.equal(metrics.inflight, 0);
+		assert.equal(metrics.rpm, 3);
+	} finally {
+		await cleanup([id]);
+	}
+});
+
+test("deployment TPM reservations are atomic and reconcile to actual usage", {
+	skip,
+}, async () => {
+	const id = randomUUID();
+	try {
+		const admissions = await Promise.all(
+			Array.from({ length: 10 }, () =>
+				onAttemptStart(id, {
+					rpmLimit: null,
+					tpmLimit: 100,
+					reservedTokens: 40,
+				}),
+			),
+		);
+		const accepted = admissions.flatMap((result) =>
+			result.accepted ? [result.lease] : [],
+		);
+		assert.equal(accepted.length, 2);
+		await Promise.all(
+			accepted.map((lease) =>
+				onSuccessFinish(
+					id,
+					{ totalTokens: 10, completionTokens: 5, durationMs: 100 },
+					undefined,
+					lease,
+				),
+			),
+		);
+		const next = await onAttemptStart(id, {
+			rpmLimit: null,
+			tpmLimit: 100,
+			reservedTokens: 40,
+		});
+		assert.equal(next.accepted, true);
+		if (next.accepted) await onAttemptCancel(id, undefined, next.lease);
+		const metrics = (await fetchMetrics([id])).get(id)!;
+		assert.equal(metrics.tpm, 20);
+	} finally {
+		await cleanup([id]);
+	}
+});
+
+test("deployment TPM settlement reconciles the admission minute across a boundary", {
+	skip,
+}, async () => {
+	const id = randomUUID();
+	const realNow = Date.now;
+	const start = Math.floor(realNow() / 60_000) * 60_000 + 1;
+	const bucket = Math.floor(start / 60_000);
+	try {
+		Date.now = () => start;
+		const admission = await onAttemptStart(id, {
+			rpmLimit: null,
+			tpmLimit: 100,
+			reservedTokens: 40,
+		});
+		assert.equal(admission.accepted, true);
+		if (!admission.accepted) return;
+		Date.now = () => start + 60_000;
+		await onSuccessFinish(
+			id,
+			{ totalTokens: 10, completionTokens: 5, durationMs: 100 },
+			undefined,
+			admission.lease,
+		);
+		assert.equal(Number(await redis.get(`rt:tpm:${id}:${bucket}`)), 10);
+		assert.equal(await redis.get(`rt:tpm-reserved:${id}:${bucket}`), null);
+		assert.equal(await redis.get(`rt:tpm:${id}:${bucket + 1}`), null);
+	} finally {
+		Date.now = realNow;
+		await redis.del(
+			`rt:v2:inflight:${id}`,
+			`rt:v2:inflight-leases:${id}`,
+			`rt:successes:${id}`,
+			`rt:latency_ms:${id}`,
+			`rt:throughput_tps:${id}`,
+			`rt:rpm:${id}:${bucket}`,
+			`rt:tpm:${id}:${bucket}`,
+			`rt:tpm-reserved:${id}:${bucket}`,
+			`rt:tpm:${id}:${bucket + 1}`,
+			`rt:tpm-reserved:${id}:${bucket + 1}`,
+		);
+	}
+});
+
+test("expired inflight leases self-heal while deployment traffic continues", {
+	skip,
+}, async () => {
+	const id = randomUUID();
+	try {
+		const abandoned = await onAttemptStart(id);
+		assert.equal(abandoned.accepted, true);
+		if (!abandoned.accepted) return;
+		await redis.zadd(
+			`rt:v2:inflight-leases:${id}`,
+			Date.now() - 1,
+			abandoned.lease.id,
+		);
+		const active = await onAttemptStart(id);
+		assert.equal(active.accepted, true);
+		if (!active.accepted) return;
+		assert.equal((await fetchMetrics([id])).get(id)?.inflight, 1);
+
+		// A late settlement from the expired owner cannot decrement the active lease.
+		await onAttemptCancel(id, undefined, abandoned.lease);
+		assert.equal((await fetchMetrics([id])).get(id)?.inflight, 1);
+		await onAttemptCancel(id, undefined, active.lease);
+		assert.equal((await fetchMetrics([id])).get(id)?.inflight, 0);
 	} finally {
 		await cleanup([id]);
 	}
