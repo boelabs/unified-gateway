@@ -246,6 +246,45 @@ export interface OpenAIReasoningStateItem {
 	summary?: unknown[];
 }
 
+/**
+ * Identifies the native Responses reasoning item that owns streamed summary deltas.
+ * Keeping this separate from the encrypted state lets adapters preserve event identity
+ * without pretending that state is available before `response.output_item.done`.
+ */
+export function providerFieldsWithOpenAIReasoningItemId(
+	id: string,
+): Record<string, unknown> {
+	return { openai: { responses: { reasoning_item_id: id } } };
+}
+
+/** Reads the native Responses reasoning item id attached to a canonical stream delta. */
+export function openaiReasoningItemIdFromProviderFields(
+	fields: Record<string, unknown> | undefined,
+): string | undefined {
+	const openai = recordValue(fields?.openai);
+	const responses = recordValue(openai?.responses);
+	const id = responses?.reasoning_item_id;
+	return typeof id === "string" && id.length > 0 ? id : undefined;
+}
+
+/** Removes transport-only Responses stream identity before fields reach a public message item. */
+export function withoutOpenAIReasoningStreamMetadata(
+	fields: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	if (fields === undefined) return undefined;
+	const copy = structuredClone(fields);
+	const openai = recordValue(copy.openai);
+	const responses = recordValue(openai?.responses);
+	if (responses === undefined || !("reasoning_item_id" in responses))
+		return copy;
+	delete responses.reasoning_item_id;
+	if (Object.keys(responses).length === 0 && openai !== undefined)
+		delete openai.responses;
+	if (openai !== undefined && Object.keys(openai).length === 0)
+		delete copy.openai;
+	return Object.keys(copy).length > 0 ? copy : undefined;
+}
+
 /** Builds the provider-namespaced record `{ openai: { reasoning: [...] } }`. */
 export function providerFieldsWithOpenAIReasoning(
 	items: OpenAIReasoningStateItem[],

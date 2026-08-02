@@ -1039,6 +1039,94 @@ test("stream->events: accumulated encrypted reasoning emits trailing items befor
 	assert.equal(rs.id, "rs_1");
 });
 
+test("stream->events: native reasoning identity merges visible summary and encrypted state", async () => {
+	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						reasoning: "Visible summary",
+						providerFields: {
+							openai: { responses: { reasoning_item_id: "rs_native" } },
+						},
+					},
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: {
+						providerFields: {
+							openai: {
+								reasoning: [
+									{
+										id: "rs_native",
+										encrypted_content: "enc-native",
+									},
+								],
+							},
+						},
+					},
+					finishReason: null,
+				},
+			],
+		};
+		yield {
+			id: "c",
+			created: 1,
+			model: "gpt-x",
+			choices: [
+				{
+					index: 0,
+					delta: { content: "Answer" },
+					finishReason: "stop",
+				},
+			],
+		};
+	}
+
+	const reasoningDone: TestJsonObject[] = [];
+	let completed: TestJsonObject | undefined;
+	for await (const event of canonicalChunksToResponsesEvents(
+		chunks(),
+		renderOpts(),
+	)) {
+		const data = JSON.parse(event.data) as TestJsonObject;
+		if (
+			event.event === "response.output_item.done" &&
+			data.item.type === "reasoning"
+		)
+			reasoningDone.push(data.item);
+		if (event.event === "response.completed") completed = data.response;
+	}
+
+	assert.equal(reasoningDone.length, 1);
+	assert.equal(reasoningDone[0]!.id, "rs_native");
+	assert.equal(reasoningDone[0]!.encrypted_content, "enc-native");
+	assert.deepEqual(reasoningDone[0]!.summary, [
+		{ type: "summary_text", text: "Visible summary" },
+	]);
+	assert.ok(completed);
+	assert.equal(
+		completed.output.filter((item) => item.type === "reasoning").length,
+		1,
+	);
+	const messageFields = completed.output.find(
+		(item) => item.type === "message",
+	)!.provider_specific_fields as TestJsonObject;
+	assert.equal("responses" in (messageFields.openai as TestJsonObject), false);
+});
+
 test("response object: every OpenResponses 2.3 required field is present", () => {
 	const response = canonicalToResponsesResponse(
 		{
