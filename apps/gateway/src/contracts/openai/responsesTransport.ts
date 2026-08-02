@@ -18,6 +18,7 @@ import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 
 import {
+	providerFieldsWithOpenAIReasoningItemId,
 	providerFieldsWithResponsesOutput,
 	providerFieldsWithOpenAIReasoning,
 	openaiReasoningFromProviderFields,
@@ -607,6 +608,10 @@ export async function* responsesEventsToCanonicalChunks(
 				roleSent = true;
 			}
 			delta.reasoning = String(d.delta ?? "");
+			if (typeof d.item_id === "string" && d.item_id.length > 0)
+				delta.providerFields = providerFieldsWithOpenAIReasoningItemId(
+					d.item_id,
+				);
 			yield { ...base(), choices: [{ index: 0, delta, finishReason: null }] };
 			continue;
 		}

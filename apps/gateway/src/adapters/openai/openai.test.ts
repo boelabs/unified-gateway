@@ -325,6 +325,35 @@ test("openai.parseStream: response.* events -> canonical deltas", async () => {
 	assert.equal(total, 3);
 });
 
+test("openai.parseStream: reasoning summary deltas preserve their native item id", async () => {
+	const sse =
+		`event: response.reasoning_summary_text.delta\ndata: {"type":"response.reasoning_summary_text.delta","item_id":"rs_native","delta":"Think"}\n\n` +
+		`event: response.output_item.done\ndata: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_native","summary":[{"type":"summary_text","text":"Think"}],"encrypted_content":"enc-native"}}\n\n` +
+		`event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}\n\n`;
+	const chunks = [];
+	for await (const chunk of openaiAdapter.chat!.parseStream(
+		new Response(sse).body!,
+		ctx,
+	))
+		chunks.push(chunk);
+
+	assert.equal(chunks[0]!.choices[0]!.delta.reasoning, "Think");
+	assert.deepEqual(chunks[0]!.choices[0]!.delta.providerFields, {
+		openai: { responses: { reasoning_item_id: "rs_native" } },
+	});
+	assert.deepEqual(chunks[1]!.choices[0]!.delta.providerFields, {
+		openai: {
+			reasoning: [
+				{
+					encrypted_content: "enc-native",
+					id: "rs_native",
+					summary: [{ type: "summary_text", text: "Think" }],
+				},
+			],
+		},
+	});
+});
+
 test("openai.mapError: 429 -> rate_limit; 400 context_length_exceeded -> context_window", () => {
 	const rl = openaiAdapter.chat!.mapError(
 		{ status: 429, body: { error: { message: "slow" } } },
