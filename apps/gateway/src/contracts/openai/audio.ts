@@ -16,10 +16,12 @@ export const transcriptionFieldsSchema = z
 	.object({
 		model: z.string().min(1),
 		language: z.string().optional(),
+		languages: z.array(z.string().min(1)).min(1).optional(),
+		keywords: z.array(z.string().min(1)).min(1).optional(),
 		prompt: z.string().optional(),
 		temperature: z.number().min(0).max(1).optional(),
 		response_format: z
-			.enum(["json", "text", "srt", "verbose_json", "vtt"])
+			.enum(["diarized_json", "json", "text", "srt", "verbose_json", "vtt"])
 			.default("json"),
 		timestamp_granularities: z.array(z.enum(["word", "segment"])).optional(),
 		include: z.array(z.string()).optional(),
@@ -40,6 +42,8 @@ export function transcriptionToCanonical(
 		responseFormat: fields.response_format,
 		stream: fields.stream ?? false,
 		...(fields.language !== undefined ? { language: fields.language } : {}),
+		...(fields.languages !== undefined ? { languages: fields.languages } : {}),
+		...(fields.keywords !== undefined ? { keywords: fields.keywords } : {}),
 		...(fields.prompt !== undefined ? { prompt: fields.prompt } : {}),
 		...(fields.temperature !== undefined
 			? { temperature: fields.temperature }
@@ -55,6 +59,8 @@ export function transcriptionToCanonical(
 }
 
 function renderUsage(usage: TranscriptionUsage): Record<string, unknown> {
+	if (usage.type === "duration")
+		return { type: "duration", seconds: usage.seconds };
 	const details = usage.inputTokenDetails;
 	return {
 		type: "tokens",
@@ -92,7 +98,7 @@ export function toOpenAITranscriptionResponse(
 ): Record<string, unknown> | string {
 	if (format === "text" || format === "srt" || format === "vtt")
 		return resp.text;
-	if (format === "verbose_json") {
+	if (format === "verbose_json" || format === "diarized_json") {
 		return {
 			task: "transcribe",
 			...(resp.language !== undefined ? { language: resp.language } : {}),
@@ -105,6 +111,7 @@ export function toOpenAITranscriptionResponse(
 	}
 	return {
 		text: resp.text,
+		...(resp.languages !== undefined ? { languages: resp.languages } : {}),
 		...(resp.logprobs !== undefined ? { logprobs: resp.logprobs } : {}),
 		...(resp.usage ? { usage: renderUsage(resp.usage) } : {}),
 	};
@@ -123,6 +130,7 @@ export function toOpenAITranscriptionEvent(
 	return {
 		type: "transcript.text.done",
 		text: event.text,
+		...(event.languages !== undefined ? { languages: event.languages } : {}),
 		...(event.logprobs !== undefined ? { logprobs: event.logprobs } : {}),
 		...(event.usage ? { usage: renderUsage(event.usage) } : {}),
 	};

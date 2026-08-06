@@ -63,7 +63,10 @@ async function loadGlobal(): Promise<EffectiveSettings> {
 				halfOpenProbeSeconds: row.halfOpenProbeSeconds,
 				configurationCooldownSeconds: row.configurationCooldownSeconds,
 				throttleCooldownSeconds: row.throttleCooldownSeconds,
-				executionPolicies: row.executionPolicies ?? DEFAULT_EXECUTION_POLICIES,
+				executionPolicies: {
+					...DEFAULT_EXECUTION_POLICIES,
+					...(row.executionPolicies ?? {}),
+				},
 				retryAfterSeconds: row.retryAfterSeconds,
 			}
 		: DEFAULTS;

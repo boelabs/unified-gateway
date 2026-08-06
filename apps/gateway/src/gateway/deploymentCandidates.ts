@@ -4,6 +4,7 @@ import type { CallType } from "#core/callType.ts";
 import { decryptRecord } from "#db/crypto.ts";
 
 import {
+	liveTranscriptionProfileFor,
 	transcriptionProfileFor,
 	embeddingProfileFor,
 	rerankProfileFor,
@@ -60,6 +61,11 @@ export async function listDeploymentCandidates(
 				continue;
 			if (callType === "videos.generations" && !videoProfileFor(meta)) continue;
 			if (callType === "audio.transcriptions" && !transcriptionProfileFor(meta))
+				continue;
+			if (
+				callType === "audio.transcriptions.live" &&
+				!liveTranscriptionProfileFor(meta)
+			)
 				continue;
 			if (callType === "embeddings" && !embeddingProfileFor(meta)) continue;
 			if (callType === "rerank" && !rerankProfileFor(meta)) continue;

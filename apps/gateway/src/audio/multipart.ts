@@ -32,7 +32,12 @@ const AUDIO_MIME: Record<string, string> = {
 };
 
 /** Multipart fields that arrive as a list (`name[]`). */
-const ARRAY_FIELDS = new Set(["timestamp_granularities", "include"]);
+const ARRAY_FIELDS = new Set([
+	"timestamp_granularities",
+	"include",
+	"languages",
+	"keywords",
+]);
 
 export interface ParsedTranscriptionMultipart {
 	fields: TranscriptionFields;

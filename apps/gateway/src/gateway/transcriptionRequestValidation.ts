@@ -30,6 +30,29 @@ export function assertTranscriptionRequestSupported(
 			`The selected model does not support response_format=${req.responseFormat}.`,
 		);
 	}
+	if (req.language !== undefined && req.languages !== undefined) {
+		unsupported("languages", "language and languages cannot be used together.");
+	}
+	if (req.prompt !== undefined && profile.context?.prompt === false) {
+		unsupported("prompt", "The selected model does not support prompt.");
+	}
+	if (req.language !== undefined && profile.context?.language === false) {
+		unsupported("language", "The selected model does not support language.");
+	}
+	if (req.languages !== undefined && profile.context?.languages !== true) {
+		unsupported("languages", "The selected model does not support languages.");
+	}
+	if (req.keywords !== undefined && profile.context?.keywords !== true) {
+		unsupported("keywords", "The selected model does not support keywords.");
+	}
+	for (const [index, keyword] of (req.keywords ?? []).entries()) {
+		if (/[<>\r\n]/.test(keyword)) {
+			unsupported(
+				`keywords[${index}]`,
+				"Keywords cannot contain <, >, carriage returns, or line feeds.",
+			);
+		}
+	}
 	if (req.stream && !profile.supportsStreaming) {
 		unsupported(
 			"stream",

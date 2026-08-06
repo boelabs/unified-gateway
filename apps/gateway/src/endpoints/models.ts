@@ -91,6 +91,10 @@ function addModalitiesForOperation(
 			input.add("file");
 			output.add("text");
 			break;
+		case "audio.transcribe.live":
+			input.add("audio");
+			output.add("text");
+			break;
 		case "embedding.create":
 			input.add("text");
 			output.add("embedding");
@@ -162,6 +166,9 @@ function publicPricing(metas: ResolvedModelMetadata[]): Record<string, string> {
 		minDefined(pricing.map((p) => p?.cacheWriteCentsPerMTokens)),
 	);
 	const searchUnitCents = minDefined(pricing.map((p) => p?.searchUnitCents));
+	const audioInputCentsPerMinute = minDefined(
+		pricing.map((p) => p?.audioInputCentsPerMinute),
+	);
 	if (prompt !== undefined) result.prompt = prompt;
 	if (completion !== undefined) result.completion = completion;
 	if (cacheRead !== undefined) result.input_cache_read = cacheRead;
@@ -171,6 +178,11 @@ function publicPricing(metas: ResolvedModelMetadata[]): Record<string, string> {
 			searchUnitCents === 0
 				? "0"
 				: (searchUnitCents / 100).toFixed(12).replace(/\.?0+$/, "");
+	if (audioInputCentsPerMinute !== undefined)
+		result.audio_input_per_minute =
+			audioInputCentsPerMinute === 0
+				? "0"
+				: (audioInputCentsPerMinute / 100).toFixed(12).replace(/\.?0+$/, "");
 	return result;
 }
 

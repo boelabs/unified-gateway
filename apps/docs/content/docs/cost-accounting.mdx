@@ -7,8 +7,9 @@ description: "Where pricing comes from, how spend is tracked, and how to query u
 
 Every model's rate is declared in cents-per-1M-tokens in its catalog entry's `pricing`
 (`inputCentsPerMTokens`, `outputCentsPerMTokens`, `cacheReadCentsPerMTokens`, `cacheWriteCentsPerMTokens`)
-and reranking search units use `searchUnitCents`. Token and search-unit components are additive when
-both are configured.
+and reranking search units use `searchUnitCents`. Transcription audio uses
+`audioInputCentsPerMinute`. Token, search-unit, and audio-duration components are additive when more
+than one is configured.
 A deployment's own `pricing` field, if set, **overrides** the catalog rate entirely for that deployment
 — useful for a negotiated rate or a custom model with no catalog entry at all. A model with no pricing
 anywhere (no catalog rate, no override) normally bills as **zero cost**, not an error. Reranking has
@@ -18,7 +19,7 @@ is consumer cost and the upstream value is retained separately for reconciliatio
 
 ## How spend is tracked
 
-On every request with usage (tokens and/or reranking search units actually consumed), the gateway computes the cost from the
+On every request with usage (tokens, reranking search units, and/or accepted input-audio seconds), the gateway computes the cost from the
 resolved pricing and:
 
 - **Redis** is the hot-path counter: virtual-key TPM windows and the running budget total are checked

@@ -20,7 +20,10 @@ const TEXT_MODALITIES = new Set([
 type Pricing = NonNullable<CatalogEntry["pricing"]>;
 type PricingTier = NonNullable<Pricing["tiers"]>[number];
 type PricingField = Exclude<keyof Pricing, "tiers">;
-type TierPricingField = Exclude<PricingField, "searchUnitCents">;
+type TierPricingField = Exclude<
+	PricingField,
+	"searchUnitCents" | "audioInputCentsPerMinute"
+>;
 type TierField = Exclude<keyof VercelModelPricing, "image">;
 
 interface TierDefinition {

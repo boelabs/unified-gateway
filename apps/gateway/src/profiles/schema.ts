@@ -9,6 +9,7 @@ export const pricingSchema = z
 		cacheReadCentsPerMTokens: z.number().nonnegative().optional(),
 		cacheWriteCentsPerMTokens: z.number().nonnegative().optional(),
 		searchUnitCents: z.number().nonnegative().optional(),
+		audioInputCentsPerMinute: z.number().nonnegative().optional(),
 		tiers: z
 			.array(
 				z
@@ -285,11 +286,47 @@ const textGenerateProfileSchema = z
 const transcriptionOperationProfileSchema = z
 	.object({
 		responseFormats: z
-			.array(z.enum(["json", "text", "srt", "verbose_json", "vtt"]))
+			.array(
+				z.enum(["diarized_json", "json", "text", "srt", "verbose_json", "vtt"]),
+			)
 			.min(1),
 		supportsStreaming: z.boolean().optional(),
 		supportsTimestampGranularities: z.boolean().optional(),
+		context: z
+			.object({
+				prompt: z.boolean().optional(),
+				language: z.boolean().optional(),
+				languages: z.boolean().optional(),
+				keywords: z.boolean().optional(),
+			})
+			.strict()
+			.optional(),
+		returnsDetectedLanguages: z.boolean().optional(),
 		maxFileBytes: z.int().positive().optional(),
+	})
+	.strict();
+
+const liveAudioFormatSchema = z.discriminatedUnion("type", [
+	z.object({ type: z.literal("audio/pcm"), rate: z.int().positive() }).strict(),
+	z.object({ type: z.literal("audio/pcmu") }).strict(),
+	z.object({ type: z.literal("audio/pcma") }).strict(),
+]);
+
+const liveTranscriptionOperationProfileSchema = z
+	.object({
+		emission: z.enum(["continuous", "after_commit"]),
+		inputFormats: z.array(liveAudioFormatSchema).min(1),
+		turnDetection: z.array(z.enum(["manual", "server_vad"])).min(1),
+		supportsPrompt: z.boolean().optional(),
+		supportsLanguage: z.boolean().optional(),
+		supportsLanguages: z.boolean().optional(),
+		supportsKeywords: z.boolean().optional(),
+		supportsNoiseReduction: z.boolean().optional(),
+		returnsDetectedLanguages: z.boolean().optional(),
+		delayLevels: z
+			.array(z.enum(["minimal", "low", "medium", "high", "xhigh"]))
+			.min(1)
+			.optional(),
 	})
 	.strict();
 
@@ -419,6 +456,7 @@ export const operationProfilesSchema = z
 		"image.edit": imageOperationProfileSchema.optional(),
 		"video.generate": videoOperationProfileSchema.optional(),
 		"audio.transcribe": transcriptionOperationProfileSchema.optional(),
+		"audio.transcribe.live": liveTranscriptionOperationProfileSchema.optional(),
 		"embedding.create": embeddingOperationProfileSchema.optional(),
 		rerank: rerankOperationProfileSchema.optional(),
 	})

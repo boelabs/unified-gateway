@@ -65,6 +65,25 @@
 				"outputCentsPerMTokens": 0
 			}
 		},
+		"gpt-transcribe": {
+			"operations": {
+				"audio.transcribe": {
+					"responseFormats": ["json"],
+					"supportsStreaming": true,
+					"context": {
+						"prompt": true,
+						"language": false,
+						"languages": true,
+						"keywords": true
+					},
+					"returnsDetectedLanguages": true,
+					"maxFileBytes": 26214400
+				}
+			},
+			"pricing": {
+				"audioInputCentsPerMinute": 0.45
+			}
+		},
 		"gpt-4o-transcribe": {
 			"operations": {
 				"audio.transcribe": {

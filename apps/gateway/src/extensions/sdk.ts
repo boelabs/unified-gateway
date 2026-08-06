@@ -1,3 +1,4 @@
+import type { CanonicalLiveTranscriptionConfig } from "#core/liveTranscription.ts";
 import type { CanonicalTranscriptionStreamEvent } from "#core/audio.ts";
 import type { CanonicalChatStreamChunk } from "#core/canonical.ts";
 import type { CanonicalImageStreamEvent } from "#core/images.ts";
@@ -43,6 +44,7 @@ export type ExtensionCanonicalRequest =
 	| CanonicalImageRequest
 	| CanonicalEmbeddingsRequest
 	| CanonicalTranscriptionRequest
+	| CanonicalLiveTranscriptionConfig
 	| CanonicalRerankRequest;
 
 export type ExtensionCanonicalResponse =

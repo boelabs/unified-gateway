@@ -91,9 +91,10 @@ function pickMaxScore(
 		: weightedRandom(candidates);
 }
 
-function priceScore(
-	candidate: DeploymentCandidate,
-): { basis: "tokens" | "search_units"; value: number } | null {
+function priceScore(candidate: DeploymentCandidate): {
+	basis: "tokens" | "search_units" | "audio_minutes";
+	value: number;
+} | null {
 	const pricing = candidate.meta.pricing;
 	if (!pricing) return null;
 	const input = pricing.inputCentsPerMTokens ?? 0;
@@ -102,10 +103,22 @@ function priceScore(
 		pricing.inputCentsPerMTokens !== undefined ||
 		pricing.outputCentsPerMTokens !== undefined;
 	const hasSearchUnitPricing = pricing.searchUnitCents !== undefined;
-	if (hasTokenPricing === hasSearchUnitPricing) return null;
-	return hasSearchUnitPricing
-		? { basis: "search_units", value: pricing.searchUnitCents! }
-		: { basis: "tokens", value: input + output };
+	const hasAudioPricing = pricing.audioInputCentsPerMinute !== undefined;
+	if (
+		Number(hasTokenPricing) +
+			Number(hasSearchUnitPricing) +
+			Number(hasAudioPricing) !==
+		1
+	)
+		return null;
+	if (hasSearchUnitPricing)
+		return { basis: "search_units", value: pricing.searchUnitCents! };
+	if (hasAudioPricing)
+		return {
+			basis: "audio_minutes",
+			value: pricing.audioInputCentsPerMinute!,
+		};
+	return { basis: "tokens", value: input + output };
 }
 
 function pickByComparablePrice(

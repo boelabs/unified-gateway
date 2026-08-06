@@ -92,6 +92,8 @@ export function makeAzurev1Adapter(
 		| "supportedChatTransports"
 		| "contentInputs"
 		| "embeddings"
+		| "audioTranscriptions"
+		| "liveTranscriptions"
 	>,
 ) {
 	return makeOpenAIStyleAdapter({

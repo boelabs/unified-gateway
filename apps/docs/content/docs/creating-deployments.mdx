@@ -28,7 +28,7 @@ Authorization: Bearer $MASTER_KEY
 | `upstreamModel` | yes | The real id at the provider (catalog key, or the deployment name on Azure). |
 | `credentials` | yes | `{ apiKey, baseUrl?, ... }` depending on the adapter (see table). Encrypted at rest. |
 | `catalogEntry` | custom only | Inline catalog entry for a model **not** present in the catalog. Uses the same shape as `catalog.json`; for catalog models it **must be omitted**. |
-| `pricing` | no | `{ inputCentsPerMTokens?, outputCentsPerMTokens?, cacheReadCentsPerMTokens?, cacheWriteCentsPerMTokens?, searchUnitCents? }`. |
+| `pricing` | no | `{ inputCentsPerMTokens?, outputCentsPerMTokens?, cacheReadCentsPerMTokens?, cacheWriteCentsPerMTokens?, searchUnitCents?, audioInputCentsPerMinute? }`. |
 | `transportOverrides` | no | Per-operation transport override. Defaults are inferred from the adapter. |
 | `label` | no | Human identifier to tell deployments of the same `publicModel` apart (e.g. which API key). Snapshotted into each operation log so you can see *which* deployment served a request. `null` clears it. |
 | `metadata` | no | Free-form operator annotations (`team`, `environment`, key alias, rotation date, notes…). A JSON object up to 16 KiB; stored and returned verbatim. |
@@ -170,25 +170,31 @@ Client: `POST /v1/audio/transcriptions` (multipart, `file` field) with `model=tr
 
 #### Special case: Azure OpenAI
 
-Azure requires the classic deployment-based API for transcriptions (it does not exist on `/openai/v1`).
-It is still created under `azureopenai`; `upstreamModel` is the **deployment name** and `baseUrl` the
-resource endpoint. `apiVersion` is optional (default `2024-06-01`; gpt-4o-transcribe may require a
-more recent one):
+Azure transcription is created under `azureopenai`; `upstreamModel` is the **deployment name** and
+`baseUrl` is either the resource endpoint or its full `/openai/v1` base. The adapter keeps text and
+Realtime on v1 but sends bounded files to Azure's separate, deployment-addressed audio data plane.
+Its documented `2025-04-01-preview` version is the default; set credential `apiVersion` only when the
+Azure resource requires a different audio API version:
 
 ```bash
 curl -X POST $BASE/admin/deployments -H "Authorization: Bearer $MASTER_KEY" -H "content-type: application/json" -d '{
   "publicModel": "transcribe",
   "adapterKey": "azureopenai",
   "upstreamModel": "my-transcribe-deployment",
-  "credentials": {
-    "apiKey": "...",
-    "baseUrl": "https://my-resource.openai.azure.com",
-    "apiVersion": "2024-06-01"
-  }
+	"credentials": {
+		"apiKey": "...",
+		"baseUrl": "https://my-resource.openai.azure.com/openai/v1",
+		"apiVersion": "2025-04-01-preview"
+	}
 }'
 ```
 
 > Since they share `publicModel: "transcribe"`, direct OpenAI and Azure end up in the same pool.
+
+For a live model, register a deployment whose catalog entry exposes `audio.transcribe.live`, then
+connect to `GET /v1/realtime?model=<publicModel>&intent=transcription` with a WebSocket client. Live
+sessions use their own operation profile and never share eligibility with bounded file requests by
+accident.
 
 ### 5) Reranking — OpenRouter and Vercel pool
 

@@ -1,6 +1,6 @@
 ---
 title: "Audio transcriptions"
-description: "POST /v1/audio/transcriptions — the OpenAI Audio contract."
+description: "OpenAI-compatible file and realtime transcription contracts."
 ---
 
 ```bash
@@ -16,20 +16,61 @@ buffered fully in memory — and removed after success, failure, timeout, or cli
 
 ## Fields
 
-`model`, `file`, `language`, `prompt`, `temperature`, `response_format` (`json`, `text`, `srt`,
-`verbose_json`, `vtt`), `timestamp_granularities` (`word`/`segment`, `verbose_json` only), `include`,
-`stream`. Which response formats and whether streaming/timestamp granularities are available is
-declared per model in its `audio.transcribe` catalog profile.
+`model`, `file`, `language`, `languages[]`, `keywords[]`, `prompt`, `temperature`, `response_format`
+(`diarized_json`, `json`, `text`, `srt`, `verbose_json`, `vtt`), `timestamp_granularities`
+(`word`/`segment`, `verbose_json` only), `include`, and `stream`. Array fields are repeated multipart
+parts, not JSON-encoded strings. Which controls, response formats, detected-language output, and
+streaming/timestamp capabilities are available is declared per model in its `audio.transcribe`
+catalog profile.
+
+Do not combine `language` and `languages[]`. Keywords containing `<`, `>`, carriage returns, or line
+feeds are rejected before routing so every compatible provider sees the same valid contract.
 
 ## Response format
 
 Returned as JSON, plain text, or SSE depending on the requested `response_format` and `stream` — not
 always JSON like the other endpoints.
 
+Duration-based usage is normalized alongside token usage, so per-minute catalog pricing participates
+in the same operation, attempt, budget, and cost accounting as every other modality.
+
+## Realtime transcription
+
+Server-side clients connect to:
+
+```text
+wss://gateway.example/v1/realtime?model=live-transcribe&intent=transcription
+Authorization: Bearer <gateway key>
+```
+
+Send OpenAI GA Realtime events such as `session.update`, `input_audio_buffer.append`,
+`input_audio_buffer.commit`, and `input_audio_buffer.clear`. The gateway immediately pins one eligible
+deployment, sends its upstream model in the initial session configuration before accepting audio, and
+keeps that deployment for the full connection. A provider cannot be retried or changed after audio
+starts.
+
+Server events retain provider order and OpenAI event identity (`event_id`, `item_id`, and
+`content_index`). In particular, completion events from separate turns are not reordered; clients use
+`item_id` to reconcile them. Stable session identity, expiration, detected languages, logprobs, and
+per-item transcription failures are preserved.
+
+The gateway endpoint is for trusted server-side WebSocket pipelines. It deliberately does not issue
+upstream `client_secret` values for browser WebRTC clients: doing so would bypass gateway routing,
+accounting, and policy after the secret is handed out.
+
+Live capabilities live under the separate `audio.transcribe.live` catalog operation, including audio
+formats, manual/VAD turn detection, context hints, noise reduction, delay levels, and whether a model
+emits continuously or only after commit. The generic `openaicompatible` adapter implements this wire
+protocol too; a custom catalog entry opts an individual compatible model into the operation without
+adding provider-specific fields to core or advertising support for unrelated models.
+
 ## Azure OpenAI note
 
-Azure requires the classic deployment-based transcription API (it doesn't exist on `/openai/v1`) — the
-adapter constructs that URL internally from your deployment name and resource `baseUrl`. See
+Azure OpenAI splits the transports: bounded files use its documented
+`/openai/deployments/{deployment}/audio/transcriptions?api-version=...` data plane, while compatible
+Realtime deployments connect through `/openai/v1/realtime?intent=transcription`. The adapter accepts
+either the bare resource URL or the full `/openai/v1` base and derives both URLs without probing or
+retrying one protocol as another. See
 [Providers → Azure OpenAI](/docs/providers-azure-openai) and the Azure-specific example in
 [Creating deployments](/docs/creating-deployments#special-case-azure-openai).
 

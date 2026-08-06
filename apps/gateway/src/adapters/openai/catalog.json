@@ -435,6 +435,60 @@
 				}
 			}
 		},
+		"gpt-transcribe": {
+			"operations": {
+				"audio.transcribe": {
+					"responseFormats": ["json"],
+					"supportsStreaming": true,
+					"context": {
+						"prompt": true,
+						"language": false,
+						"languages": true,
+						"keywords": true
+					},
+					"returnsDetectedLanguages": true,
+					"maxFileBytes": 26214400
+				},
+				"audio.transcribe.live": {
+					"emission": "after_commit",
+					"inputFormats": [
+						{ "type": "audio/pcm", "rate": 24000 },
+						{ "type": "audio/pcmu" },
+						{ "type": "audio/pcma" }
+					],
+					"turnDetection": ["manual", "server_vad"],
+					"supportsPrompt": true,
+					"supportsLanguages": true,
+					"supportsKeywords": true,
+					"supportsNoiseReduction": true,
+					"returnsDetectedLanguages": true
+				}
+			},
+			"pricing": {
+				"audioInputCentsPerMinute": 0.45
+			}
+		},
+		"gpt-live-transcribe": {
+			"operations": {
+				"audio.transcribe.live": {
+					"emission": "continuous",
+					"inputFormats": [
+						{ "type": "audio/pcm", "rate": 24000 },
+						{ "type": "audio/pcmu" },
+						{ "type": "audio/pcma" }
+					],
+					"turnDetection": ["manual", "server_vad"],
+					"supportsPrompt": true,
+					"supportsLanguages": true,
+					"supportsKeywords": true,
+					"supportsNoiseReduction": true,
+					"delayLevels": ["minimal", "low", "medium", "high", "xhigh"]
+				}
+			},
+			"pricing": {
+				"audioInputCentsPerMinute": 1.7
+			}
+		},
 		"gpt-4o-transcribe": {
 			"operations": {
 				"audio.transcribe": {

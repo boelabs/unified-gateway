@@ -60,7 +60,8 @@ test("audio.buildRequest: multipart to /audio/transcriptions with file/model/res
 		const r = await openaicompatibleAdapter.audioTranscription!.buildRequest(
 			{
 				...req,
-				language: "es",
+				languages: ["es", "en"],
+				keywords: ["BoeLabs", "AC-42"],
 				timestampGranularities: ["segment"],
 				responseFormat: "verbose_json",
 			},
@@ -73,7 +74,8 @@ test("audio.buildRequest: multipart to /audio/transcriptions with file/model/res
 		const form = r.body as FormData;
 		assert.equal(form.get("model"), "gpt-4o-transcribe");
 		assert.equal(form.get("response_format"), "verbose_json");
-		assert.equal(form.get("language"), "es");
+		assert.deepEqual(form.getAll("languages[]"), ["es", "en"]);
+		assert.deepEqual(form.getAll("keywords[]"), ["BoeLabs", "AC-42"]);
 		assert.equal(form.get("timestamp_granularities[]"), "segment");
 		const file = form.get("file") as File;
 		assert.equal(file.name, "speech.mp3");
@@ -97,7 +99,7 @@ test("audio.buildRequest: extra_body cannot overwrite managed fields", async () 
 	}
 });
 
-test("audio.parseResponse: plain text -> {text}; json -> text+usage; verbose_json -> segments", () => {
+test("audio.parseResponse: preserves detected languages and duration usage", () => {
 	const cap = openaicompatibleAdapter.audioTranscription!;
 	assert.deepEqual(cap.parseResponse("hello world", ctx()), {
 		text: "hello world",
@@ -107,17 +109,16 @@ test("audio.parseResponse: plain text -> {text}; json -> text+usage; verbose_jso
 		{
 			text: "hi",
 			usage: {
-				type: "tokens",
-				input_tokens: 5,
-				output_tokens: 3,
-				total_tokens: 8,
+				type: "duration",
+				seconds: 2.5,
 			},
+			languages: [{ code: "es" }],
 		},
 		ctx(),
 	);
 	assert.equal(json.text, "hi");
-	assert.equal(json.usage?.type, "tokens");
-	assert.equal(json.usage?.totalTokens, 8);
+	assert.deepEqual(json.usage, { type: "duration", seconds: 2.5 });
+	assert.deepEqual(json.languages, [{ code: "es" }]);
 
 	const verbose = cap.parseResponse(
 		{
@@ -133,23 +134,27 @@ test("audio.parseResponse: plain text -> {text}; json -> text+usage; verbose_jso
 	assert.equal(verbose.segments?.length, 1);
 });
 
-test("audio.parseStream: transcript.text.delta/done -> canonical events with usage", async () => {
+test("audio.parseStream: preserves native event order, languages, and duration usage", async () => {
 	const sse =
 		`data: {"type":"transcript.text.delta","delta":"Hel"}\n\n` +
 		`data: {"type":"transcript.text.delta","delta":"lo"}\n\n` +
-		`data: {"type":"transcript.text.done","text":"Hello","usage":{"type":"tokens","input_tokens":4,"output_tokens":2,"total_tokens":6}}\n\n`;
+		`data: {"type":"transcript.text.done","text":"Hello","languages":[{"code":"en"}],"usage":{"type":"duration","seconds":1.25}}\n\n`;
 	const deltas: string[] = [];
 	let doneText: string | undefined;
-	let total: number | undefined;
+	let seconds: number | undefined;
+	let languages: Array<{ code: string }> | undefined;
 	for await (const event of openaicompatibleAdapter.audioTranscription!
 		.parseStream!(new Response(sse).body!, ctx())) {
 		if (event.kind === "delta") deltas.push(event.delta);
 		else {
 			doneText = event.text;
-			total = event.usage?.totalTokens;
+			seconds =
+				event.usage?.type === "duration" ? event.usage.seconds : undefined;
+			languages = event.languages;
 		}
 	}
 	assert.equal(deltas.join(""), "Hello");
 	assert.equal(doneText, "Hello");
-	assert.equal(total, 6);
+	assert.equal(seconds, 1.25);
+	assert.deepEqual(languages, [{ code: "en" }]);
 });

@@ -1,7 +1,9 @@
 import type { AdapterContext, TranscriptionHandler } from "#adapters/types.ts";
 import { type BaseCreds, requireApiKeyCreds } from "#adapters/creds.ts";
+import { recordUnknownAdapterEvent } from "#adapters/diagnostics.ts";
 import { adapterContextDiagnostics } from "#adapters/diagnostics.ts";
 import { mapUpstreamHttpError } from "#adapters/upstreamError.ts";
+import { normalizeAzurev1BaseUrl } from "#adapters/azurev1.ts";
 import { azureRefineBadRequest } from "#adapters/azurev1.ts";
 import { GatewayError } from "#core/errors.ts";
 
@@ -11,68 +13,69 @@ import {
 	buildTranscriptionForm,
 } from "#contracts/openai/audioTransport.ts";
 
-/**
- * Transcription on Azure OpenAI: SPECIAL CASE. The v1 surface (/openai/v1) does NOT serve audio;
- * Azure still requires the classic deployment-based API:
- *   POST {endpoint}/openai/deployments/{deployment}/audio/transcriptions?api-version=...
- * Reuses the OpenAI transport's form/parse (same response shape); only the URL + version change.
- */
-
-interface AzureAudioCreds extends BaseCreds {
-	/** api-version of the classic audio API. gpt-4o-transcribe may require a more recent one. */
+interface AzureAudioCredentials extends BaseCreds {
+	/** Azure's versioned image and audio data-plane API. */
 	apiVersion?: string;
 }
 
-const DEFAULT_API_VERSION = "2024-06-01";
+/** Current Azure image/audio data-plane version documented by Microsoft. */
+const DEFAULT_AUDIO_API_VERSION = "2025-04-01-preview";
 
-/** Resource endpoint (origin) from the baseUrl (accepts the resource or .../openai/v1). */
-function resourceEndpoint(baseUrl: string | undefined, label: string): string {
+function resourceOrigin(baseUrl: string | undefined, label: string): string {
 	if (!baseUrl)
 		throw new GatewayError({
 			class: "bad_request",
 			message: `${label}: missing 'baseUrl' in credentials`,
 		});
-	let url: URL;
-	try {
-		url = new URL(baseUrl);
-	} catch {
-		throw new GatewayError({
-			class: "bad_request",
-			message: `${label}: credentials.baseUrl must be a valid URL`,
-		});
-	}
-	if (url.protocol !== "https:") {
-		throw new GatewayError({
-			class: "bad_request",
-			message: `${label}: credentials.baseUrl must use HTTPS`,
-		});
-	}
-	return url.origin;
+	return new URL(normalizeAzurev1BaseUrl(baseUrl)).origin;
 }
 
+/**
+ * Azure's file-audio data plane remains deployment-addressed even though text, embeddings, and
+ * Realtime use `/openai/v1`. This is an explicit provider transport, not a retry fallback: one
+ * canonical request produces one upstream request at the endpoint Microsoft documents for audio.
+ */
 export function makeAzureTranscriptionHandler(
 	label: string,
 ): TranscriptionHandler {
-	function mapError(err: unknown): GatewayError {
-		return mapUpstreamHttpError(err, {
+	function mapError(error: unknown): GatewayError {
+		return mapUpstreamHttpError(error, {
 			label,
 			refineBadRequest: azureRefineBadRequest,
 		});
 	}
+
 	return {
-		async buildRequest(req, ctx: AdapterContext) {
-			const c = requireApiKeyCreds<AzureAudioCreds>(ctx.credentials, label);
-			const resource = resourceEndpoint(c.baseUrl, label);
-			const version = c.apiVersion ?? DEFAULT_API_VERSION;
+		async buildRequest(request, ctx: AdapterContext) {
+			const credentials = requireApiKeyCreds<AzureAudioCredentials>(
+				ctx.credentials,
+				label,
+			);
+			const apiVersion = credentials.apiVersion ?? DEFAULT_AUDIO_API_VERSION;
+			if (typeof apiVersion !== "string" || apiVersion.trim().length === 0)
+				throw new GatewayError({
+					class: "bad_request",
+					message: `${label}: credentials.apiVersion must be a non-empty string`,
+				});
+			const origin = resourceOrigin(credentials.baseUrl, label);
 			const deployment = encodeURIComponent(ctx.upstreamModel);
+			const url = new URL(
+				`/openai/deployments/${deployment}/audio/transcriptions`,
+				origin,
+			);
+			url.searchParams.set("api-version", apiVersion);
+			const form = await buildTranscriptionForm(request, ctx.upstreamModel);
+			// Azure addresses the deployment in the URL; unlike OpenAI's v1 endpoint, it does not use
+			// the multipart model field.
+			form.delete("model");
 			return {
 				method: "POST",
-				url: `${resource}/openai/deployments/${deployment}/audio/transcriptions?api-version=${version}`,
-				// No content-type: FormData sets the multipart boundary. The deployment goes in the URL.
-				headers: { "api-key": c.apiKey, ...(c.headers ?? {}) },
-				body: await buildTranscriptionForm(req, ctx.upstreamModel, {
-					includeModel: false,
-				}),
+				url: url.toString(),
+				headers: {
+					"api-key": credentials.apiKey,
+					...(credentials.headers ?? {}),
+				},
+				body: form,
 			};
 		},
 		parseResponse(raw) {
@@ -80,6 +83,8 @@ export function makeAzureTranscriptionHandler(
 		},
 		parseStream(stream, ctx) {
 			return parseTranscriptionStream(stream, {
+				onUnknownEvent: (type) =>
+					recordUnknownAdapterEvent(adapterContextDiagnostics(ctx), type),
 				onTransportTerminator: (terminator) => {
 					adapterContextDiagnostics(ctx).transportTerminator = terminator;
 				},

@@ -30,6 +30,7 @@ const OPERATION_IDS = new Set<keyof OperationProfiles>([
 	"image.edit",
 	"video.generate",
 	"audio.transcribe",
+	"audio.transcribe.live",
 	"embedding.create",
 	"rerank",
 ]);
@@ -105,6 +106,7 @@ function validatePricing(value: unknown, path: string): void {
 		"cacheReadCentsPerMTokens",
 		"cacheWriteCentsPerMTokens",
 		"searchUnitCents",
+		"audioInputCentsPerMinute",
 	]) {
 		if (value[key] !== undefined) assertNumber(value[key], `${path}.${key}`);
 	}

@@ -102,6 +102,13 @@ test("price-based compares search-unit rates when every candidate uses that basi
 	assert.equal(pickDeployment("price-based", c, new Map()).row.id, "b");
 });
 
+test("price-based compares audio-minute rates when every candidate uses that basis", () => {
+	const c = [cand("a"), cand("b")];
+	c[0]!.meta.pricing = { audioInputCentsPerMinute: 1.7 };
+	c[1]!.meta.pricing = { audioInputCentsPerMinute: 0.45 };
+	assert.equal(pickDeployment("price-based", c, new Map()).row.id, "b");
+});
+
 test("price-based never falsely compares token pricing with search-unit pricing", () => {
 	const c = [cand("tokens"), cand("search")];
 	c[0]!.meta.pricing = { inputCentsPerMTokens: 1 };

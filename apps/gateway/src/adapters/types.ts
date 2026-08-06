@@ -19,6 +19,11 @@ import type {
 } from "#core/videos.ts";
 
 import type {
+	CanonicalLiveTranscriptionServerEvent,
+	CanonicalLiveTranscriptionClientEvent,
+} from "#core/liveTranscription.ts";
+
+import type {
 	CanonicalChatStreamChunk,
 	CanonicalChatResponse,
 	CanonicalChatRequest,
@@ -210,6 +215,18 @@ export interface TranscriptionHandler {
 	mapError(err: unknown, ctx: AdapterContext): GatewayError;
 }
 
+export interface LiveTranscriptionSession {
+	send(event: CanonicalLiveTranscriptionClientEvent): Promise<void>;
+	events: AsyncIterable<CanonicalLiveTranscriptionServerEvent>;
+	close(code?: number, reason?: string): void;
+	readonly closed: boolean;
+}
+
+export interface LiveTranscriptionHandler {
+	connect(ctx: AdapterContext): Promise<LiveTranscriptionSession>;
+	mapError(err: unknown, ctx: AdapterContext): GatewayError;
+}
+
 /** An adapter's canonical embeddings handler. No streaming. */
 export interface EmbeddingsHandler {
 	buildRequest(
@@ -279,6 +296,7 @@ export interface Adapter {
 	imageEdit?: ImageHandler;
 	videoGeneration?: VideoHandler;
 	audioTranscription?: TranscriptionHandler;
+	liveTranscription?: LiveTranscriptionHandler;
 	embeddings?: EmbeddingsHandler;
 	rerank?: RerankHandler;
 	/** Upstream transports per CallType. */

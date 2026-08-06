@@ -14,13 +14,16 @@ description: "Adapter key azureopenai. baseUrl rules, deployment naming, and qui
 
 - **Credentials**: `apiKey`, `baseUrl`.
 - **`baseUrl`** must be HTTPS, and can be either the bare resource endpoint
-  (`https://my-resource.openai.azure.com`) or the full `/openai/v1` base. **Legacy
-  `/openai/deployments/...` URLs and `api-version` query parameters are rejected** — this adapter only
-  speaks Azure's v1 API surface.
+  (`https://my-resource.openai.azure.com`) or the full `/openai/v1` base. Do not put a deployment path
+  or query string in it; the adapter builds each provider transport URL itself.
+- **File-audio API version**: optional credential `apiVersion`, default `2025-04-01-preview`. This
+  applies only to Azure's versioned image/audio data plane. Text, embeddings, and Realtime remain on
+  `/openai/v1`.
 - **Your Azure deployment name must equal the catalog model id** (`upstreamModel`) — Azure resolves the
   model by deployment name, not by a separate model parameter.
-- **Default transport**: Responses API for text, `embeddings` for embeddings. No native image transport
-  today.
+- **Default transport**: Responses API for text, v1 `embeddings`, the deployment-addressed
+  `/audio/transcriptions?api-version=...` Azure data plane for bounded files, and v1
+  `/realtime?intent=transcription` for compatible live deployments. No native image transport today.
 - Azure OpenAI and [Azure Foundry](/docs/providers-azure-foundry) are two independent adapters and
   catalogs, even though both live under the Azure umbrella — use this one for models you deploy through
   Azure OpenAI resources specifically.
