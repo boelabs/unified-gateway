@@ -7,6 +7,8 @@ import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 
 import {
+	openaiResponsesStreamOutputFromProviderFields,
+	openaiResponsesStreamEventFromProviderFields,
 	openaiReasoningItemIdFromProviderFields,
 	providerSpecificFieldsFromExtraContent,
 	extraContentFromProviderSpecificFields,
@@ -931,7 +933,8 @@ function sse(
 
 /**
  * Converts the canonical chunk stream into the OpenResponses SSE event sequence.
- * Streams text and reasoning summaries; function_calls are emitted as complete items.
+ * Native Responses item events retain provider order and identity. Other provider streams are
+ * synthesized from canonical text, reasoning, and tool-call deltas.
  */
 export async function* canonicalChunksToResponsesEvents(
 	chunks: AsyncIterable<CanonicalChatStreamChunk>,
@@ -977,6 +980,9 @@ export async function* canonicalChunksToResponsesEvents(
 	const reasoningState: OpenAIReasoningStateItem[] = [];
 	const renderedReasoningState = new Set<OpenAIReasoningStateItem>();
 	const nativeOutput: Record<string, unknown>[] = [];
+	const nativeStreamOutputItems = new Map<number, Record<string, unknown>>();
+	let nativeStreamOutput: Record<string, unknown>[] | undefined;
+	let nativeResponsesStream = false;
 	let messageProviderFields: Record<string, unknown> | undefined;
 	const appendReasoningState = (
 		fields: Record<string, unknown> | undefined,
@@ -1069,6 +1075,39 @@ export async function* canonicalChunksToResponsesEvents(
 		if (choice.finishReason) finish = choice.finishReason;
 
 		const delta = choice.delta;
+		const streamOutput = openaiResponsesStreamOutputFromProviderFields(
+			delta.providerFields,
+		);
+		if (streamOutput !== undefined) nativeStreamOutput = streamOutput;
+		const streamEvent = openaiResponsesStreamEventFromProviderFields(
+			delta.providerFields,
+		);
+		if (streamEvent !== undefined) {
+			nativeResponsesStream = true;
+			yield sse(streamEvent.type, next(), streamEvent.data);
+			if (streamEvent.type === "response.output_item.done") {
+				const outputIndex = streamEvent.data.output_index;
+				const item = streamEvent.data.item;
+				if (
+					typeof outputIndex === "number" &&
+					Number.isInteger(outputIndex) &&
+					outputIndex >= 0 &&
+					item !== null &&
+					typeof item === "object" &&
+					!Array.isArray(item)
+				)
+					nativeStreamOutputItems.set(
+						outputIndex,
+						structuredClone(item as Record<string, unknown>),
+					);
+			}
+			if (delta.content) content += delta.content;
+			if (delta.reasoning) reasoning += delta.reasoning;
+			continue;
+		}
+		// A native Responses terminal chunk carries the authoritative output but is rendered with a
+		// gateway-owned response envelope below. Do not fall back to heuristic item synthesis.
+		if (nativeResponsesStream) continue;
 		if (delta.reasoning) {
 			if (!reasoningStreamed && !messageStarted) {
 				rsId =
@@ -1155,6 +1194,45 @@ export async function* canonicalChunksToResponsesEvents(
 			if (tc.extraContent !== undefined) cur.extraContent = tc.extraContent;
 			toolCalls.set(tc.index, cur);
 		}
+	}
+
+	if (nativeResponsesStream) {
+		const orderedOutput =
+			nativeStreamOutput ??
+			[...nativeStreamOutputItems.entries()]
+				.sort(([left], [right]) => left - right)
+				.map(([, item]) => item);
+		let outputText = "";
+		for (const item of orderedOutput) {
+			if (item.type !== "message" || !Array.isArray(item.content)) continue;
+			for (const part of item.content) {
+				if (
+					part !== null &&
+					typeof part === "object" &&
+					!Array.isArray(part) &&
+					(part as Record<string, unknown>).type === "output_text" &&
+					typeof (part as Record<string, unknown>).text === "string"
+				)
+					outputText += (part as Record<string, unknown>).text as string;
+			}
+		}
+		const { status, incomplete } = statusFor(finish);
+		const finalResponse = buildResponse(opts, {
+			id: responseId,
+			createdAt,
+			model,
+			status,
+			incomplete,
+			output: orderedOutput,
+			usage,
+			outputText: outputText || content,
+		});
+		yield sse(
+			status === "incomplete" ? "response.incomplete" : "response.completed",
+			next(),
+			{ response: finalResponse },
+		);
+		return;
 	}
 
 	if (reasoningOpen) yield* reasoningSummaryDone();

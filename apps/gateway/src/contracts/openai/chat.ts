@@ -8,6 +8,7 @@ import * as z from "zod/v4";
 import {
 	providerSpecificFieldsFromExtraContent,
 	extraContentFromProviderSpecificFields,
+	withoutOpenAIResponsesStreamMetadata,
 	providerSpecificFieldsFromToolCalls,
 	openaiReasoningFromProviderFields,
 	mergeProviderExtraContent,
@@ -674,9 +675,11 @@ export function toOpenAIChatResponse(
 		created: resp.created,
 		model: resp.model,
 		choices: resp.choices.map((c) => {
-			const providerSpecificFields = mergeProviderFields(
-				providerSpecificFieldsFromToolCalls(c.message.toolCalls),
-				c.message.providerFields,
+			const providerSpecificFields = withoutOpenAIResponsesStreamMetadata(
+				mergeProviderFields(
+					providerSpecificFieldsFromToolCalls(c.message.toolCalls),
+					c.message.providerFields,
+				),
 			);
 			return {
 				index: c.index,
@@ -727,48 +730,53 @@ export function toOpenAIChatChunk(
 		object: "chat.completion.chunk",
 		created: chunk.created,
 		model: chunk.model,
-		choices: chunk.choices.map((c) => ({
-			index: c.index,
-			finish_reason: c.finishReason,
-			...(c.logprobs !== undefined ? { logprobs: c.logprobs } : {}),
-			delta: {
-				...(c.delta.role !== undefined ? { role: c.delta.role } : {}),
-				// OpenAI: the first delta (with role) carries content:"" and refusal:null.
-				...(c.delta.content !== undefined
-					? { content: c.delta.content }
-					: c.delta.role !== undefined
-						? { content: "" }
+		choices: chunk.choices.map((c) => {
+			const providerSpecificFields = withoutOpenAIResponsesStreamMetadata(
+				c.delta.providerFields,
+			);
+			return {
+				index: c.index,
+				finish_reason: c.finishReason,
+				...(c.logprobs !== undefined ? { logprobs: c.logprobs } : {}),
+				delta: {
+					...(c.delta.role !== undefined ? { role: c.delta.role } : {}),
+					// OpenAI: the first delta (with role) carries content:"" and refusal:null.
+					...(c.delta.content !== undefined
+						? { content: c.delta.content }
+						: c.delta.role !== undefined
+							? { content: "" }
+							: {}),
+					...(c.delta.reasoning !== undefined
+						? { reasoning: c.delta.reasoning }
 						: {}),
-				...(c.delta.reasoning !== undefined
-					? { reasoning: c.delta.reasoning }
-					: {}),
-				...(c.delta.refusal !== undefined
-					? { refusal: c.delta.refusal }
-					: c.delta.role !== undefined
-						? { refusal: null }
+					...(c.delta.refusal !== undefined
+						? { refusal: c.delta.refusal }
+						: c.delta.role !== undefined
+							? { refusal: null }
+							: {}),
+					...(c.delta.audio !== undefined ? { audio: c.delta.audio } : {}),
+					...(c.delta.annotations !== undefined
+						? { annotations: c.delta.annotations }
 						: {}),
-				...(c.delta.audio !== undefined ? { audio: c.delta.audio } : {}),
-				...(c.delta.annotations !== undefined
-					? { annotations: c.delta.annotations }
-					: {}),
-				...(c.delta.toolCalls
-					? {
-							tool_calls: c.delta.toolCalls.map((tc) =>
-								renderChunkToolCall({
-									index: tc.index,
-									id: tc.id,
-									name: tc.name,
-									arguments: tc.arguments,
-									extraContent: tc.extraContent,
-								}),
-							),
-						}
-					: {}),
-				...(c.delta.providerFields !== undefined
-					? { provider_specific_fields: c.delta.providerFields }
-					: {}),
-			},
-		})),
+					...(c.delta.toolCalls
+						? {
+								tool_calls: c.delta.toolCalls.map((tc) =>
+									renderChunkToolCall({
+										index: tc.index,
+										id: tc.id,
+										name: tc.name,
+										arguments: tc.arguments,
+										extraContent: tc.extraContent,
+									}),
+								),
+							}
+						: {}),
+					...(providerSpecificFields !== undefined
+						? { provider_specific_fields: providerSpecificFields }
+						: {}),
+				},
+			};
+		}),
 		...(chunk.usage !== undefined
 			? { usage: chunk.usage ? toOpenAIUsage(chunk.usage) : null }
 			: {}),

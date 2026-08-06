@@ -18,6 +18,8 @@ import type { Usage } from "#core/usage.ts";
 import { randomUUID } from "node:crypto";
 
 import {
+	providerFieldsWithOpenAIResponsesStreamOutput,
+	providerFieldsWithOpenAIResponsesStreamEvent,
 	providerFieldsWithOpenAIReasoningItemId,
 	providerFieldsWithResponsesOutput,
 	providerFieldsWithOpenAIReasoning,
@@ -587,7 +589,9 @@ export async function* responsesEventsToCanonicalChunks(
 		}
 
 		if (type === "response.output_text.delta") {
-			const delta: CanonicalChatStreamChunk["choices"][number]["delta"] = {};
+			const delta: CanonicalChatStreamChunk["choices"][number]["delta"] = {
+				providerFields: providerFieldsWithOpenAIResponsesStreamEvent(type, d),
+			};
 			if (!roleSent) {
 				delta.role = "assistant";
 				roleSent = true;
@@ -603,46 +607,47 @@ export async function* responsesEventsToCanonicalChunks(
 			type === "response.reasoning.delta"
 		) {
 			const delta: CanonicalChatStreamChunk["choices"][number]["delta"] = {};
+			delta.providerFields = providerFieldsWithOpenAIResponsesStreamEvent(
+				type,
+				d,
+			);
 			if (!roleSent) {
 				delta.role = "assistant";
 				roleSent = true;
 			}
 			delta.reasoning = String(d.delta ?? "");
 			if (typeof d.item_id === "string" && d.item_id.length > 0)
-				delta.providerFields = providerFieldsWithOpenAIReasoningItemId(
-					d.item_id,
-				);
+				delta.providerFields = mergeProviderFields(
+					delta.providerFields,
+					providerFieldsWithOpenAIReasoningItemId(d.item_id),
+				)!;
 			yield { ...base(), choices: [{ index: 0, delta, finishReason: null }] };
 			continue;
 		}
 
 		if (type === "response.output_item.added") {
 			const item = d.item as RWOutputItem | undefined;
+			const delta: CanonicalChatStreamChunk["choices"][number]["delta"] = {
+				providerFields: providerFieldsWithOpenAIResponsesStreamEvent(type, d),
+			};
 			if (item?.type === "function_call") {
 				const idx = Number(d.output_index ?? 0);
-				yield {
-					...base(),
-					choices: [
-						{
-							index: 0,
-							delta: {
-								toolCalls: [
-									{
-										index: idx,
-										id: item.call_id ?? "",
-										name: item.name ?? "",
-										arguments: "",
-										...(item.extra_content !== undefined
-											? { extraContent: item.extra_content }
-											: {}),
-									},
-								],
-							},
-							finishReason: null,
-						},
-					],
-				};
+				delta.toolCalls = [
+					{
+						index: idx,
+						id: item.call_id ?? "",
+						name: item.name ?? "",
+						arguments: "",
+						...(item.extra_content !== undefined
+							? { extraContent: item.extra_content }
+							: {}),
+					},
+				];
 			}
+			yield {
+				...base(),
+				choices: [{ index: 0, delta, finishReason: null }],
+			};
 			continue;
 		}
 
@@ -655,6 +660,10 @@ export async function* responsesEventsToCanonicalChunks(
 						index: 0,
 						delta: {
 							toolCalls: [{ index: idx, arguments: String(d.delta ?? "") }],
+							providerFields: providerFieldsWithOpenAIResponsesStreamEvent(
+								type,
+								d,
+							),
 						},
 						finishReason: null,
 					},
@@ -667,23 +676,19 @@ export async function* responsesEventsToCanonicalChunks(
 			const item = d.item as RWOutputItem | undefined;
 			const state =
 				item !== undefined ? reasoningStateFromItem(item) : undefined;
+			let providerFields = providerFieldsWithOpenAIResponsesStreamEvent(
+				type,
+				d,
+			);
 			if (
 				state !== undefined &&
 				(state.id === undefined || !reasoningStateSeen.has(state.id))
 			) {
 				if (state.id !== undefined) reasoningStateSeen.add(state.id);
-				yield {
-					...base(),
-					choices: [
-						{
-							index: 0,
-							delta: {
-								providerFields: providerFieldsWithOpenAIReasoning([state]),
-							},
-							finishReason: null,
-						},
-					],
-				};
+				providerFields = mergeProviderFields(
+					providerFields,
+					providerFieldsWithOpenAIReasoning([state]),
+				)!;
 			}
 			if (
 				item !== undefined &&
@@ -691,21 +696,17 @@ export async function* responsesEventsToCanonicalChunks(
 				item.type !== "reasoning" &&
 				item.type !== "function_call"
 			) {
-				yield {
-					...base(),
-					choices: [
-						{
-							index: 0,
-							delta: {
-								providerFields: providerFieldsWithResponsesOutput([
-									item as unknown as Record<string, unknown>,
-								]),
-							},
-							finishReason: null,
-						},
-					],
-				};
+				providerFields = mergeProviderFields(
+					providerFields,
+					providerFieldsWithResponsesOutput([
+						item as unknown as Record<string, unknown>,
+					]),
+				)!;
 			}
+			yield {
+				...base(),
+				choices: [{ index: 0, delta: { providerFields }, finishReason: null }],
+			};
 			continue;
 		}
 
@@ -748,13 +749,41 @@ export async function* responsesEventsToCanonicalChunks(
 			);
 			yield {
 				...base(),
-				choices: [{ index: 0, delta: {}, finishReason }],
+				choices: [
+					{
+						index: 0,
+						delta: {
+							providerFields: providerFieldsWithOpenAIResponsesStreamOutput(
+								(r.output ?? []) as unknown as Record<string, unknown>[],
+							),
+						},
+						finishReason,
+					},
+				],
 				usage: mapUsage(r.usage),
 			};
 			continue;
 		}
 
-		options?.onUnknownEvent?.(type ?? "missing_type");
-		yield { ...base(), choices: [] };
+		if (type?.startsWith("response.") && type !== "response.queued") {
+			yield {
+				...base(),
+				choices: [
+					{
+						index: 0,
+						delta: {
+							providerFields: providerFieldsWithOpenAIResponsesStreamEvent(
+								type,
+								d,
+							),
+						},
+						finishReason: null,
+					},
+				],
+			};
+		} else {
+			options?.onUnknownEvent?.(type ?? "missing_type");
+			yield { ...base(), choices: [] };
+		}
 	}
 }

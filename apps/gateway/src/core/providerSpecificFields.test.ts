@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+	providerFieldsWithOpenAIResponsesStreamEvent,
+	openaiResponsesStreamEventFromProviderFields,
 	extraContentFromProviderSpecificFields,
 	providerSpecificFieldsFromExtraContent,
+	withoutOpenAIResponsesStreamMetadata,
 	withoutOpenAIResponsesReasoningState,
 	providerSpecificFieldsFromToolCalls,
 	providerFieldsWithOpenAIReasoning,
@@ -174,4 +177,30 @@ test("openai reasoning state: native output rendering removes duplicate message 
 		}),
 		undefined,
 	);
+});
+
+test("openai responses stream metadata: round-trips internally and never reaches messages", () => {
+	const fields = mergeProviderExtraContent(
+		providerFieldsWithOpenAIResponsesStreamEvent("response.output_item.added", {
+			type: "response.output_item.added",
+			sequence_number: 41,
+			output_index: 0,
+			item: { type: "message", id: "msg_1" },
+		}),
+		{
+			openai: {
+				responses: { stream_output: [{ type: "message", id: "msg_1" }] },
+				other: "kept",
+			},
+			google: { thought_signature: "sig-a" },
+		},
+	);
+	assert.deepEqual(openaiResponsesStreamEventFromProviderFields(fields), {
+		type: "response.output_item.added",
+		data: { output_index: 0, item: { type: "message", id: "msg_1" } },
+	});
+	assert.deepEqual(withoutOpenAIResponsesStreamMetadata(fields), {
+		openai: { other: "kept" },
+		google: { thought_signature: "sig-a" },
+	});
 });

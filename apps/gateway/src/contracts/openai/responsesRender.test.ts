@@ -1227,6 +1227,176 @@ test("responses transport->edge: Azure state-only reasoning stays before the fin
 	);
 });
 
+test("responses transport->edge: native item lifecycle and output indexes pass through unchanged", async () => {
+	const functionCall = {
+		type: "function_call",
+		id: "fc_native",
+		call_id: "call_native",
+		name: "lookup",
+		arguments: "{}",
+		status: "completed",
+	};
+	const reasoningItem = {
+		type: "reasoning",
+		id: "rs_native",
+		summary: [],
+		encrypted_content: "enc-native",
+	};
+	const messageItem = {
+		type: "message",
+		id: "msg_native",
+		status: "completed",
+		role: "assistant",
+		content: [{ type: "output_text", text: "Done", annotations: [] }],
+	};
+	const upstream = [
+		{
+			type: "response.created",
+			data: { response: { id: "resp_native", model: "gpt-native" } },
+		},
+		{
+			type: "response.output_item.added",
+			data: {
+				output_index: 0,
+				item: { ...functionCall, status: "in_progress", arguments: "" },
+			},
+		},
+		{
+			type: "response.function_call_arguments.delta",
+			data: { output_index: 0, item_id: "fc_native", delta: "{}" },
+		},
+		{
+			type: "response.function_call_arguments.done",
+			data: {
+				output_index: 0,
+				item_id: "fc_native",
+				name: "lookup",
+				arguments: "{}",
+			},
+		},
+		{
+			type: "response.output_item.done",
+			data: { output_index: 0, item: functionCall },
+		},
+		{
+			type: "response.output_item.added",
+			data: {
+				output_index: 1,
+				item: { type: "reasoning", id: "rs_native", summary: [] },
+			},
+		},
+		{
+			type: "response.output_item.done",
+			data: { output_index: 1, item: reasoningItem },
+		},
+		{
+			type: "response.output_item.added",
+			data: {
+				output_index: 2,
+				item: { ...messageItem, status: "in_progress", content: [] },
+			},
+		},
+		{
+			type: "response.content_part.added",
+			data: {
+				output_index: 2,
+				content_index: 0,
+				item_id: "msg_native",
+				part: { type: "output_text", text: "", annotations: [] },
+			},
+		},
+		{
+			type: "response.output_text.delta",
+			data: {
+				output_index: 2,
+				content_index: 0,
+				item_id: "msg_native",
+				delta: "Done",
+			},
+		},
+		{
+			type: "response.output_text.done",
+			data: {
+				output_index: 2,
+				content_index: 0,
+				item_id: "msg_native",
+				text: "Done",
+			},
+		},
+		{
+			type: "response.content_part.done",
+			data: {
+				output_index: 2,
+				content_index: 0,
+				item_id: "msg_native",
+				part: { type: "output_text", text: "Done", annotations: [] },
+			},
+		},
+		{
+			type: "response.output_item.done",
+			data: { output_index: 2, item: messageItem },
+		},
+		{
+			type: "response.completed",
+			data: {
+				response: {
+					id: "resp_native",
+					model: "gpt-native",
+					status: "completed",
+					output: [functionCall, reasoningItem, messageItem],
+					usage: {
+						input_tokens: 1,
+						output_tokens: 2,
+						total_tokens: 3,
+					},
+				},
+			},
+		},
+	];
+	async function* upstreamEvents(): AsyncGenerator<SSEEvent> {
+		for (const event of upstream)
+			yield {
+				event: event.type,
+				data: JSON.stringify({ type: event.type, ...event.data }),
+			};
+	}
+
+	const observed: TestJsonObject[] = [];
+	for await (const event of canonicalChunksToResponsesEvents(
+		responsesEventsToCanonicalChunks(upstreamEvents()),
+		renderOpts(),
+	))
+		observed.push(JSON.parse(event.data) as TestJsonObject);
+
+	assert.deepEqual(
+		observed.slice(2, -1).map((event) => event.type),
+		upstream.slice(1, -1).map((event) => event.type),
+	);
+	assert.deepEqual(
+		observed.map((event) => event.sequence_number),
+		observed.map((_, index) => index),
+	);
+	assert.deepEqual(
+		observed
+			.filter((event) => event.type === "response.output_item.added")
+			.map((event) => [event.output_index, event.item.type, event.item.id]),
+		[
+			[0, "function_call", "fc_native"],
+			[1, "reasoning", "rs_native"],
+			[2, "message", "msg_native"],
+		],
+	);
+	const completed = observed.at(-1)!.response;
+	assert.deepEqual(
+		completed.output.map((item) => [item.type, item.id]),
+		[
+			["function_call", "fc_native"],
+			["reasoning", "rs_native"],
+			["message", "msg_native"],
+		],
+	);
+});
+
 test("stream->events: native reasoning identity merges visible summary and encrypted state", async () => {
 	async function* chunks(): AsyncGenerator<CanonicalChatStreamChunk> {
 		yield {
