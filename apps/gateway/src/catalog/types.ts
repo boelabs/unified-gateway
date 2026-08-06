@@ -1,3 +1,4 @@
+import type { LiveTranscriptionProfile } from "#core/liveTranscription.ts";
 import type { TextCapabilities, ReasoningSpec } from "#core/reasoning.ts";
 import type { OperationProfiles } from "#profiles/types.ts";
 import type { EmbeddingProfile } from "#core/embeddings.ts";
@@ -68,6 +69,14 @@ export function transcriptionProfileFor(
 ): TranscriptionProfile | undefined {
 	return meta.operations?.["audio.transcribe"] as
 		| TranscriptionProfile
+		| undefined;
+}
+
+export function liveTranscriptionProfileFor(
+	meta: ResolvedModelMetadata,
+): LiveTranscriptionProfile | undefined {
+	return meta.operations?.["audio.transcribe.live"] as
+		| LiveTranscriptionProfile
 		| undefined;
 }
 

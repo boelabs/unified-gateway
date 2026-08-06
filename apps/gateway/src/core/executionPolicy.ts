@@ -52,6 +52,10 @@ export const DEFAULT_EXECUTION_POLICIES: ExecutionPolicies = {
 		json: policy(60_000, null, null, 180_000, 900_000, 2),
 		stream: policy(60_000, 60_000, null, 180_000, 900_000, 2),
 	},
+	"audio.transcriptions.live": {
+		json: policy(30_000, null, null, 30_000, 3_600_000, 3),
+		stream: policy(30_000, 120_000, null, 30_000, 3_600_000, 3),
+	},
 	embeddings: {
 		json: policy(30_000, null, null, 60_000, 60_000, 3),
 		stream: policy(30_000, null, null, 60_000, 60_000, 3),

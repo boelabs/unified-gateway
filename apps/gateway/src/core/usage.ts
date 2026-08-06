@@ -25,11 +25,17 @@ export interface Usage {
 	reasoningTokens?: number;
 	/** Provider-reported reranking search units. Independent from token counters. */
 	searchUnits?: number;
+	/** Accepted input-audio duration. Independent from token counters. */
+	inputAudioSeconds?: number;
 	/** Upstream-reported request cost in USD cents, used only when configured pricing is absent. */
 	providerCostCents?: number;
 }
 
 /** Does the usage satisfy the invariant total = prompt + completion? (helper for tests/dev). */
 export function isUsageConsistent(u: Usage): boolean {
-	return u.totalTokens === u.promptTokens + u.completionTokens;
+	return (
+		u.totalTokens === u.promptTokens + u.completionTokens &&
+		(u.inputAudioSeconds === undefined ||
+			(Number.isFinite(u.inputAudioSeconds) && u.inputAudioSeconds >= 0))
+	);
 }

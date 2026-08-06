@@ -141,6 +141,37 @@ export const env = createEnv({
 			.int()
 			.positive()
 			.default(64),
+		LIVE_TRANSCRIPTION_MAX_CONNECTIONS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(1000),
+		LIVE_TRANSCRIPTION_MAX_CONNECTIONS_PER_KEY: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(20),
+		LIVE_TRANSCRIPTION_MAX_SESSION_MS: z.coerce
+			.number()
+			.int()
+			.positive()
+			.max(3_600_000)
+			.default(3_600_000),
+		LIVE_TRANSCRIPTION_MAX_EVENT_BYTES: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(4_194_304),
+		LIVE_TRANSCRIPTION_MAX_QUEUED_BYTES: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(16_777_216),
+		LIVE_TRANSCRIPTION_MAX_BUFFERED_BYTES: z.coerce
+			.number()
+			.int()
+			.positive()
+			.default(1_048_576),
 
 		OBJECT_STORAGE_BACKEND: z
 			.enum(["disabled", "local", "s3"])

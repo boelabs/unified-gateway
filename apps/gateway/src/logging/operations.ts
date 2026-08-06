@@ -482,6 +482,10 @@ export function completeOperation(
 							cacheWriteTokens: input.usage?.cacheWriteTokens ?? null,
 							totalTokens: input.usage?.totalTokens ?? null,
 							searchUnits: input.usage?.searchUnits ?? null,
+							inputAudioSeconds:
+								input.usage?.inputAudioSeconds !== undefined
+									? String(input.usage.inputAudioSeconds)
+									: null,
 							consumerCostCents: input.cost?.totalCents.toFixed(10) ?? null,
 							upstreamCostCents:
 								(attempts.length > 0
@@ -606,6 +610,10 @@ export function completeOperation(
 										cacheWriteTokens: attempt.usage?.cacheWriteTokens ?? null,
 										totalTokens: attempt.usage?.totalTokens ?? null,
 										searchUnits: attempt.usage?.searchUnits ?? null,
+										inputAudioSeconds:
+											attempt.usage?.inputAudioSeconds !== undefined
+												? String(attempt.usage.inputAudioSeconds)
+												: null,
 										lastProgressAt: new Date(
 											attempt.lastProgressAt ?? endedAt.getTime(),
 										),

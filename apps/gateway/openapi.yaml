@@ -321,6 +321,33 @@ paths:
         "403": *a1
         "413": *a1
         "429": *a1
+  /v1/realtime:
+    get:
+      operationId: createRealtimeTranscriptionSession
+      tags:
+        - Inference
+      summary: Realtime transcription WebSocket upgrade
+      description: "OpenAI-compatible server-side WebSocket transcription. Requires Upgrade: websocket, a model query parameter, and optional intent=transcription. Client and server messages use the Realtime transcription event contract; the routed deployment remains pinned for the connection lifetime."
+      parameters:
+        - name: model
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: intent
+          in: query
+          required: false
+          schema:
+            type: string
+            const: transcription
+      responses:
+        "101":
+          description: Switching Protocols
+        "400": *a1
+        "401": *a1
+        "403": *a1
+        "429": *a1
+        "503": *a1
   /v1/rerank:
     post:
       operationId: rerank
@@ -1862,6 +1889,18 @@ components:
           minLength: 1
         language:
           type: string
+        languages:
+          minItems: 1
+          type: array
+          items:
+            type: string
+            minLength: 1
+        keywords:
+          minItems: 1
+          type: array
+          items:
+            type: string
+            minLength: 1
         prompt:
           type: string
         temperature:
@@ -1872,6 +1911,7 @@ components:
           default: json
           type: string
           enum:
+            - diarized_json
             - json
             - text
             - srt
@@ -2551,6 +2591,7 @@ components:
           - image.edit
           - video.generate
           - audio.transcribe
+          - audio.transcribe.live
           - embedding.create
           - rerank
       additionalProperties:
@@ -2564,6 +2605,7 @@ components:
         - image.edit
         - video.generate
         - audio.transcribe
+        - audio.transcribe.live
         - embedding.create
         - rerank
     TransportOverrides:
@@ -2576,6 +2618,7 @@ components:
           - image.edit
           - video.generate
           - audio.transcribe
+          - audio.transcribe.live
           - embedding.create
           - rerank
       additionalProperties:
@@ -2586,6 +2629,7 @@ components:
         - image.edit
         - video.generate
         - audio.transcribe
+        - audio.transcribe.live
         - embedding.create
         - rerank
       description: Advanced operation-to-transport override. Defaults normally come from the adapter.
@@ -3228,6 +3272,88 @@ components:
               required:
                 - json
                 - stream
+            audio.transcriptions.live:
+              type: object
+              properties:
+                json:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+                stream:
+                  type: object
+                  properties:
+                    firstOutputMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    idleMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    reasoningOnlyMs:
+                      anyOf:
+                        - type: integer
+                          exclusiveMinimum: 0
+                          maximum: 3600000
+                        - type: "null"
+                    preCommitMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    totalMs:
+                      type: integer
+                      exclusiveMinimum: 0
+                      maximum: 3600000
+                    maxAttempts:
+                      type: integer
+                      minimum: 1
+                      maximum: 20
+                  required:
+                    - firstOutputMs
+                    - idleMs
+                    - reasoningOnlyMs
+                    - preCommitMs
+                    - totalMs
+                    - maxAttempts
+              required:
+                - json
+                - stream
             embeddings:
               type: object
               properties:
@@ -3398,6 +3524,7 @@ components:
             - images.edits
             - videos.generations
             - audio.transcriptions
+            - audio.transcriptions.live
             - embeddings
             - rerank
         routingStrategy:
@@ -3797,6 +3924,16 @@ components:
           type: string
         language:
           type: string
+        languages:
+          type: array
+          items:
+            type: object
+            properties:
+              code:
+                type: string
+            required:
+              - code
+            additionalProperties: false
         duration:
           type: number
         words:

@@ -47,6 +47,17 @@ test("toCanonical: maps fields and normalizes stream/extra_body", () => {
 	assert.equal(req.file.filename, "x.mp3");
 });
 
+test("toCanonical: preserves repeated language and keyword hints", () => {
+	const fields = transcriptionFieldsSchema.parse({
+		model: "gpt-transcribe",
+		languages: ["es", "en"],
+		keywords: ["BoeLabs", "AC-42"],
+	});
+	const req = transcriptionToCanonical(fields, file);
+	assert.deepEqual(req.languages, ["es", "en"]);
+	assert.deepEqual(req.keywords, ["BoeLabs", "AC-42"]);
+});
+
 test("render: json -> {text,usage}; verbose_json -> task/segments; text -> raw string", () => {
 	const resp: CanonicalTranscriptionResponse = {
 		text: "hello",
@@ -89,12 +100,14 @@ test("render: stream events", () => {
 		toOpenAITranscriptionEvent({
 			kind: "done",
 			text: "Hi",
-			usage: { type: "tokens", totalTokens: 6 },
+			languages: [{ code: "en" }],
+			usage: { type: "duration", seconds: 1.5 },
 		}),
 		{
 			type: "transcript.text.done",
 			text: "Hi",
-			usage: { type: "tokens", total_tokens: 6 },
+			languages: [{ code: "en" }],
+			usage: { type: "duration", seconds: 1.5 },
 		},
 	);
 });

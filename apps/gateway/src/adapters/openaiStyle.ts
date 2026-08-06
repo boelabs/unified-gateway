@@ -1,4 +1,5 @@
 import { makeOpenAIResponsesWebSocketHandler } from "./openaiResponsesWebSocket.ts";
+import { makeOpenAILiveTranscriptionHandler } from "./openaiLiveTranscription.ts";
 import type { Adapter, AdapterContext, ChatHandler } from "./types.ts";
 import { imageProfileFor, videoProfileFor } from "#catalog/types.ts";
 import { upstreamFetch } from "#gateway/instrumentedTransport.ts";
@@ -109,6 +110,7 @@ export interface OpenAIStyleConfig {
 	>;
 	/** The provider implements POST /audio/transcriptions (multipart). Absent = no audio. */
 	audioTranscriptions?: boolean;
+	liveTranscriptions?: boolean;
 	/** The provider implements POST /embeddings. Absent = no embeddings. */
 	embeddings?: boolean;
 	/** Async video generation protocols this adapter implements. Absent = no videos. */
@@ -937,6 +939,8 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 		supportedCallTypes.add("videos.generations");
 	if (config.audioTranscriptions)
 		supportedCallTypes.add("audio.transcriptions");
+	if (config.liveTranscriptions)
+		supportedCallTypes.add("audio.transcriptions.live");
 	if (config.embeddings) supportedCallTypes.add("embeddings");
 	const firstImageTransport = imageTransports?.[0];
 	const imageTransportConfig =
@@ -996,6 +1000,23 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 			: {}),
 		...(videoTransportConfig ? { videoGeneration } : {}),
 		...(config.audioTranscriptions ? { audioTranscription } : {}),
+		...(config.liveTranscriptions
+			? {
+					liveTranscription: makeOpenAILiveTranscriptionHandler({
+						label: config.label,
+						resolveConnection(ctx) {
+							const credentials = resolveCreds(ctx);
+							return {
+								url: credentials.base,
+								headers: buildAuthHeaders(credentials),
+							};
+						},
+						mapError(err) {
+							return mapError(err);
+						},
+					}),
+				}
+			: {}),
 		...(config.embeddings ? { embeddings } : {}),
 		transports: {
 			chat: { supported: chatTransports, default: config.defaultTransport },
@@ -1015,6 +1036,14 @@ export function makeOpenAIStyleAdapter(config: OpenAIStyleConfig): Adapter {
 						"audio.transcriptions": {
 							supported: ["audio_transcriptions"],
 							default: "audio_transcriptions",
+						},
+					}
+				: {}),
+			...(config.liveTranscriptions
+				? {
+						"audio.transcriptions.live": {
+							supported: ["realtime_websocket"],
+							default: "realtime_websocket",
 						},
 					}
 				: {}),

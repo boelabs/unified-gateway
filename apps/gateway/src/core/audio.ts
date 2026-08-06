@@ -1,18 +1,19 @@
 import type { Usage } from "./usage.ts";
 
-/**
- * Canonical audio types. Phase 1: transcription (/v1/audio/transcriptions). Public contract = OpenAI;
- * upstream = OpenAI or compatible (same transport), so it is almost passthrough: `text`/`srt`/`vtt`
- * travel as a plain-text body; `json`/`verbose_json` are parsed into fields.
- */
+/** Provider-independent types for bounded-file and live audio transcription. */
 
 export type TranscriptionResponseFormat =
+	| "diarized_json"
 	| "json"
 	| "text"
 	| "srt"
 	| "verbose_json"
 	| "vtt";
 type TimestampGranularity = "word" | "segment";
+
+export interface DetectedLanguage {
+	code: string;
+}
 
 /** Formats whose upstream response body is plain text (not JSON). */
 export const TEXT_TRANSCRIPTION_FORMATS: readonly TranscriptionResponseFormat[] =
@@ -30,6 +31,8 @@ export interface CanonicalTranscriptionRequest {
 	model: string;
 	file: CanonicalAudioInput;
 	language?: string;
+	languages?: string[];
+	keywords?: string[];
 	prompt?: string;
 	temperature?: number;
 	responseFormat: TranscriptionResponseFormat;
@@ -39,20 +42,16 @@ export interface CanonicalTranscriptionRequest {
 	extraBody?: Record<string, unknown>;
 }
 
-/**
- * Token-based transcription usage (gpt-4o-transcribe). Feeds the normal cost calc.
- *
- * Per-minute billing (whisper) is deliberately NOT supported: its duration-based usage variant is
- * omitted. Re-adding it later = one usage variant here + one pricing branch in the cost calc, both
- * localized (see the note at the end of the file).
- */
-export interface TranscriptionUsage {
-	type: "tokens";
-	inputTokens?: number;
-	outputTokens?: number;
-	totalTokens?: number;
-	inputTokenDetails?: { textTokens?: number; audioTokens?: number };
-}
+/** Provider-reported token or audio-duration usage, both normalized into core accounting. */
+export type TranscriptionUsage =
+	| {
+			type: "tokens";
+			inputTokens?: number;
+			outputTokens?: number;
+			totalTokens?: number;
+			inputTokenDetails?: { textTokens?: number; audioTokens?: number };
+	  }
+	| { type: "duration"; seconds: number };
 
 /**
  * Canonical transcription response. The adapter detects text-vs-JSON from the upstream body (string
@@ -63,6 +62,7 @@ export interface TranscriptionUsage {
 export interface CanonicalTranscriptionResponse {
 	text: string;
 	language?: string;
+	languages?: DetectedLanguage[];
 	duration?: number;
 	segments?: Record<string, unknown>[];
 	words?: Record<string, unknown>[];
@@ -77,6 +77,7 @@ export type CanonicalTranscriptionStreamEvent =
 			text: string;
 			usage?: TranscriptionUsage;
 			logprobs?: unknown;
+			languages?: DetectedLanguage[];
 	  };
 
 /**
@@ -84,12 +85,21 @@ export type CanonicalTranscriptionStreamEvent =
  * request against this before routing; the operator of a custom model only declares this.
  */
 export interface TranscriptionProfile {
-	/** Accepted response formats (json/text/srt/verbose_json/vtt). */
+	/** Accepted response formats. */
 	responseFormats: TranscriptionResponseFormat[];
 	/** The model supports SSE streaming (gpt-4o-transcribe does). */
 	supportsStreaming?: boolean;
 	/** Accepts `timestamp_granularities[]` (only with verbose_json). */
 	supportsTimestampGranularities?: boolean;
+	/** Context controls accepted by this model. */
+	context?: {
+		prompt?: boolean;
+		language?: boolean;
+		languages?: boolean;
+		keywords?: boolean;
+	};
+	/** The response can contain detected languages. */
+	returnsDetectedLanguages?: boolean;
 	/** Maximum audio file size. */
 	maxFileBytes?: number;
 }
@@ -98,7 +108,16 @@ export interface TranscriptionProfile {
 export function transcriptionUsageToCore(
 	u: TranscriptionUsage | undefined,
 ): Usage | null {
-	if (!u || u.totalTokens === undefined) return null;
+	if (!u) return null;
+	if (u.type === "duration") {
+		return {
+			promptTokens: 0,
+			completionTokens: 0,
+			totalTokens: 0,
+			inputAudioSeconds: u.seconds,
+		};
+	}
+	if (u.totalTokens === undefined) return null;
 	return {
 		promptTokens: u.inputTokens ?? 0,
 		completionTokens: u.outputTokens ?? 0,

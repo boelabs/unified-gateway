@@ -17,7 +17,7 @@ function audioFile(): {
 	writeFileSync(path, Buffer.from([0x52, 0x49, 0x46, 0x46]));
 	return {
 		req: {
-			model: "gpt-4o-transcribe",
+			model: "gpt-transcribe",
 			file: {
 				path,
 				filename: "audio.wav",
@@ -33,7 +33,7 @@ function audioFile(): {
 
 function ctx(credentials: Record<string, unknown>): AdapterContext {
 	return {
-		upstreamModel: "gpt-4o-transcribe",
+		upstreamModel: "gpt-transcribe",
 		credentials,
 		meta: {
 			capabilities: {
@@ -48,33 +48,37 @@ function ctx(credentials: Record<string, unknown>): AdapterContext {
 	};
 }
 
-test("azureopenai exposes audio.transcriptions and its gpt-4o-transcribe catalog", () => {
+test("azureopenai composes deployment-addressed file audio with v1 Realtime", () => {
 	assert.ok(azureopenaiAdapter.supportedCallTypes.has("audio.transcriptions"));
+	assert.ok(
+		azureopenaiAdapter.supportedCallTypes.has("audio.transcriptions.live"),
+	);
 	assert.ok(azureopenaiAdapter.audioTranscription);
+	assert.ok(azureopenaiAdapter.liveTranscription);
 	assert.ok(
 		resolveModelMetadata(
 			"azureopenai",
-			"gpt-4o-transcribe",
+			"gpt-transcribe",
 		).supportedCallTypes?.includes("audio.transcriptions"),
 	);
 });
 
-test("azure audio.buildRequest: legacy deployment-based URL + api-version, without model field", async () => {
+test("azure audio.buildRequest: uses the documented versioned deployment URL", async () => {
 	const { req, cleanup } = audioFile();
 	try {
 		const r = await azureopenaiAdapter.audioTranscription!.buildRequest(
 			req,
-			ctx({ apiKey: "k", baseUrl: "https://r.openai.azure.com" }),
+			ctx({ apiKey: "k", baseUrl: "https://r.openai.azure.com/openai/v1" }),
 		);
 		assert.equal(
 			r.url,
-			"https://r.openai.azure.com/openai/deployments/gpt-4o-transcribe/audio/transcriptions?api-version=2024-06-01",
+			"https://r.openai.azure.com/openai/deployments/gpt-transcribe/audio/transcriptions?api-version=2025-04-01-preview",
 		);
 		assert.equal(r.headers["api-key"], "k");
 		assert.equal(r.headers.authorization, undefined);
 		assert.equal(r.headers["content-type"], undefined);
 		const form = r.body as FormData;
-		assert.equal(form.get("model"), null); // the deployment goes in the URL, not the body
+		assert.equal(form.get("model"), null);
 		assert.equal(form.get("response_format"), "json");
 		assert.equal((form.get("file") as File).name, "audio.wav");
 	} finally {
@@ -82,20 +86,20 @@ test("azure audio.buildRequest: legacy deployment-based URL + api-version, witho
 	}
 });
 
-test("azure audio.buildRequest: derives the resource from /openai/v1 and respects apiVersion override", async () => {
+test("azure audio.buildRequest: derives the resource origin and accepts an apiVersion override", async () => {
 	const { req, cleanup } = audioFile();
 	try {
 		const r = await azureopenaiAdapter.audioTranscription!.buildRequest(
 			req,
 			ctx({
 				apiKey: "k",
-				baseUrl: "https://r.openai.azure.com/openai/v1",
-				apiVersion: "2025-03-01-preview",
+				baseUrl: "https://r.openai.azure.com",
+				apiVersion: "2024-06-01",
 			}),
 		);
 		assert.equal(
 			r.url,
-			"https://r.openai.azure.com/openai/deployments/gpt-4o-transcribe/audio/transcriptions?api-version=2025-03-01-preview",
+			"https://r.openai.azure.com/openai/deployments/gpt-transcribe/audio/transcriptions?api-version=2024-06-01",
 		);
 	} finally {
 		cleanup();

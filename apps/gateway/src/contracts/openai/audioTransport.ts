@@ -14,6 +14,10 @@ const FORM_MANAGED = new Set([
 	"file",
 	"model",
 	"language",
+	"languages",
+	"languages[]",
+	"keywords",
+	"keywords[]",
 	"prompt",
 	"temperature",
 	"response_format",
@@ -31,14 +35,10 @@ function formValue(value: unknown): string {
 	return JSON.stringify(value);
 }
 
-/**
- * Builds the multipart toward /audio/transcriptions. `includeModel: false` omits the `model` field
- * (Azure legacy carries the deployment in the URL, not the body).
- */
+/** Builds the OpenAI-compatible multipart body toward `/audio/transcriptions`. */
 export async function buildTranscriptionForm(
 	req: CanonicalTranscriptionRequest,
 	upstreamModel: string,
-	options?: { includeModel?: boolean },
 ): Promise<FormData> {
 	const form = new FormData();
 	const blob = await openAsBlob(req.file.path, { type: req.file.mimeType });
@@ -46,9 +46,12 @@ export async function buildTranscriptionForm(
 	// from the blob's backing path); wrap in a File so the upstream multipart name is deterministic.
 	const file = new File([blob], req.file.filename, { type: req.file.mimeType });
 	form.append("file", file);
-	if (options?.includeModel !== false) form.append("model", upstreamModel);
+	form.append("model", upstreamModel);
 	form.append("response_format", req.responseFormat);
 	if (req.language !== undefined) form.append("language", req.language);
+	for (const language of req.languages ?? [])
+		form.append("languages[]", language);
+	for (const keyword of req.keywords ?? []) form.append("keywords[]", keyword);
 	if (req.prompt !== undefined) form.append("prompt", req.prompt);
 	if (req.temperature !== undefined)
 		form.append("temperature", String(req.temperature));
@@ -74,11 +77,15 @@ export async function buildTranscriptionForm(
 function parseUsage(raw: unknown): TranscriptionUsage | undefined {
 	if (raw === null || typeof raw !== "object") return undefined;
 	const u = raw as {
+		type?: unknown;
+		seconds?: unknown;
 		input_tokens?: number;
 		output_tokens?: number;
 		total_tokens?: number;
 		input_token_details?: { text_tokens?: number; audio_tokens?: number };
 	};
+	if (u.type === "duration" && typeof u.seconds === "number")
+		return { type: "duration", seconds: u.seconds };
 	if (typeof u.total_tokens !== "number") return undefined;
 	const details = u.input_token_details;
 	return {
@@ -115,6 +122,17 @@ export function parseTranscriptionResponse(
 		text: typeof body.text === "string" ? body.text : "",
 	};
 	if (typeof body.language === "string") resp.language = body.language;
+	if (Array.isArray(body.languages)) {
+		resp.languages = body.languages.flatMap((value) => {
+			if (
+				value !== null &&
+				typeof value === "object" &&
+				typeof (value as { code?: unknown }).code === "string"
+			)
+				return [{ code: (value as { code: string }).code }];
+			return [];
+		});
+	}
 	if (typeof body.duration === "number") resp.duration = body.duration;
 	if (Array.isArray(body.segments))
 		resp.segments = body.segments as Record<string, unknown>[];
@@ -167,11 +185,21 @@ export async function* parseTranscriptionStream(
 			};
 		} else if (type === "transcript.text.done") {
 			const usage = parseUsage(raw.usage);
+			const languages = Array.isArray(raw.languages)
+				? raw.languages.flatMap((value) =>
+						value !== null &&
+						typeof value === "object" &&
+						typeof (value as { code?: unknown }).code === "string"
+							? [{ code: (value as { code: string }).code }]
+							: [],
+					)
+				: undefined;
 			yield {
 				kind: "done",
 				text: typeof raw.text === "string" ? raw.text : "",
 				...(usage ? { usage } : {}),
 				...(raw.logprobs !== undefined ? { logprobs: raw.logprobs } : {}),
+				...(languages !== undefined ? { languages } : {}),
 			};
 		} else options?.onUnknownEvent?.(type || "missing_type");
 	}

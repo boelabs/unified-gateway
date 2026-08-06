@@ -24,6 +24,7 @@ function req(
 }
 
 const gpt4o = resolveModelMetadata("openai", "gpt-4o-transcribe");
+const gptTranscribe = resolveModelMetadata("openai", "gpt-transcribe");
 // Flexible custom model: all formats + timestamps, no streaming.
 const flexible = resolveModelMetadata("openaicompatible", "custom-stt", {
 	operations: {
@@ -90,4 +91,29 @@ test("gating: file above the model limit is rejected", () => {
 	})();
 	assert.ok(GatewayError.is(err));
 	assert.equal((err as GatewayError).param, "file");
+});
+
+test("gating: gpt-transcribe accepts languages and keywords, but not singular language", () => {
+	assert.doesNotThrow(() =>
+		assertTranscriptionRequestSupported(
+			req({ languages: ["es", "en"], keywords: ["BoeLabs"] }),
+			gptTranscribe,
+		),
+	);
+	assert.throws(
+		() =>
+			assertTranscriptionRequestSupported(
+				req({ language: "es", languages: ["es"] }),
+				gptTranscribe,
+			),
+		/language and languages/,
+	);
+	assert.throws(
+		() =>
+			assertTranscriptionRequestSupported(
+				req({ keywords: ["invalid<keyword"] }),
+				gptTranscribe,
+			),
+		/Keywords cannot contain/,
+	);
 });

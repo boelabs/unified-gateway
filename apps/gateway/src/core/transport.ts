@@ -23,6 +23,7 @@ export type UpstreamTransport =
 	| "messages"
 	| "images"
 	| "audio_transcriptions"
+	| "realtime_websocket"
 	| "embeddings"
 	| "embed_content"
 	| "openrouter_rerank"
@@ -38,6 +39,7 @@ const UPSTREAM_TRANSPORTS: readonly UpstreamTransport[] = [
 	"messages",
 	"images",
 	"audio_transcriptions",
+	"realtime_websocket",
 	"embeddings",
 	"embed_content",
 	"openrouter_rerank",

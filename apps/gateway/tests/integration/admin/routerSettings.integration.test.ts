@@ -1,3 +1,4 @@
+import { DEFAULT_EXECUTION_POLICIES } from "#core/executionPolicy.ts";
 import { invalidateRouterSettingsCache } from "#router/settings.ts";
 import { makeGatewayTestApp } from "#test-support/app.ts";
 import { pgAvailable } from "#test-support/infra.ts";
@@ -60,11 +61,11 @@ test("router settings: execution policies are configurable by operation and mode
 			allowedFails: 0,
 			cooldownSeconds: 7,
 			executionPolicies: {
-				...originalSettings!.executionPolicies,
+				...DEFAULT_EXECUTION_POLICIES,
 				chat: {
-					...originalSettings!.executionPolicies!.chat,
+					...DEFAULT_EXECUTION_POLICIES.chat,
 					stream: {
-						...originalSettings!.executionPolicies!.chat.stream,
+						...DEFAULT_EXECUTION_POLICIES.chat.stream,
 						firstOutputMs: 20_000,
 						maxAttempts: 7,
 					},
@@ -73,7 +74,7 @@ test("router settings: execution policies are configurable by operation and mode
 			retryAfterSeconds: 2,
 		}),
 	});
-	assert.equal(response.status, 200);
+	assert.equal(response.status, 200, await response.clone().text());
 	const body = (await response.json()) as {
 		data: RouterSettingsRow;
 	};

@@ -52,6 +52,7 @@ export const openaiAdapter = makeOpenAIStyleAdapter({
 	videoTransports: ["videos"],
 	defaultVideoTransport: "videos",
 	audioTranscriptions: true,
+	liveTranscriptions: true,
 	embeddings: true,
 });
 

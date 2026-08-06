@@ -430,6 +430,37 @@ export function buildOpenApiDocument() {
 					},
 				},
 			},
+			"/v1/realtime": {
+				get: {
+					operationId: "createRealtimeTranscriptionSession",
+					tags: ["Inference"],
+					summary: "Realtime transcription WebSocket upgrade",
+					description:
+						"OpenAI-compatible server-side WebSocket transcription. Requires Upgrade: websocket, a model query parameter, and optional intent=transcription. Client and server messages use the Realtime transcription event contract; the routed deployment remains pinned for the connection lifetime.",
+					parameters: [
+						{
+							name: "model",
+							in: "query",
+							required: true,
+							schema: { type: "string" },
+						},
+						{
+							name: "intent",
+							in: "query",
+							required: false,
+							schema: { type: "string", const: "transcription" },
+						},
+					],
+					responses: {
+						"101": { description: "Switching Protocols" },
+						"400": errorResponse,
+						"401": errorResponse,
+						"403": errorResponse,
+						"429": errorResponse,
+						"503": errorResponse,
+					},
+				},
+			},
 			"/v1/rerank": {
 				post: {
 					operationId: "rerank",

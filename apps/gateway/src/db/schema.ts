@@ -121,6 +121,8 @@ export interface RuntimeModelMetadata {
 		cacheWriteCentsPerMTokens?: number;
 		/** Cost in USD cents per reranking search unit. */
 		searchUnitCents?: number;
+		/** Cost in USD cents per accepted minute of input audio. */
+		audioInputCentsPerMinute?: number;
 		/**
 		 * TIERED rate by context size. When the input tokens (promptTokens, which include cache
 		 * read/write) exceed `aboveInputTokens`, the WHOLE request is charged at the tier's rates
@@ -388,6 +390,10 @@ export const gatewayOperations = pgTable(
 		cacheWriteTokens: integer("cache_write_tokens"),
 		totalTokens: integer("total_tokens"),
 		searchUnits: integer("search_units"),
+		inputAudioSeconds: numeric("input_audio_seconds", {
+			precision: 20,
+			scale: 6,
+		}),
 		consumerCostCents: numeric("consumer_cost_cents", {
 			precision: 20,
 			scale: 10,
@@ -474,6 +480,10 @@ export const upstreamAttempts = pgTable(
 		cacheWriteTokens: integer("cache_write_tokens"),
 		totalTokens: integer("total_tokens"),
 		searchUnits: integer("search_units"),
+		inputAudioSeconds: numeric("input_audio_seconds", {
+			precision: 20,
+			scale: 6,
+		}),
 		lastProgressAt: timestamp("last_progress_at", { withTimezone: true }),
 		startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
 		endedAt: timestamp("ended_at", { withTimezone: true }),

@@ -50,6 +50,11 @@ import {
 } from "./endpoints/videos.ts";
 
 import {
+	liveTranscriptionWebSocketHandler,
+	closeLiveTranscriptionWebSockets,
+} from "./endpoints/liveTranscription.ts";
+
+import {
 	startExtensionReloadJob,
 	initializeExtensions,
 	extensionStatus,
@@ -242,6 +247,7 @@ app.get("/v1/videos/:id/content", videoContentHandler);
 app.get("/v1/videos/:id", videoRetrieveHandler);
 app.delete("/v1/videos/:id", videoDeleteHandler);
 app.post("/v1/audio/transcriptions", transcriptionsHandler);
+app.get("/v1/realtime", liveTranscriptionWebSocketHandler);
 app.post("/v1/embeddings", embeddingsHandler);
 app.post("/v1/rerank", rerankHandler);
 
@@ -265,6 +271,7 @@ installGracefulShutdown({
 	server,
 	stopJobs: [
 		closeResponsesWebSockets,
+		closeLiveTranscriptionWebSockets,
 		stopOperationMaintenance,
 		stopResponseStateGc,
 		stopExtensionReload,

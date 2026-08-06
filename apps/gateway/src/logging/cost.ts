@@ -12,6 +12,8 @@ export interface CostBreakdown {
 	outputCents: number;
 	/** Cost of reranking search units, in USD cents. */
 	searchUnitCents: number;
+	/** Cost of accepted input audio, in USD cents. */
+	audioInputCents: number;
 	/** Cost reported by the upstream, retained separately for reconciliation. */
 	providerReportedCents: number | null;
 	/** Total in USD cents. */
@@ -53,6 +55,9 @@ function effectiveRates(p: PricingShape, promptTokens: number): PricingShape {
 		...(p.searchUnitCents !== undefined
 			? { searchUnitCents: p.searchUnitCents }
 			: {}),
+		...(p.audioInputCentsPerMinute !== undefined
+			? { audioInputCentsPerMinute: p.audioInputCentsPerMinute }
+			: {}),
 	};
 }
 
@@ -85,6 +90,9 @@ export function computeCost(
 	const outputCents = usage.completionTokens * outputRate;
 	const searchUnitCents =
 		(usage.searchUnits ?? 0) * (meta.pricing?.searchUnitCents ?? 0);
+	const audioInputCents =
+		((usage.inputAudioSeconds ?? 0) / 60) *
+		(meta.pricing?.audioInputCentsPerMinute ?? 0);
 	const providerReportedCents = usage.providerCostCents ?? null;
 	const configuredPricing = meta.pricing;
 	const hasConfiguredPricing =
@@ -94,13 +102,15 @@ export function computeCost(
 			configuredPricing.cacheReadCentsPerMTokens !== undefined ||
 			configuredPricing.cacheWriteCentsPerMTokens !== undefined ||
 			configuredPricing.searchUnitCents !== undefined ||
+			configuredPricing.audioInputCentsPerMinute !== undefined ||
 			(configuredPricing.tiers?.length ?? 0) > 0);
 	const calculatedCents =
 		inputCents +
 		cacheReadCents +
 		cacheWriteCents +
 		outputCents +
-		searchUnitCents;
+		searchUnitCents +
+		audioInputCents;
 
 	return {
 		inputCents,
@@ -108,6 +118,7 @@ export function computeCost(
 		cacheWriteCents,
 		outputCents,
 		searchUnitCents,
+		audioInputCents,
 		providerReportedCents,
 		totalCents: hasConfiguredPricing
 			? calculatedCents
@@ -117,13 +128,14 @@ export function computeCost(
 
 /**
  * Conservative upper bound used for pre-execution budget admission. Every reserved token is priced
- * at the highest configured token rate across base and context tiers; rerank units are added at their
- * exact configured unit rate. `null` means pricing is unknown, not free.
+ * at the highest configured token rate across base and context tiers; rerank units and input-audio
+ * duration are added at their exact configured rates. `null` means pricing is unknown, not free.
  */
 export function estimateMaximumCostCents(
 	meta: Pick<ResolvedModelMetadata, "pricing">,
 	totalTokens: number,
 	searchUnits = 0,
+	inputAudioSeconds = 0,
 ): number | null {
 	const pricing = meta.pricing;
 	if (pricing === undefined) return null;
@@ -139,10 +151,17 @@ export function estimateMaximumCostCents(
 			tier.cacheWriteCentsPerMTokens,
 		]),
 	].filter((rate): rate is number => rate !== undefined);
-	if (rates.length === 0 && pricing.searchUnitCents === undefined) return null;
+	if (
+		rates.length === 0 &&
+		pricing.searchUnitCents === undefined &&
+		pricing.audioInputCentsPerMinute === undefined
+	)
+		return null;
 	const maximumTokenRate = rates.length > 0 ? Math.max(...rates) : 0;
 	return (
 		(Math.max(0, totalTokens) * maximumTokenRate) / 1_000_000 +
-		Math.max(0, searchUnits) * (pricing.searchUnitCents ?? 0)
+		Math.max(0, searchUnits) * (pricing.searchUnitCents ?? 0) +
+		(Math.max(0, inputAudioSeconds) / 60) *
+			(pricing.audioInputCentsPerMinute ?? 0)
 	);
 }

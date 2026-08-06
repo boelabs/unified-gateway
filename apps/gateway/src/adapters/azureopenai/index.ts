@@ -4,7 +4,7 @@ import { makeAzurev1Adapter } from "#adapters/azurev1.ts";
 
 const LABEL = "Azure OpenAI v1";
 
-/** Chat/Responses/image over /openai/v1; transcriptions use the classic API (see ./audio). */
+/** Azure OpenAI GA v1 adapter, before composing its separate file-audio data plane. */
 const base = makeAzurev1Adapter({
 	key: "azureopenai",
 	label: LABEL,
@@ -25,12 +25,12 @@ const base = makeAzurev1Adapter({
 		},
 	},
 	embeddings: true,
+	liveTranscriptions: true,
 });
 
 /**
- * Modern Azure OpenAI with one special case: audio transcription still requires the classic
- * deployment-based API (it does not exist on /openai/v1), so it is composed separately on top of the
- * base v1 adapter.
+ * Text, embeddings, and Realtime use `/openai/v1`; file transcription uses Azure's documented,
+ * versioned deployment endpoint. Both transports still share one canonical audio contract.
  */
 export const azureopenaiAdapter: Adapter = {
 	...base,

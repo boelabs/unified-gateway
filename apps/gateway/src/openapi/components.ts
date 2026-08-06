@@ -43,6 +43,7 @@ export const AudioTranscriptionResponse = loose(
 	{
 		text: z.string(),
 		language: z.string().optional(),
+		languages: z.array(z.object({ code: z.string() })).optional(),
 		duration: z.number().optional(),
 		words: z.array(z.record(z.string(), z.unknown())).optional(),
 		segments: z.array(z.record(z.string(), z.unknown())).optional(),
@@ -911,6 +912,7 @@ export const RouterSettings = z
 				"images.edits": OperationExecutionPolicy,
 				"videos.generations": OperationExecutionPolicy,
 				"audio.transcriptions": OperationExecutionPolicy,
+				"audio.transcriptions.live": OperationExecutionPolicy,
 				embeddings: OperationExecutionPolicy,
 				rerank: OperationExecutionPolicy,
 			})

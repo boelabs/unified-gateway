@@ -1,3 +1,4 @@
+import type { LiveTranscriptionProfile } from "#core/liveTranscription.ts";
 import type { TextCapabilities, ReasoningSpec } from "#core/reasoning.ts";
 import type { ParameterSupportMap } from "#catalog/parameters.ts";
 import type { EmbeddingProfile } from "#core/embeddings.ts";
@@ -54,6 +55,7 @@ export interface OperationProfiles {
 	"image.edit"?: ImageModelProfile;
 	"video.generate"?: VideoModelProfile;
 	"audio.transcribe"?: TranscriptionProfile;
+	"audio.transcribe.live"?: LiveTranscriptionProfile;
 	"embedding.create"?: EmbeddingProfile;
 	rerank?: RerankProfile;
 }

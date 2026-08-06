@@ -1,5 +1,6 @@
 import { upstreamWebSocket } from "#gateway/instrumentedTransport.ts";
 import { abortGatewayError } from "#gateway/abortReason.ts";
+import { AsyncQueue } from "#core/asyncQueue.ts";
 import { GatewayError } from "#core/errors.ts";
 import type { SSEEvent } from "#core/sse.ts";
 import type { RawData } from "ws";
@@ -29,43 +30,6 @@ interface QueuedEvent {
 	event: SSEEvent;
 	type: string;
 	raw: Record<string, unknown>;
-}
-
-class AsyncEventQueue {
-	private readonly values: QueuedEvent[] = [];
-	private readonly waiters: Array<{
-		resolve: (value: IteratorResult<QueuedEvent>) => void;
-		reject: (reason: unknown) => void;
-	}> = [];
-	private failure: unknown;
-	private ended = false;
-
-	push(value: QueuedEvent): void {
-		const waiter = this.waiters.shift();
-		if (waiter) waiter.resolve({ done: false, value });
-		else this.values.push(value);
-	}
-
-	end(): void {
-		this.ended = true;
-		for (const waiter of this.waiters.splice(0))
-			waiter.resolve({ done: true, value: undefined });
-	}
-
-	fail(error: unknown): void {
-		this.failure = error;
-		for (const waiter of this.waiters.splice(0)) waiter.reject(error);
-	}
-
-	next(): Promise<IteratorResult<QueuedEvent>> {
-		if (this.values.length > 0)
-			return Promise.resolve({ done: false, value: this.values.shift()! });
-		if (this.failure !== undefined) return Promise.reject(this.failure);
-		if (this.ended) return Promise.resolve({ done: true, value: undefined });
-		return new Promise((resolve, reject) =>
-			this.waiters.push({ resolve, reject }),
-		);
-	}
 }
 
 function websocketUrl(httpUrl: string): string {
@@ -122,7 +86,7 @@ export function makeOpenAIResponsesWebSocketHandler(
 			const socket = upstreamWebSocket(ctx, websocketUrl(connection.url), {
 				headers: connection.headers,
 			});
-			let activeQueue: AsyncEventQueue | null = null;
+			let activeQueue: AsyncQueue<QueuedEvent> | null = null;
 			let closed = false;
 
 			await new Promise<void>((resolve, reject) => {
@@ -216,7 +180,7 @@ export function makeOpenAIResponsesWebSocketHandler(
 							message: `${options.label}: Responses WebSocket already has an active response`,
 						});
 
-					const queue = new AsyncEventQueue();
+					const queue = new AsyncQueue<QueuedEvent>();
 					activeQueue = queue;
 					let resolveResponseId!: (id: string | null) => void;
 					const upstreamResponseId = new Promise<string | null>((resolve) => {

@@ -109,7 +109,7 @@ export function assertFinalModelAllowed(
 /** Builds a routed quota lifecycle for virtual keys; master-key requests need no reservation. */
 export function usageQuotaForRequest(
 	c: Context<AppEnv>,
-	options: { searchUnits?: number } = {},
+	options: { searchUnits?: number; inputAudioSeconds?: number } = {},
 ): UsageQuota {
 	const auth = getAuth(c);
 	if (auth.type !== "virtual") {
@@ -125,8 +125,12 @@ export function usageQuotaForRequest(
 		assertCandidate: (candidate) => {
 			if (
 				auth.key.maxBudgetCents != null &&
-				estimateMaximumCostCents(candidate.meta, 0, options.searchUnits) ===
-					null
+				estimateMaximumCostCents(
+					candidate.meta,
+					0,
+					options.searchUnits,
+					options.inputAudioSeconds,
+				) === null
 			) {
 				throw new GatewayError({
 					class: "bad_request",
@@ -141,6 +145,7 @@ export function usageQuotaForRequest(
 					candidate.meta,
 					reservedTokens,
 					options.searchUnits,
+					options.inputAudioSeconds,
 				) ?? 0;
 			const lease = await reserveVirtualKeyUsage(
 				auth.key,

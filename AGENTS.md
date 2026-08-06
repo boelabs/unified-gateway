@@ -7,7 +7,8 @@ reference.
 ## What this is
 
 Unified Gateway — a backend-only, provider-agnostic AI gateway. Public endpoints are OpenAI-shaped
-(`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`, `/v1/audio/transcriptions`)
+(`/v1/chat/completions`, `/v1/responses`, `/v1/images/*`, `/v1/embeddings`, `/v1/audio/transcriptions`,
+`/v1/realtime` for transcription WebSockets)
 plus an Anthropic-compatible `/v1/messages`. `GET /v1/models` and `GET /v1/models/{model}` are
 deliberately **unauthenticated**, like other providers' public catalogs; `GET /v1/models/{model}/deployments`
 requires auth, since per-deployment weight/limits/live metrics are operator infrastructure detail, not
