@@ -2,8 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+	providerFieldsWithOpenAIResponsesStreamEvent,
+	openaiResponsesStreamEventFromProviderFields,
 	extraContentFromProviderSpecificFields,
 	providerSpecificFieldsFromExtraContent,
+	withoutOpenAIResponsesStreamMetadata,
+	withoutOpenAIResponsesReasoningState,
 	providerSpecificFieldsFromToolCalls,
 	providerFieldsWithOpenAIReasoning,
 	openaiReasoningFromProviderFields,
@@ -147,4 +151,56 @@ test("openai reasoning state: drops malformed or empty items", () => {
 		}),
 		[{ encrypted_content: "enc" }],
 	);
+});
+
+test("openai reasoning state: native output rendering removes duplicate message state", () => {
+	assert.deepEqual(
+		withoutOpenAIResponsesReasoningState({
+			google: { thought_signature: "sig-a" },
+			openai: {
+				reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+				responses: { reasoning_item_id: "rs_1", sibling: true },
+				other: "kept",
+			},
+		}),
+		{
+			google: { thought_signature: "sig-a" },
+			openai: { responses: { sibling: true }, other: "kept" },
+		},
+	);
+	assert.equal(
+		withoutOpenAIResponsesReasoningState({
+			openai: {
+				reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+				responses: { reasoning_item_id: "rs_1" },
+			},
+		}),
+		undefined,
+	);
+});
+
+test("openai responses stream metadata: round-trips internally and never reaches messages", () => {
+	const fields = mergeProviderExtraContent(
+		providerFieldsWithOpenAIResponsesStreamEvent("response.output_item.added", {
+			type: "response.output_item.added",
+			sequence_number: 41,
+			output_index: 0,
+			item: { type: "message", id: "msg_1" },
+		}),
+		{
+			openai: {
+				responses: { stream_output: [{ type: "message", id: "msg_1" }] },
+				other: "kept",
+			},
+			google: { thought_signature: "sig-a" },
+		},
+	);
+	assert.deepEqual(openaiResponsesStreamEventFromProviderFields(fields), {
+		type: "response.output_item.added",
+		data: { output_index: 0, item: { type: "message", id: "msg_1" } },
+	});
+	assert.deepEqual(withoutOpenAIResponsesStreamMetadata(fields), {
+		openai: { other: "kept" },
+		google: { thought_signature: "sig-a" },
+	});
 });

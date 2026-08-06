@@ -6,6 +6,13 @@ import { openaiAdapter } from "./index.ts";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import {
+	openaiResponsesStreamOutputFromProviderFields,
+	openaiResponsesStreamEventFromProviderFields,
+	openaiReasoningItemIdFromProviderFields,
+	openaiReasoningFromProviderFields,
+} from "#core/providerSpecificFields.ts";
+
 const ctx: AdapterContext = {
 	upstreamModel: "gpt-5.5",
 	credentials: { apiKey: "sk-test", organization: "org_1" },
@@ -338,20 +345,30 @@ test("openai.parseStream: reasoning summary deltas preserve their native item id
 		chunks.push(chunk);
 
 	assert.equal(chunks[0]!.choices[0]!.delta.reasoning, "Think");
-	assert.deepEqual(chunks[0]!.choices[0]!.delta.providerFields, {
-		openai: { responses: { reasoning_item_id: "rs_native" } },
-	});
-	assert.deepEqual(chunks[1]!.choices[0]!.delta.providerFields, {
-		openai: {
-			reasoning: [
-				{
-					encrypted_content: "enc-native",
-					id: "rs_native",
-					summary: [{ type: "summary_text", text: "Think" }],
-				},
-			],
+	const summaryFields = chunks[0]!.choices[0]!.delta.providerFields;
+	assert.equal(
+		openaiReasoningItemIdFromProviderFields(summaryFields),
+		"rs_native",
+	);
+	assert.deepEqual(
+		openaiResponsesStreamEventFromProviderFields(summaryFields),
+		{
+			type: "response.reasoning_summary_text.delta",
+			data: { item_id: "rs_native", delta: "Think" },
 		},
-	});
+	);
+	const doneFields = chunks[1]!.choices[0]!.delta.providerFields;
+	assert.deepEqual(openaiReasoningFromProviderFields(doneFields), [
+		{
+			encrypted_content: "enc-native",
+			id: "rs_native",
+			summary: [{ type: "summary_text", text: "Think" }],
+		},
+	]);
+	assert.equal(
+		openaiResponsesStreamEventFromProviderFields(doneFields)?.type,
+		"response.output_item.done",
+	);
 });
 
 test("openai.mapError: 429 -> rate_limit; 400 context_length_exceeded -> context_window", () => {
@@ -626,16 +643,29 @@ test("openai.parseStream: reasoning output_item.done -> delta.providerFields (de
 		};
 	}
 	const collected: unknown[] = [];
+	let terminalOutput: Record<string, unknown>[] | undefined;
 	for await (const chunk of (
 		await import("#contracts/openai/responsesTransport.ts")
 	).responsesEventsToCanonicalChunks(events())) {
 		for (const choice of chunk.choices) {
-			if (choice.delta.providerFields !== undefined)
-				collected.push(choice.delta.providerFields);
+			if (choice.delta.providerFields !== undefined) {
+				const state = openaiReasoningFromProviderFields(
+					choice.delta.providerFields,
+				);
+				if (state !== undefined) collected.push(...state);
+				terminalOutput =
+					openaiResponsesStreamOutputFromProviderFields(
+						choice.delta.providerFields,
+					) ?? terminalOutput;
+			}
 		}
 	}
 	assert.deepEqual(collected, [
-		{ openai: { reasoning: [{ encrypted_content: "enc-1", id: "rs_1" }] } },
-		{ openai: { reasoning: [{ encrypted_content: "enc-2", id: "rs_2" }] } },
+		{ encrypted_content: "enc-1", id: "rs_1" },
+		{ encrypted_content: "enc-2", id: "rs_2" },
 	]);
+	assert.deepEqual(
+		terminalOutput?.map((item) => item.id),
+		["rs_1", "rs_2"],
+	);
 });

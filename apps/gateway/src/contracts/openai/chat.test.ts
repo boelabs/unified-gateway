@@ -629,6 +629,37 @@ test("chat surface: message-level provider_specific_fields carry OpenAI reasonin
 	});
 });
 
+test("chat surface: internal Responses stream metadata is not exposed", () => {
+	const out = toOpenAIChatChunk({
+		id: "resp_1",
+		created: 1,
+		model: "gpt",
+		choices: [
+			{
+				index: 0,
+				finishReason: null,
+				delta: {
+					providerFields: {
+						openai: {
+							reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }],
+							responses: {
+								stream_event: {
+									type: "response.output_item.done",
+									data: { output_index: 0 },
+								},
+								stream_output: [{ type: "reasoning", id: "rs_1" }],
+							},
+						},
+					},
+				},
+			},
+		],
+	});
+	assert.deepEqual(out.choices[0]!.delta.provider_specific_fields, {
+		openai: { reasoning: [{ id: "rs_1", encrypted_content: "enc-1" }] },
+	});
+});
+
 test("chat native options: advanced request fields are preserved by the transport", () => {
 	const canonical = toCanonicalChatRequest(
 		chatRequestSchema.parse({

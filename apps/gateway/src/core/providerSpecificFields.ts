@@ -87,6 +87,62 @@ export function providerFieldsWithResponsesOutput(
 	return { openai: { response_output: structuredClone(output) } };
 }
 
+export interface OpenAIResponsesStreamEvent {
+	type: string;
+	data: Record<string, unknown>;
+}
+
+/**
+ * Carries an item-scoped Responses event through the canonical stream without making the event part
+ * of the provider-agnostic vocabulary. Response lifecycle events remain gateway-owned.
+ */
+export function providerFieldsWithOpenAIResponsesStreamEvent(
+	type: string,
+	payload: Record<string, unknown>,
+): Record<string, unknown> {
+	const data = structuredClone(payload);
+	delete data.type;
+	delete data.sequence_number;
+	return { openai: { responses: { stream_event: { type, data } } } };
+}
+
+export function openaiResponsesStreamEventFromProviderFields(
+	fields: Record<string, unknown> | undefined,
+): OpenAIResponsesStreamEvent | undefined {
+	const openai = recordValue(fields?.openai);
+	const responses = recordValue(openai?.responses);
+	const event = recordValue(responses?.stream_event);
+	const data = recordValue(event?.data);
+	return typeof event?.type === "string" && data !== undefined
+		? { type: event.type, data: structuredClone(data) }
+		: undefined;
+}
+
+/** Authoritative terminal output used to verify/recover a native Responses stream. */
+export function providerFieldsWithOpenAIResponsesStreamOutput(
+	output: Record<string, unknown>[],
+): Record<string, unknown> {
+	return {
+		openai: { responses: { stream_output: structuredClone(output) } },
+	};
+}
+
+export function openaiResponsesStreamOutputFromProviderFields(
+	fields: Record<string, unknown> | undefined,
+): Record<string, unknown>[] | undefined {
+	const openai = recordValue(fields?.openai);
+	const responses = recordValue(openai?.responses);
+	const output = responses?.stream_output;
+	return Array.isArray(output)
+		? output
+				.filter(
+					(item): item is Record<string, unknown> =>
+						item !== null && typeof item === "object" && !Array.isArray(item),
+				)
+				.map((item) => structuredClone(item))
+		: undefined;
+}
+
 export type AnthropicThinkingBlock =
 	| { type: "thinking"; thinking: string; signature: string }
 	| { type: "redacted_thinking"; data: string };
@@ -267,22 +323,55 @@ export function openaiReasoningItemIdFromProviderFields(
 	return typeof id === "string" && id.length > 0 ? id : undefined;
 }
 
-/** Removes transport-only Responses stream identity before fields reach a public message item. */
-export function withoutOpenAIReasoningStreamMetadata(
+function pruneOpenAIResponsesNamespaces(
+	copy: Record<string, unknown>,
+	openai: Record<string, unknown> | undefined,
+	responses: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	if (
+		responses !== undefined &&
+		Object.keys(responses).length === 0 &&
+		openai !== undefined
+	)
+		delete openai.responses;
+	if (openai !== undefined && Object.keys(openai).length === 0)
+		delete copy.openai;
+	return Object.keys(copy).length > 0 ? copy : undefined;
+}
+
+/** Removes internal Responses stream carriers before provider fields reach a public message. */
+export function withoutOpenAIResponsesStreamMetadata(
 	fields: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
 	if (fields === undefined) return undefined;
 	const copy = structuredClone(fields);
 	const openai = recordValue(copy.openai);
 	const responses = recordValue(openai?.responses);
-	if (responses === undefined || !("reasoning_item_id" in responses))
-		return copy;
-	delete responses.reasoning_item_id;
-	if (Object.keys(responses).length === 0 && openai !== undefined)
-		delete openai.responses;
-	if (openai !== undefined && Object.keys(openai).length === 0)
-		delete copy.openai;
-	return Object.keys(copy).length > 0 ? copy : undefined;
+	if (responses !== undefined) {
+		delete responses.stream_event;
+		delete responses.stream_output;
+	}
+	return pruneOpenAIResponsesNamespaces(copy, openai, responses);
+}
+
+/**
+ * Removes Responses reasoning state that is rendered as native output items before fields reach a
+ * public message item. Keeping a second copy on the message would replay the same reasoning id twice.
+ */
+export function withoutOpenAIResponsesReasoningState(
+	fields: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	if (fields === undefined) return undefined;
+	const copy = structuredClone(fields);
+	const openai = recordValue(copy.openai);
+	if (openai !== undefined) delete openai.reasoning;
+	const responses = recordValue(openai?.responses);
+	if (responses !== undefined) {
+		delete responses.reasoning_item_id;
+		delete responses.stream_event;
+		delete responses.stream_output;
+	}
+	return pruneOpenAIResponsesNamespaces(copy, openai, responses);
 }
 
 /** Builds the provider-namespaced record `{ openai: { reasoning: [...] } }`. */
